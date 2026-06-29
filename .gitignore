@@ -1,0 +1,70 @@
+# Python / FastAPI
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage/
+htmlcov/
+.venv/
+venv/
+env/
+ENV/
+dist/
+build/
+*.egg-info/
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+.turbo/
+.vercel/
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# Local environment files
+.env
+.env.*
+backend/.env
+backend/.env.*
+frontend/.env
+frontend/.env.*
+frontend/.env.local
+frontend/.env*.local
+
+# Keep example environment files tracked
+!.env.example
+!backend/.env.example
+!frontend/.env.local.example
+
+# Docker / local infrastructure data
+infra/**/data/
+infra/**/volume*/
+infra/**/volumes/
+infra/**/pgdata/
+infra/**/postgres-data/
+infra/**/redis-data/
+infra/**/minio-data/
+infra/**/.minio/
+
+# Local logs and generated artifacts
+logs/
+*.log
+*.sqlite
+*.sqlite3
+*.db
+*.dump
+*.bak
+*.tmp
+*.temp
+
+# Editor and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
