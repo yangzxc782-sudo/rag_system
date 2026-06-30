@@ -188,3 +188,21 @@
 - `retrieval_logs.message_id`
 
 第一阶段不得创建向量索引。向量字段和向量索引必须等第二阶段确认 embedding 模型和维度后再通过新迁移添加。
+# 第二阶段 documents 上传元数据补充
+
+第二阶段“文档上传与基础知识库入库闭环”只补充 `documents` 表的普通上传元数据字段，用于记录原始文件在 MinIO 中的存储位置、上传类型信息、文件哈希和错误信息预留。
+
+新增字段：
+
+- `bucket_name`：MinIO bucket 名称，默认 `rag-documents`。
+- `mime_type`：上传文件 MIME 类型，来自上传请求的 `content_type`，仅作为辅助校验和展示信息。
+- `file_hash`：SHA-256 文件哈希，用于后续去重和完整性校验预留。
+- `error_message`：上传或后续处理失败时的错误信息预留字段。
+
+约束说明：
+
+- 第二阶段只补充普通元数据字段。
+- 第二阶段不新增真实 `vector` 字段。
+- 第二阶段不创建 HNSW、IVFFlat 或其他向量索引。
+- 本步骤不修改 `process_status` 的 ORM 默认值或数据库默认值。
+- 第二阶段上传成功时由 service 层显式写入 `process_status="uploaded"`。

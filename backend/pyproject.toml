@@ -16,6 +16,7 @@ dependencies = [
   "python-dotenv>=1.0,<2.0",
   "redis>=5.0,<7.0",
   "minio>=7.2,<8.0",
+  "python-multipart>=0.0.9,<1.0",
 ]
 
 [project.optional-dependencies]

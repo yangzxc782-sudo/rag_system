@@ -29,6 +29,35 @@ class Settings(BaseSettings):
     minio_bucket: str = "rag-documents"
     minio_secure: bool = False
 
+    upload_max_file_size_bytes: int = 52_428_800
+    upload_allowed_extensions: str = ".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg,.bmp,.tif,.tiff,.webp"
+    # content_type is only an auxiliary check; extension and size limits remain the primary phase 2 gates.
+    upload_allowed_content_types: str = (
+        "application/pdf,"
+        "application/msword,"
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document,"
+        "application/vnd.ms-excel,"
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,"
+        "image/png,"
+        "image/jpeg,"
+        "image/bmp,"
+        "image/tiff,"
+        "image/webp"
+    )
+    backend_cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
+
+    @property
+    def upload_allowed_extension_set(self) -> set[str]:
+        return {item.strip().lower() for item in self.upload_allowed_extensions.split(",") if item.strip()}
+
+    @property
+    def upload_allowed_content_type_set(self) -> set[str]:
+        return {item.strip().lower() for item in self.upload_allowed_content_types.split(",") if item.strip()}
+
+    @property
+    def backend_cors_origin_list(self) -> list[str]:
+        return [item.strip() for item in self.backend_cors_origins.split(",") if item.strip()]
+
 
 @lru_cache
 def get_settings() -> Settings:

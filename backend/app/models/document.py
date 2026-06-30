@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
-from sqlalchemy import BigInteger, DateTime, String, func
+from sqlalchemy import BigInteger, DateTime, String, Text, func
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -20,10 +20,14 @@ class Document(Base):
 
     id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
     original_filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    bucket_name: Mapped[str] = mapped_column(String(255), nullable=False, default="rag-documents")
     object_key: Mapped[str] = mapped_column(String(1024), nullable=False, unique=True)
     file_type: Mapped[str | None] = mapped_column(String(100))
+    mime_type: Mapped[str | None] = mapped_column(String(255))
     file_size: Mapped[int | None] = mapped_column(BigInteger)
+    file_hash: Mapped[str | None] = mapped_column(String(64))
     process_status: Mapped[str] = mapped_column(String(50), nullable=False, default="pending")
+    error_message: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
