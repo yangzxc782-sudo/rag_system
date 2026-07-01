@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { ReactNode } from "react";
 
 const modules = [
@@ -7,7 +8,8 @@ const modules = [
   },
   {
     name: "文档管理",
-    description: "预留文档上传、解析状态和对象存储入口",
+    description: "上传原始文档并查看基础入库状态",
+    href: "/documents",
   },
   {
     name: "知识条目库",
@@ -39,16 +41,29 @@ export default function AppShell({ children }: { children: ReactNode }) {
           </div>
         </header>
 
-        <section aria-label="第一阶段预留入口" className="grid gap-3 md:grid-cols-5">
-          {modules.map((module) => (
-            <article
-              key={module.name}
-              className="rounded-md border border-slate-200 bg-white p-4 shadow-sm"
-            >
-              <h2 className="text-base font-semibold text-slate-950">{module.name}</h2>
-              <p className="mt-2 text-sm leading-6 text-slate-600">{module.description}</p>
-            </article>
-          ))}
+        <section aria-label="应用入口" className="grid gap-3 md:grid-cols-5">
+          {modules.map((module) => {
+            const content = (
+              <>
+                <h2 className="text-base font-semibold text-slate-950">{module.name}</h2>
+                <p className="mt-2 text-sm leading-6 text-slate-600">{module.description}</p>
+              </>
+            );
+
+            return module.href ? (
+              <Link
+                key={module.name}
+                href={module.href}
+                className="rounded-md border border-slate-200 bg-white p-4 shadow-sm transition hover:border-slate-300 hover:shadow"
+              >
+                {content}
+              </Link>
+            ) : (
+              <article key={module.name} className="rounded-md border border-slate-200 bg-white p-4 shadow-sm">
+                {content}
+              </article>
+            );
+          })}
         </section>
 
         {children}

@@ -239,3 +239,105 @@ curl http://127.0.0.1:8000/api/v1/health/services
 - 不强制修复的原因是避免破坏 Next.js App Router、Tailwind CSS 或脚手架依赖结构。
 - 后续等待 Next.js 官方依赖更新后再统一处理。
 - Docker、Git、npm、pip、alembic、pytest、uvicorn 等命令可以写入文档供用户手动执行，但 Codex 不自动执行。
+# 第二阶段补充：文档上传与基础知识库入库闭环
+
+第二阶段在第一阶段本地开发骨架基础上，新增“文档上传与基础知识库入库闭环”。本阶段只实现原始文件上传、MinIO 存储、`documents` 表元数据入库、文档列表和文档详情。
+
+## 第二阶段功能范围
+
+第二阶段已补充：
+
+- 文档上传：前端通过 `/documents` 页面选择单个文件上传。
+- 对象存储：后端将原始文件保存到 MinIO `rag-documents` bucket。
+- 元数据入库：后端在 MinIO 上传成功后写入 `documents` 表。
+- 文档列表：前端 `/documents` 展示文件名、类型、大小、处理状态和上传时间。
+- 文档详情：前端 `/documents/[id]` 展示文件基础元数据。
+- 后端上传接口：`POST /api/v1/documents`。
+- 后端列表接口：`GET /api/v1/documents`。
+- 后端详情接口：`GET /api/v1/documents/{document_id}`。
+
+第二阶段仍保持本机 FastAPI、本机 Next.js、Docker 基础服务的开发架构。FastAPI 和 Next.js 不放入 Docker Compose。
+
+## 第二阶段本地运行命令
+
+以下命令只供用户手动执行。Codex 不得自动执行 Docker、Git、npm、pip、alembic、pytest、uvicorn 或任何长期运行服务命令。
+
+启动 Docker 基础服务：
+
+```powershell
+docker compose --env-file .env -f infra/docker-compose.yml up -d
+docker compose --env-file .env -f infra/docker-compose.yml ps
+```
+
+准备并验证后端：
+
+```powershell
+cd backend
+pip install -e ".[dev]"
+alembic upgrade head
+pytest
+uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+`alembic upgrade head` 由用户确认本地开发库后手动执行。`uvicorn` 是前台长期运行命令，验证完成后使用 Ctrl+C 停止。
+
+准备并验证前端：
+
+```powershell
+cd frontend
+npm run lint
+npm run dev
+```
+
+`npm run dev` 是前台长期运行命令，验证完成后使用 Ctrl+C 停止。
+
+## 第二阶段手动验收
+
+1. 用户手动启动 Docker 基础服务。
+2. 用户手动确认 PostgreSQL、Redis、MinIO 容器正在运行。
+3. 打开 MinIO Console：`http://localhost:9001`。
+4. 确认 `rag-documents` bucket 已存在。
+5. 用户手动执行 Alembic 迁移。
+6. 用户手动启动 FastAPI。
+7. 用户手动启动 Next.js。
+8. 打开 `http://localhost:3000/documents`。
+9. 上传 PDF、Word、Excel、图片各 1 个。
+10. 确认前端文档列表出现记录。
+11. 点击详情进入 `/documents/[id]`。
+12. 确认详情页展示文件名、bucket、object key、类型、MIME、大小、hash、状态、上传时间和更新时间。
+13. 在 MinIO 中确认 `raw/YYYY/MM/` 路径下出现对象。
+
+## 第二阶段配置说明
+
+后端上传配置示例：
+
+```text
+UPLOAD_MAX_FILE_SIZE_BYTES=52428800
+UPLOAD_ALLOWED_EXTENSIONS=.pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg,.bmp,.tif,.tiff,.webp
+BACKEND_CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
+MINIO_BUCKET=rag-documents
+```
+
+前端配置示例：
+
+```text
+NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000
+```
+
+真实 `.env`、`backend/.env`、`frontend/.env.local` 不得提交 Git。示例 env 文件可以提交。前端只允许暴露 `NEXT_PUBLIC_*` 变量，不得暴露数据库、Redis、MinIO 密钥。
+
+## 第二阶段明确不实现
+
+第二阶段不实现文档真实解析、`document_chunks` 切分入库、embedding 生成、真实 `vector` 字段、HNSW/IVFFlat 或其他向量索引、RAG 问答、知识条目自动抽取、Celery Worker、Neo4j、Elasticsearch、模型服务、文件下载、文件预览、大文件流式上传、深度文件内容识别。
+
+## 第二阶段安全边界
+
+继续禁止删除 Docker volume、清空或删除 MinIO bucket、删除 MinIO 已有对象、清空数据库、删除数据库结构、执行无条件数据删除、强制修复 npm audit、重建或覆盖 `frontend`。
+
+禁止项包括：`docker compose down -v`、`docker volume rm`、`docker volume prune`、`docker system prune --volumes`、`DROP DATABASE`、`DROP TABLE`、`TRUNCATE`、无 `WHERE` 条件的 `DELETE`、`npm audit fix --force`。
+
+所有 Docker Compose 命令继续统一使用：
+
+```powershell
+docker compose --env-file .env -f infra/docker-compose.yml ...
+```
