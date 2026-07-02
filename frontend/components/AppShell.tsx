@@ -12,6 +12,11 @@ const modules = [
     href: "/documents",
   },
   {
+    name: "向量检索",
+    description: "检索已生成 embedding 的文档 chunks",
+    href: "/search",
+  },
+  {
     name: "知识条目库",
     description: "预留抽取结果、版本和专家审核入口",
   },
@@ -31,7 +36,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
       <div className="mx-auto flex w-full max-w-7xl flex-col gap-8 px-5 py-6 sm:px-8 lg:px-10">
         <header className="flex flex-col gap-4 border-b border-slate-200 pb-6 lg:flex-row lg:items-end lg:justify-between">
           <div>
-            <p className="text-sm font-medium text-slate-500">第一阶段本地开发骨架</p>
+            <p className="text-sm font-medium text-slate-500">本地开发闭环</p>
             <h1 className="mt-2 text-3xl font-semibold leading-tight text-slate-950 sm:text-4xl">
               铸型工艺知识库 RAG 管理系统
             </h1>
@@ -41,7 +46,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
           </div>
         </header>
 
-        <section aria-label="应用入口" className="grid gap-3 md:grid-cols-5">
+        <section aria-label="应用入口" className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
           {modules.map((module) => {
             const content = (
               <>

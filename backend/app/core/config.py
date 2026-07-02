@@ -30,21 +30,31 @@ class Settings(BaseSettings):
     minio_secure: bool = False
 
     upload_max_file_size_bytes: int = 52_428_800
-    upload_allowed_extensions: str = ".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg,.bmp,.tif,.tiff,.webp"
-    # content_type is only an auxiliary check; extension and size limits remain the primary phase 2 gates.
-    upload_allowed_content_types: str = (
-        "application/pdf,"
-        "application/msword,"
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document,"
-        "application/vnd.ms-excel,"
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,"
-        "image/png,"
-        "image/jpeg,"
-        "image/bmp,"
-        "image/tiff,"
-        "image/webp"
-    )
+    upload_allowed_extensions: str = ".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg,.bmp,.tif,.tiff,.webp,.txt,.md,.csv"
+    # content_type is auxiliary metadata only. Leave this empty by default so browser-specific
+    # or application/octet-stream values do not block an allowed extension.
+    upload_allowed_content_types: str = ""
     backend_cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
+
+    document_parser: str = "simple"
+    chunk_size_chars: int = 1000
+    chunk_overlap_chars: int = 100
+    mineru_endpoint: str = ""
+    mineru_timeout_seconds: int = 60
+
+    embedding_provider: str = "local_qwen3"
+    embedding_model: str = "Qwen3-Embedding-0.6B"
+    embedding_model_path: str = "D:/rag_system/models/Qwen3-Embedding-0.6B"
+    embedding_device: str = "auto"
+    embedding_batch_size: int = 8
+    embedding_normalize: bool = True
+    embedding_dim: int = 1024
+    embedding_local_files_only: bool = True
+    embedding_query_instruction: str = (
+        "Given a search query about casting process knowledge, "
+        "retrieve relevant document chunks that answer the query."
+    )
+    embedding_use_query_instruction: bool = True
 
     @property
     def upload_allowed_extension_set(self) -> set[str]:

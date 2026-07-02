@@ -255,3 +255,13 @@ Git 禁止操作：
 - README 或 `docs/` 中有本地启动说明。
 - 没有执行业务代码实现、复杂检索逻辑、模型调用逻辑或生产级部署配置。
 - 没有执行 `docker compose down -v`，没有删除 volume，没有执行 `DROP DATABASE` 或 `DROP TABLE`。
+
+## 10.PostgreSQL MCP 使用规则
+
+- PostgreSQL MCP 仅允许用于本地开发库 rag_system 的只读核验。
+- 默认连接账号必须为 codex_ro 等只读账号。
+- 只允许执行 SELECT、信息架构查询、表结构查看。
+- 禁止执行 INSERT、UPDATE、DELETE、DROP、TRUNCATE、ALTER、CREATE。
+- 禁止通过 MCP 修改数据库结构或数据。
+- 数据库迁移必须通过 Alembic 文件管理，并由用户手动确认后执行。
+- 禁止使用 PostgreSQL MCP 清空表、删除表、删除库或修改生产数据。

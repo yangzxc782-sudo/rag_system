@@ -1,0 +1,235 @@
+from __future__ import annotations
+
+from types import SimpleNamespace
+from uuid import UUID
+
+import pytest
+
+from app.core.errors import (
+    DOCUMENT_ALREADY_PARSED,
+    DOCUMENT_NOT_FOUND,
+    DOCUMENT_PARSE_FAILED,
+    DOCUMENT_PARSER_UNAVAILABLE,
+    DOCUMENT_SOURCE_FILE_NOT_FOUND,
+    BusinessError,
+)
+from app.services import document_parsing
+
+
+DOCUMENT_ID = UUID("550e8400-e29b-41d4-a716-446655440000")
+
+
+class FakeScalarResult:
+    def __init__(self, items):
+        self._items = items
+
+    def all(self):
+        return self._items
+
+
+class FakeDb:
+    def __init__(
+        self,
+        *,
+        document=None,
+        chunk_count: int = 0,
+        chunks=None,
+        fail_commit_after_add_all: bool = False,
+    ) -> None:
+        self.document = document
+        self.chunk_count = chunk_count
+        self.chunks = chunks or []
+        self.fail_commit_after_add_all = fail_commit_after_add_all
+        self.failed_commit_once = False
+        self.added = []
+        self.added_all = []
+        self.commits = 0
+        self.rollbacks = 0
+        self.refreshed = []
+
+    def get(self, model, item_id):
+        return self.document
+
+    def scalar(self, statement):
+        if self.chunks:
+            return len(self.chunks)
+        return self.chunk_count
+
+    def scalars(self, statement):
+        return FakeScalarResult(sorted(self.chunks, key=lambda chunk: chunk.chunk_index))
+
+    def add(self, item):
+        self.added.append(item)
+
+    def add_all(self, items):
+        self.added_all.extend(items)
+
+    def commit(self):
+        self.commits += 1
+        if self.fail_commit_after_add_all and self.added_all and not self.failed_commit_once:
+            self.failed_commit_once = True
+            raise RuntimeError("simulated chunk write failure")
+
+    def rollback(self):
+        self.rollbacks += 1
+
+    def refresh(self, item):
+        self.refreshed.append(item)
+
+
+def fake_document(process_status: str = "uploaded") -> SimpleNamespace:
+    return SimpleNamespace(
+        id=DOCUMENT_ID,
+        original_filename="notes.txt",
+        bucket_name="rag-documents",
+        object_key=f"raw/2026/07/{DOCUMENT_ID}.txt",
+        file_type=".txt",
+        mime_type="text/plain",
+        process_status=process_status,
+        error_message=None,
+    )
+
+
+def fake_settings(document_parser: str = "simple") -> SimpleNamespace:
+    return SimpleNamespace(
+        document_parser=document_parser,
+        chunk_size_chars=1000,
+        chunk_overlap_chars=100,
+        mineru_endpoint="",
+        mineru_timeout_seconds=60,
+    )
+
+
+def test_parse_document_success(monkeypatch) -> None:
+    document = fake_document()
+    db = FakeDb(document=document)
+    monkeypatch.setattr(document_parsing, "get_settings", lambda: fake_settings())
+    monkeypatch.setattr(document_parsing, "get_object_bytes_from_minio", lambda **kwargs: b"a" * 1200)
+
+    result = document_parsing.parse_document(db, DOCUMENT_ID)
+
+    assert result.document_id == DOCUMENT_ID
+    assert result.process_status == "parsed"
+    assert result.chunk_count == 2
+    assert result.parser_name == "simple"
+    assert result.parser_version == "0.1.0"
+    assert document.process_status == "parsed"
+    assert len(db.added_all) == 2
+    first_chunk = db.added_all[0]
+    assert first_chunk.embedding_status == "not_started"
+    assert first_chunk.token_count is None
+    assert first_chunk.embedding_model is None
+    assert first_chunk.embedding_dim is None
+    assert first_chunk.source_metadata["character_count"] == 1000
+
+
+def test_parse_document_not_found() -> None:
+    db = FakeDb(document=None)
+
+    with pytest.raises(BusinessError) as exc_info:
+        document_parsing.parse_document(db, DOCUMENT_ID)
+
+    assert exc_info.value.code == DOCUMENT_NOT_FOUND
+
+
+def test_parse_document_already_has_chunks_does_not_change_status(monkeypatch) -> None:
+    document = fake_document(process_status="uploaded")
+    db = FakeDb(document=document, chunk_count=2)
+    minio_called = False
+
+    def fake_get_object_bytes_from_minio(**kwargs):
+        nonlocal minio_called
+        minio_called = True
+        return b"content"
+
+    monkeypatch.setattr(document_parsing, "get_object_bytes_from_minio", fake_get_object_bytes_from_minio)
+
+    with pytest.raises(BusinessError) as exc_info:
+        document_parsing.parse_document(db, DOCUMENT_ID)
+
+    assert exc_info.value.code == DOCUMENT_ALREADY_PARSED
+    assert document.process_status == "uploaded"
+    assert db.added_all == []
+    assert db.commits == 0
+    assert minio_called is False
+
+
+def test_parse_document_mineru_unavailable_marks_parse_failed(monkeypatch) -> None:
+    document = fake_document()
+    db = FakeDb(document=document)
+    monkeypatch.setattr(document_parsing, "get_settings", lambda: fake_settings("mineru"))
+    monkeypatch.setattr(document_parsing, "get_object_bytes_from_minio", lambda **kwargs: b"%PDF")
+
+    with pytest.raises(BusinessError) as exc_info:
+        document_parsing.parse_document(db, DOCUMENT_ID)
+
+    assert exc_info.value.code == DOCUMENT_PARSER_UNAVAILABLE
+    assert db.rollbacks == 1
+    assert document.process_status == "parse_failed"
+    assert document.error_message
+
+
+def test_parse_document_source_file_not_found_marks_parse_failed(monkeypatch) -> None:
+    document = fake_document()
+    db = FakeDb(document=document)
+    monkeypatch.setattr(document_parsing, "get_settings", lambda: fake_settings())
+
+    def fake_get_object_bytes_from_minio(**kwargs):
+        raise BusinessError(DOCUMENT_SOURCE_FILE_NOT_FOUND, "source missing", status_code=503)
+
+    monkeypatch.setattr(document_parsing, "get_object_bytes_from_minio", fake_get_object_bytes_from_minio)
+
+    with pytest.raises(BusinessError) as exc_info:
+        document_parsing.parse_document(db, DOCUMENT_ID)
+
+    assert exc_info.value.code == DOCUMENT_SOURCE_FILE_NOT_FOUND
+    assert db.rollbacks == 1
+    assert document.process_status == "parse_failed"
+    assert db.added_all == []
+
+
+def test_parse_document_chunk_write_failure_rolls_back_and_marks_failed(monkeypatch) -> None:
+    document = fake_document()
+    db = FakeDb(document=document, fail_commit_after_add_all=True)
+    monkeypatch.setattr(document_parsing, "get_settings", lambda: fake_settings())
+    monkeypatch.setattr(document_parsing, "get_object_bytes_from_minio", lambda **kwargs: b"content")
+
+    with pytest.raises(BusinessError) as exc_info:
+        document_parsing.parse_document(db, DOCUMENT_ID)
+
+    assert exc_info.value.code == DOCUMENT_PARSE_FAILED
+    assert db.rollbacks == 1
+    assert document.process_status == "parse_failed"
+    assert document.error_message == "文档解析失败。"
+    assert len(db.added_all) == 1
+
+
+def test_list_document_chunks_returns_stats_without_token_count() -> None:
+    document = fake_document(process_status="parsed")
+    chunks = [
+        SimpleNamespace(
+            chunk_index=1,
+            content="fallback",
+            source_metadata={},
+            token_count=999,
+        ),
+        SimpleNamespace(
+            chunk_index=0,
+            content="abc",
+            source_metadata={"character_count": 3},
+            token_count=None,
+        ),
+    ]
+    db = FakeDb(document=document, chunks=chunks)
+
+    result = document_parsing.list_document_chunks(db, DOCUMENT_ID, limit=50, offset=0)
+
+    assert [chunk.chunk_index for chunk in result.items] == [0, 1]
+    assert result.total == 2
+    assert result.limit == 50
+    assert result.offset == 0
+    assert result.stats["chunk_count"] == 2
+    assert result.stats["total_characters"] == 11
+    assert result.stats["min_characters"] == 3
+    assert result.stats["max_characters"] == 8
+    assert result.stats["avg_characters"] == 5.5

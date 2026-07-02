@@ -341,3 +341,130 @@ NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000
 ```powershell
 docker compose --env-file .env -f infra/docker-compose.yml ...
 ```
+
+# 第三阶段补充：文档解析适配与基础切片可视化闭环
+
+第三阶段在第二阶段文档上传闭环基础上，新增“文档解析适配与基础切片可视化闭环”。本阶段从已上传到 MinIO 的原始文件出发，打通同步解析、基础字符切块、`document_chunks` 入库和前端轻量查看 chunk 效果。
+
+## 第三阶段当前能力
+
+第三阶段已补充：
+
+- MinIO 原始文件只读读取能力。
+- Parser 适配层：统一 `Parser` Protocol 和 `ParsedDocument` 输出结构。
+- `SimpleParser`：支持 `.txt`、`.md`、`.csv` 轻量文本解析，优先 UTF-8 解码，失败时使用 `errors="replace"` 兜底。
+- 复杂格式占位解析：PDF、Word、Excel、图片暂时生成明确占位解析结果，后续由 MinerU 替换。
+- `MinerUParser` 预留边界：保留 endpoint、timeout 和统一接口，但第三阶段不强制接入真实 MinerU 服务。
+- 基础字符 chunker：默认 `CHUNK_SIZE_CHARS=1000`，`CHUNK_OVERLAP_CHARS=100`。
+- `document_chunks.source_metadata` JSONB 来源元数据字段迁移文件。
+- 同步解析接口：`POST /api/v1/documents/{document_id}/parse`。
+- chunk 列表接口：`GET /api/v1/documents/{document_id}/chunks?limit=50&offset=0`。
+- 前端文档详情页展示解析按钮、chunk 总数、长度统计、来源元数据、内容预览和展开查看。
+- 上传白名单和前端 `accept` 已包含 `.txt`、`.md`、`.csv`，用于第三阶段真实文本切块验收。
+
+第三阶段数据流：
+
+```text
+MinIO 原始文件 bytes
+-> Parser
+-> ParsedDocument
+-> chunker
+-> document_chunks
+-> documents.process_status
+-> 前端 chunk 可视化
+```
+
+## 第三阶段本地运行提示
+
+第三阶段 Step 3 只创建了 Alembic 迁移文件。实际运行解析前，用户需要手动确认连接的是本地开发库，并在 `backend` 目录中手动执行：
+
+```powershell
+alembic upgrade head
+```
+
+后端 `.env` 需要确认第三阶段配置：
+
+```text
+DOCUMENT_PARSER=simple
+CHUNK_SIZE_CHARS=1000
+CHUNK_OVERLAP_CHARS=100
+MINERU_ENDPOINT=
+MINERU_TIMEOUT_SECONDS=60
+```
+
+MinIO bucket `rag-documents` 仍需用户手动确认存在。本阶段不自动创建 bucket，不删除、不移动、不覆盖 MinIO 原始对象。
+
+`POST /parse` 是同步接口，`parsing` 状态只用于后端状态流转；由于轻量解析通常很快，前端不保证一定能观察到 `parsing`。如果已有 chunks，重复解析返回 `DOCUMENT_ALREADY_PARSED` / HTTP 409，不删除、不覆盖已有 chunks，也不修改当前文档状态。`force` 覆盖或版本化重新解析不在第三阶段实现。
+
+## 第三阶段明确不实现
+
+第三阶段不实现：
+
+- 真实 MinerU 服务强制接入。
+- embedding 生成。
+- 真实 `vector` 字段。
+- HNSW / IVFFlat 或其他向量索引。
+- 语义检索。
+- RAG 问答。
+- 知识条目自动抽取。
+- Neo4j。
+- Elasticsearch。
+- Celery Worker。
+- 复杂可视化调参系统。
+- 文件下载。
+- 文件预览。
+- 多文件上传。
+- 拖拽上传。
+- 单 chunk 详情页。
+
+## 第三阶段 PostgreSQL MCP 边界
+
+PostgreSQL MCP 仅允许只读核验，例如：
+
+- 查询 `alembic_version`。
+- 查询 `information_schema.columns`。
+- 查询 `documents.process_status`。
+- 统计某文档 chunks 数量。
+- 查看 `chunk_index`、`chunk_type`、`embedding_status`、`source_metadata`。
+
+禁止使用 PostgreSQL MCP 执行迁移、改表、补数据、删除数据、清空表或修改数据库结构。禁止通过 MCP 执行 `INSERT`、`UPDATE`、`DELETE`、`DROP`、`TRUNCATE`、`ALTER`、`CREATE`。
+
+## 第三阶段安全边界
+
+继续禁止：
+
+- `docker compose down -v`
+- 删除 Docker volume
+- `docker volume prune`
+- `docker system prune --volumes`
+- 清空 MinIO bucket
+- 删除 MinIO bucket
+- 删除 MinIO 对象
+- `DROP`
+- `TRUNCATE`
+- 无 `WHERE` 条件的 `DELETE`
+- 通过 PostgreSQL MCP 写入或修改数据
+- 通过 PostgreSQL MCP 修改数据库结构
+- `npm audit fix --force`
+
+# 第四阶段补充：Embedding 生成与基础向量检索闭环
+
+第四阶段在第三阶段 `document_chunks` 入库基础上，补充本地 embedding 生成、pgvector 存储、基础向量检索和前端轻量检索验证能力。详细说明见 `docs/phase-4-embedding-vector-search.md`。
+
+当前第四阶段能力：
+
+- 使用本地 `Qwen3-Embedding-0.6B`，模型路径为 `D:/rag_system/models/Qwen3-Embedding-0.6B`。
+- 通过 `.env` 配置 `EMBEDDING_PROVIDER=local_qwen3`、`EMBEDDING_DIM=1024`、`EMBEDDING_LOCAL_FILES_ONLY=true`。
+- `document_chunks.embedding` 使用 `vector(1024)` 保存真实 embedding。
+- `document_chunks.embedding_error_message` 记录 embedding 失败原因。
+- `document_chunks.embedding_updated_at` 记录 embedding 生成或更新时间。
+- 提供单文档 embedding 生成接口：`POST /api/v1/documents/{document_id}/embeddings`。
+- 提供 embedding 状态接口：`GET /api/v1/documents/{document_id}/embedding-status`。
+- 提供基础向量检索接口：`POST /api/v1/search/vector`。
+- 前端文档详情页展示 embedding 状态并提供生成按钮。
+- 前端 `/search` 页面可输入 query 做基础向量检索。
+- 检索结果展示来源文档、chunk 序号、内容、source_metadata、distance 和 score。
+
+第四阶段仍是本地开发闭环，不是生产级 RAG 系统。当前仍不实现 RAG 问答、大语言模型回答、reranker、混合检索、关键词检索、图谱检索、知识条目自动抽取、专家审核、Celery 队列、多模型调度或生产级模型服务部署。
+
+第四阶段不写 `retrieval_logs`，原因是当前 `retrieval_logs.session_id` 非空，尚未设计 search session；后续如需记录检索日志，应先设计 search session 或通过 Alembic 改造约束。第四阶段也不创建 HNSW / IVFFlat 或其他向量索引，本地小规模数据使用精确 cosine scan。

@@ -17,6 +17,10 @@ dependencies = [
   "redis>=5.0,<7.0",
   "minio>=7.2,<8.0",
   "python-multipart>=0.0.9,<1.0",
+  "pgvector>=0.3,<1.0",
+  "sentence-transformers>=2.7.0,<6.0",
+  "transformers>=4.51.0,<5.0",
+  "torch>=2.2,<3.0",
 ]
 
 [project.optional-dependencies]

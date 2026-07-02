@@ -39,10 +39,11 @@
 - `document_id`：关联 `documents.id`。
 - `chunk_index`：文档内切片序号。
 - `content`：切片正文。
-- `token_count`：估算 token 数。
+- `token_count`：估算 token 数。第三阶段不做真实 token 统计，写入 chunk 时保持为空。
 - `page_start`、`page_end`：页码范围。
 - `section_title`：章节标题。
 - `chunk_type`：切片类型。
+- `source_metadata`：第三阶段新增的 nullable JSONB 来源元数据，用于记录解析器、来源类型、占位标记和字符位置等信息。
 - `embedding_model`、`embedding_dim`、`embedding_status`：embedding 元数据，不保存真实向量。
 - `created_at`、`updated_at`：创建和更新时间。
 
@@ -206,3 +207,77 @@
 - 第二阶段不创建 HNSW、IVFFlat 或其他向量索引。
 - 本步骤不修改 `process_status` 的 ORM 默认值或数据库默认值。
 - 第二阶段上传成功时由 service 层显式写入 `process_status="uploaded"`。
+
+# 第三阶段 document_chunks 来源元数据补充
+
+第三阶段“文档解析适配与基础切片可视化闭环”只补充 `document_chunks` 表的普通 JSONB 来源元数据字段，用于记录 chunk 由哪个解析器、哪类来源内容和哪段字符范围生成。
+
+新增字段：
+
+- `source_metadata`：JSONB，可为空。建议保存 `parser_name`、`parser_version`、`source_type`、`placeholder`、`char_start`、`char_end`、`character_count`、`original_extension`、`original_filename` 等来源元数据。
+
+第三阶段写入 chunk 时：
+
+- `embedding_model` 保持为空。
+- `embedding_dim` 保持为空。
+- `embedding_status` 仍保持 `not_started`。
+- `token_count` 保持为空，不做真实 token 统计。
+- 第三阶段不生成 embedding。
+
+约束说明：
+
+- 第三阶段只补充 `document_chunks.source_metadata` 普通 JSONB 字段。
+- `source_metadata` 是第三阶段新增的普通 JSONB 元数据字段，不参与向量检索。
+- 第三阶段不新增真实 `vector` 字段。
+- 第三阶段不创建 HNSW、IVFFlat 或其他向量索引。
+- 第三阶段不生成 embedding。
+- 第三阶段不修改 `embedding_status` 的 ORM 默认值或数据库默认值。
+
+# 第四阶段 document_chunks embedding 字段补充
+
+第四阶段“Embedding 生成与基础向量检索闭环”在第三阶段 `document_chunks` 已入库的基础上，新增真实 pgvector 向量字段和 embedding 失败追踪字段，用于本地 Qwen3-Embedding-0.6B embedding 生成和基础向量检索。
+
+新增字段：
+
+- `embedding vector(1024)`：nullable，保存本地 `Qwen3-Embedding-0.6B` 生成的 1024 维向量。
+- `embedding_error_message text`：nullable，保存 embedding 生成失败原因。
+- `embedding_updated_at timestamptz`：nullable，记录 embedding 生成或更新的时间。
+
+已有字段继续使用：
+
+- `embedding_model`：记录生成 embedding 的模型名，例如 `Qwen3-Embedding-0.6B`。
+- `embedding_dim`：记录生成 embedding 的维度，第四阶段为 `1024`。
+- `embedding_status`：字符串状态字段。
+
+`embedding_status` 第四阶段状态：
+
+- `not_started`：尚未生成 embedding。
+- `embedding`：正在生成 embedding。
+- `embedded`：已生成 embedding。
+- `embed_failed`：生成失败。
+
+生成策略：
+
+- `embedded` chunks 默认跳过，不覆盖。
+- `embed_failed` chunks 可以重新生成。
+- 第四阶段不支持 `force` 覆盖。
+- 失败时写入 `embedding_error_message`。
+- 成功时写入 `embedding_model`、`embedding_dim`、`embedding_status='embedded'`、`embedding_updated_at`。
+
+向量检索策略：
+
+- `POST /api/v1/search/vector` 只检索 `embedding_status='embedded'` 且 `embedding IS NOT NULL` 的 chunks。
+- 检索时要求 chunk 的 `embedding_model` 和 `embedding_dim` 与 query embedding 一致。
+- 使用 pgvector cosine distance。
+- `distance` 越小越相似。
+- 返回 `score = 1 - distance`。
+- 第四阶段不创建 HNSW / IVFFlat 或其他向量索引，小规模本地数据使用精确扫描。
+
+`retrieval_logs` 边界：
+
+- 第四阶段不写 `retrieval_logs`。
+- 当前 `retrieval_logs.session_id` 为非空约束，尚无 search session 设计。
+- 不为了写日志而伪造 `session_id`。
+- 后续如需记录基础检索日志，应先设计 `search_session`，或通过 Alembic 改造 `retrieval_logs.session_id` 约束。
+
+第四阶段仍不实现 RAG 问答、大语言模型回答、reranker、混合检索、关键词检索、图谱检索、知识条目自动抽取、专家审核、真实 MinerU 深度解析、Celery 队列、多模型调度或生产级模型服务部署。
