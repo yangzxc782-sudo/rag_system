@@ -281,3 +281,71 @@
 - 后续如需记录基础检索日志，应先设计 `search_session`，或通过 Alembic 改造 `retrieval_logs.session_id` 约束。
 
 第四阶段仍不实现 RAG 问答、大语言模型回答、reranker、混合检索、关键词检索、图谱检索、知识条目自动抽取、专家审核、真实 MinerU 深度解析、Celery 队列、多模型调度或生产级模型服务部署。
+
+## 第五阶段数据库边界与搜索索引结构
+
+第五阶段引入 OpenSearch + IK 统一混合检索索引闭环，但没有新增 PostgreSQL 表，也没有新增 PostgreSQL 字段。
+
+PostgreSQL 侧保持以下边界：
+
+- PostgreSQL 仍是主数据源。
+- MinIO 仍保存原始文件。
+- 第五阶段不修改 `documents` 表结构。
+- 第五阶段不修改 `document_chunks` 表结构。
+- `document_chunks.embedding vector(1024)` 仍是第四阶段新增字段。
+- `document_chunks.embedding_status`、`embedding_model`、`embedding_dim`、`embedding_error_message`、`embedding_updated_at` 仍沿用第四阶段设计。
+- 第五阶段不写入 `retrieval_logs`。
+- `retrieval_logs.session_id` 当前仍为 NOT NULL；如后续要记录检索日志，应先设计 search session 或调整迁移。
+
+OpenSearch index 不是 PostgreSQL schema。它是从 PostgreSQL `documents` 和 `document_chunks` 派生出来的检索索引，可以重建，不作为主数据存储。
+
+### 搜索索引结构：casting_chunks_v1
+
+默认物理索引名：
+
+- `casting_chunks_v1`
+
+默认查询别名：
+
+- `casting_chunks_current`
+
+索引文档为 chunk 级结构，建议字段包括：
+
+- `chunk_id`
+- `document_id`
+- `original_filename`
+- `chunk_index`
+- `content`
+- `chunk_type`
+- `page_start`
+- `page_end`
+- `section_title`
+- `source_metadata`
+- `exact_terms`
+- `embedding`
+- `embedding_model`
+- `embedding_dim`
+- `embedding_status`
+- `document_process_status`
+- `created_at`
+- `updated_at`
+
+字段说明：
+
+- `content` 使用 IK 中文分词，索引阶段默认 `ik_max_word`，查询阶段默认 `ik_smart`。
+- `exact_terms` 为 `keyword` 数组，用于标准编号、材料牌号、工艺参数和专业术语精确匹配。
+- `source_metadata` 为 `enabled=false` object，仅用于返回展示，不参与检索或聚合。
+- `embedding` 为 1024 维 `knn_vector`，用于 OpenSearch kNN 向量召回。
+- `embedding_model` 固定匹配 `Qwen3-Embedding-0.6B`。
+- `embedding_dim` 固定匹配 `1024`。
+
+第五阶段只同步满足以下条件的 chunks：
+
+- `embedding_status='embedded'`
+- `embedding IS NOT NULL`
+- `embedding_dim=1024`
+- `embedding_model='Qwen3-Embedding-0.6B'`
+
+OpenSearch 文档 `_id` 使用 `chunk_id`，以支持重复同步幂等。
+
+按 `document_id` 重建索引时，应先删除搜索索引中该 `document_id` 下的旧索引文档，再写入 PostgreSQL 中当前最新的 embedded chunks，避免文档重解析后旧 chunk 残留。

@@ -647,3 +647,177 @@ Codex 不自动执行 `alembic upgrade head`。PostgreSQL MCP 也不得用于执
 10. 确认 `distance` 越小越相似，`score = 1 - distance`。
 
 第四阶段仍不实现 RAG 问答、大语言模型回答、reranker、混合检索、关键词检索、图谱检索、Celery 队列、`retrieval_logs` 写入或向量索引。
+ 
+# 第五阶段补充：OpenSearch + analysis-ik 本地开发说明
+
+第五阶段默认采用 `OpenSearch 3.6.0 + analysis-ik 3.6.0`，用于建设统一混合检索的派生索引闭环。PostgreSQL 仍然是主数据源，MinIO 仍然是原始文件存储，OpenSearch 只保存可从 PostgreSQL `documents` / `document_chunks` 重建的检索索引。
+
+本地开发 OpenSearch 配置：
+
+- 仅启动单节点 OpenSearch，不引入 OpenSearch Dashboards，降低本机资源占用。
+- Docker Desktop 建议分配 `8-12GB` 内存。
+- OpenSearch JVM heap 默认使用 `OPENSEARCH_JAVA_OPTS=-Xms2g -Xmx2g`。
+- 本地开发阶段关闭 security plugin，使用 HTTP：`SEARCH_ENGINE_URL=http://localhost:9200`。
+- 如果后续启用 security plugin，真实用户名和密码只允许写入本机 `.env` / `backend/.env`，示例文件只能保留占位符。
+- Windows / Docker Desktop / WSL2 环境下，OpenSearch 可能需要人工确认 `vm.max_map_count`；Codex 不自动执行 `sysctl` 或系统级修改。
+
+OpenSearch 镜像与 IK 插件：
+
+- 自定义镜像文件位于 `infra/opensearch/Dockerfile`。
+- 镜像基于 `opensearchproject/opensearch:3.6.0`。
+- Dockerfile 使用 `opensearch-plugin install --batch` 固化 `opensearch-analysis-ik-3.6.0.zip`。
+- Dockerfile 不创建索引，不写入业务数据，不配置真实密码。
+
+IK 词典维护：
+
+- 自定义词典文件：`infra/opensearch/ik/custom.dic`。
+- 停用词文件：`infra/opensearch/ik/stopword.dic`。
+- 词典文件纳入项目版本管理，不硬编码在 Python 代码中。
+- 当前 Docker Compose 将词典挂载到 `/usr/share/opensearch/config/analysis-ik/`；analysis-ik 插件版本或目录结构变化时，应在创建索引前重新确认该路径和 `IKAnalyzer.cfg.xml` 的生效方式。
+- 词典更新后是否需要重启 OpenSearch 或刷新 analyzer，应以当前 analysis-ik 版本文档和实际 analyzer API 自测结果为准。
+
+安全边界：
+
+- 不要执行 `docker compose down -v`。
+- 不要删除或重建 PostgreSQL、Redis、MinIO、OpenSearch 的 Docker volume。
+- 不要清空或删除 MinIO bucket。
+- OpenSearch 索引是派生数据；如索引损坏，应从 PostgreSQL 重建，而不是修改 PostgreSQL 主数据。
+- 第五阶段仍不写 `retrieval_logs`，不生成 RAG 回答，不调用 LLM，不实现 reranker、图谱检索、知识条目抽取、专家审核、自动流水线或 Celery。
+
+## 第五阶段 OpenSearch + IK 本地验收流程
+
+第五阶段引入 OpenSearch 3.6.0 + analysis-ik 3.6.0，作为从 PostgreSQL `document_chunks` 重建的派生检索索引。PostgreSQL 仍是主数据源，MinIO 仍保存原始文件，OpenSearch 不替代主库。
+
+本地资源建议：
+
+- Docker Desktop 建议分配 8-12GB 内存。
+- OpenSearch 使用单节点本地开发模式。
+- OpenSearch JVM heap：`OPENSEARCH_JAVA_OPTS=-Xms2g -Xmx2g`。
+- 第五阶段暂不引入 OpenSearch Dashboards。
+- 本地开发使用 HTTP，并关闭 security plugin。
+- `.env.example` 和 `backend/.env.example` 只写占位符，不写真实密码。
+- Windows / Docker Desktop 下 `vm.max_map_count` 可能需要人工处理，实施前按 OpenSearch 启动日志和官方文档确认。
+
+IK 词典文件位置：
+
+- `infra/opensearch/ik/custom.dic`
+- `infra/opensearch/ik/stopword.dic`
+
+词典文件纳入项目版本管理，不硬编码在 Python 代码中。词典更新后，可能需要重建 OpenSearch 镜像或重启 OpenSearch 服务；是否支持热加载需要按当前 analysis-ik 版本确认。
+
+### 安全提醒
+
+不要将以下命令作为常规开发命令：
+
+- `docker compose down -v`
+- `docker volume prune`
+- `docker system prune --volumes`
+- 删除 PostgreSQL / Redis / MinIO / OpenSearch volume
+- 删除 MinIO bucket 或对象
+- 未确认的 Alembic 迁移
+- 未确认的 OpenSearch index 删除
+
+新增 OpenSearch 服务不会删除已有 PostgreSQL / Redis / MinIO volume。
+
+### 手动验收命令
+
+以下命令仅作为用户手动验收参考，本阶段文档更新不会自动执行。
+
+后端测试：
+
+```powershell
+cd D:\rag_system\backend
+.\.venv\Scripts\Activate.ps1
+python -m pytest tests/test_search_engine.py tests/test_search_index.py tests/test_hybrid_search.py -q
+```
+
+前端检查：
+
+```powershell
+cd D:\rag_system\frontend
+npm run lint
+```
+
+构建并启动基础服务和 OpenSearch：
+
+```powershell
+cd D:\rag_system
+docker compose --env-file .env -f infra/docker-compose.yml build opensearch
+docker compose --env-file .env -f infra/docker-compose.yml up -d postgres redis minio opensearch
+docker compose --env-file .env -f infra/docker-compose.yml ps
+```
+
+后端启动：
+
+```powershell
+cd D:\rag_system\backend
+.\.venv\Scripts\Activate.ps1
+uvicorn app.main:app --reload
+```
+
+前端启动：
+
+```powershell
+cd D:\rag_system\frontend
+npm run dev
+```
+
+### 索引创建、同步和状态检查
+
+创建 OpenSearch index 和 alias：
+
+```powershell
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "http://127.0.0.1:8000/api/v1/search/index/create"
+```
+
+全量同步可检索 chunks：
+
+```powershell
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "http://127.0.0.1:8000/api/v1/search/index/rebuild" `
+  -ContentType "application/json" `
+  -Body '{"scope":"all"}'
+```
+
+查看索引状态：
+
+```powershell
+Invoke-RestMethod `
+  -Method Get `
+  -Uri "http://127.0.0.1:8000/api/v1/search/index/status"
+```
+
+统一智能检索：
+
+```powershell
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "http://127.0.0.1:8000/api/v1/search" `
+  -ContentType "application/json" `
+  -Body '{"query":"冒口如何保证热节补缩","limit":10}'
+```
+
+如果 `syncable_chunks=0`，需要先在文档详情页生成 embedding，再重新执行 index rebuild。
+
+### 前端智能检索页面验证
+
+1. 启动后端和前端。
+2. 打开 `/search` 页面。
+3. 页面标题应为“智能检索”。
+4. 输入：`冒口如何保证热节补缩`。
+5. 结果应展示 `retrieval_source`、`keyword_score`、`vector_score`、`hybrid_score`、`matched_keywords`。
+6. 页面不应展示 RAG 回答、聊天界面、检索模式切换或索引管理入口。
+
+### 常见问题
+
+- OpenSearch 启动失败：检查 Docker Desktop 内存、JVM heap、端口占用和 `vm.max_map_count`。
+- IK 插件未安装：确认使用自定义 OpenSearch 镜像，并检查 analysis-ik 3.6.0 插件安装日志。
+- index 不存在：先调用 `POST /api/v1/search/index/create`。
+- index 为空：先生成文档 embedding，再调用 `POST /api/v1/search/index/rebuild`。
+- kNN 查询失败：检查 OpenSearch mapping 中 `embedding` 是否为 1024 维 `knn_vector`，并确认 kNN 已启用。
+- 没有可同步 chunks：确认 `document_chunks` 中存在 `embedding_status='embedded'`、`embedding_dim=1024`、`embedding_model='Qwen3-Embedding-0.6B'` 且 embedding 非空的记录。
+- 前端提示搜索引擎不可用：检查 OpenSearch 服务、后端 `SEARCH_ENGINE_URL` 和后端日志。
+- 前端暂无命中：确认 index 已创建、已同步，并尝试包含标准编号、材料牌号或铸型术语的 query。

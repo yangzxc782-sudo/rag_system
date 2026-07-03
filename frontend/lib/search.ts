@@ -41,6 +41,37 @@ export type VectorSearchData = {
   items: VectorSearchItem[];
 };
 
+export type HybridSearchRequest = {
+  query: string;
+  limit?: number;
+  document_id?: string | null;
+};
+
+export type HybridSearchItem = {
+  chunk_id: string;
+  document_id: string;
+  original_filename: string;
+  chunk_index: number;
+  content: string;
+  source_metadata: Record<string, unknown> | null;
+  retrieval_source: "keyword" | "vector" | "both" | string;
+  keyword_score: number | null;
+  vector_score: number | null;
+  keyword_rank: number | null;
+  vector_rank: number | null;
+  hybrid_score: number;
+  matched_keywords: string[];
+  embedding_model: string | null;
+  embedding_dim: number | null;
+};
+
+export type HybridSearchData = {
+  query: string;
+  limit: number;
+  total: number;
+  items: HybridSearchItem[];
+};
+
 function fallbackError<T>(message: string, detail: unknown = null): ApiEnvelope<T> {
   return {
     success: false,
@@ -64,6 +95,29 @@ async function parseEnvelope<T>(response: Response): Promise<ApiEnvelope<T>> {
     return fallbackError<T>("后端响应格式不符合预期。", body);
   } catch {
     return fallbackError<T>(`请求失败：HTTP ${response.status}`);
+  }
+}
+
+export async function hybridSearch(request: HybridSearchRequest): Promise<ApiEnvelope<HybridSearchData>> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/v1/search`, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        query: request.query,
+        limit: request.limit ?? 10,
+        document_id: request.document_id || undefined,
+      }),
+    });
+
+    return parseEnvelope<HybridSearchData>(response);
+  } catch (error) {
+    return fallbackError<HybridSearchData>("混合检索请求失败。", {
+      error_type: error instanceof Error ? error.name : typeof error,
+    });
   }
 }
 

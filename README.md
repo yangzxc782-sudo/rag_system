@@ -468,3 +468,37 @@ PostgreSQL MCP 仅允许只读核验，例如：
 第四阶段仍是本地开发闭环，不是生产级 RAG 系统。当前仍不实现 RAG 问答、大语言模型回答、reranker、混合检索、关键词检索、图谱检索、知识条目自动抽取、专家审核、Celery 队列、多模型调度或生产级模型服务部署。
 
 第四阶段不写 `retrieval_logs`，原因是当前 `retrieval_logs.session_id` 非空，尚未设计 search session；后续如需记录检索日志，应先设计 search session 或通过 Alembic 改造约束。第四阶段也不创建 HNSW / IVFFlat 或其他向量索引，本地小规模数据使用精确 cosine scan。
+
+## 第五阶段：OpenSearch + IK 统一混合检索索引闭环
+
+第五阶段已在第四阶段真实 embedding 与 pgvector 基础检索能力之上，引入 OpenSearch 3.6.0 + analysis-ik 3.6.0 作为派生检索索引，并提供统一智能检索接口。
+
+当前新增能力包括：
+
+- OpenSearch + IK 中文分词检索索引规划与本地 Docker 配置。
+- IK 自定义词典，用于铸型工艺术语、缺陷名称、材料牌号、标准编号和工艺参数。
+- chunk 级搜索索引 mapping，包含 `content`、`exact_terms`、`source_metadata`、`embedding` 等字段。
+- 搜索索引创建、重建和状态查询 API。
+- 统一混合检索接口 `POST /api/v1/search`。
+- 内部执行 BM25 关键词召回、kNN 向量召回和 weighted RRF 融合。
+- 前端 `/search` 页面已改为“智能检索”，调用统一混合检索接口。
+
+第五阶段新增或保留的搜索接口：
+
+- `POST /api/v1/search`：统一混合检索接口。
+- `POST /api/v1/search/vector`：第四阶段 pgvector 遗留调试接口，前端不再调用。
+- `POST /api/v1/search/index/create`：创建 OpenSearch index 和 alias。
+- `POST /api/v1/search/index/rebuild`：同步 PostgreSQL 中可检索 chunks 到 OpenSearch。
+- `GET /api/v1/search/index/status`：查看搜索索引状态。
+
+当前能力边界：
+
+- 当前系统仍是检索系统，不是完整 RAG 问答系统。
+- 当前不生成 RAG 回答。
+- 当前不调用 LLM。
+- 当前不做 reranker。
+- 当前不写入 `retrieval_logs`。
+- OpenSearch 是派生索引，PostgreSQL 仍是主数据源，MinIO 仍保存原始文件。
+- PostgreSQL pgvector 字段和第四阶段 `/api/v1/search/vector` 能力继续保留。
+
+第五阶段详细说明见 `docs/phase-5-hybrid-search-index.md`。

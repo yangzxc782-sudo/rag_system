@@ -12,8 +12,8 @@ const modules = [
     href: "/documents",
   },
   {
-    name: "向量检索",
-    description: "检索已生成 embedding 的文档 chunks",
+    name: "智能检索",
+    description: "检索已同步到搜索索引的文档 chunks",
     href: "/search",
   },
   {

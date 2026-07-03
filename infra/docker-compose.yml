@@ -46,7 +46,37 @@ services:
     volumes:
       - minio_data:/data
 
+  opensearch:
+    build:
+      context: ./opensearch
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      discovery.type: single-node
+      bootstrap.memory_lock: "true"
+      OPENSEARCH_JAVA_OPTS: "${OPENSEARCH_JAVA_OPTS:--Xms2g -Xmx2g}"
+      DISABLE_INSTALL_DEMO_CONFIG: "true"
+      DISABLE_SECURITY_PLUGIN: "true"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    ports:
+      - "${OPENSEARCH_PORT:-9200}:9200"
+      - "${OPENSEARCH_PERFORMANCE_ANALYZER_PORT:-9600}:9600"
+    volumes:
+      - opensearch_data:/usr/share/opensearch/data
+      # analysis-ik supports custom dictionaries under config/analysis-ik.
+      # Reconfirm this path after the custom image is built if the plugin layout changes.
+      - ./opensearch/ik/custom.dic:/usr/share/opensearch/config/analysis-ik/custom.dic:ro
+      - ./opensearch/ik/stopword.dic:/usr/share/opensearch/config/analysis-ik/stopword.dic:ro
+      - ./opensearch/ik/IKAnalyzer.cfg.xml:/usr/share/opensearch/config/analysis-ik/IKAnalyzer.cfg.xml:ro
+
 volumes:
   postgres_data:
   redis_data:
   minio_data:
+  opensearch_data:
