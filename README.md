@@ -502,3 +502,78 @@ PostgreSQL MCP 仅允许只读核验，例如：
 - PostgreSQL pgvector 字段和第四阶段 `/api/v1/search/vector` 能力继续保留。
 
 第五阶段详细说明见 `docs/phase-5-hybrid-search-index.md`。
+
+---
+
+## 第六阶段：基于混合检索的 RAG 问答最小闭环
+
+当前项目已完成第六阶段最小闭环：在第五阶段 OpenSearch + IK 统一混合检索基础上，新增单轮 RAG 问答链路。
+
+当前已支持：
+
+- 通过 OpenAI-compatible provider 调用本地 LLM。
+- 默认面向 Ollama OpenAI-compatible API：`http://localhost:11434/v1`。
+- 建议本地模型：`qwen3.5:9b`，实际运行时可配置 `LLM_MODEL=qwen3.5:9b`。
+- 新增后端接口：`POST /api/v1/rag/ask`。
+- 新增前端页面：`/rag` 知识问答。
+- 回答基于当前知识库检索片段生成。
+- 返回 `answer`、`citations`、`retrieval` 和 `llm` 信息。
+- no-context 作为正常状态返回，HTTP 200，`context_status="no_context"`。
+
+仍需明确：
+
+- PostgreSQL 仍是主数据源。
+- OpenSearch 仍是派生检索索引，可从 PostgreSQL 重建。
+- 第六阶段 RAG 复用第五阶段 `hybrid_search_chunks()`。
+- 不重新实现 BM25、OpenSearch kNN 或 weighted RRF。
+- 不修改 OpenSearch 索引结构。
+- 不修改 `POST /api/v1/search` 返回结构。
+- 仍保留第四阶段调试接口 `POST /api/v1/search/vector`。
+- citations 只来自检索到的 chunks，不允许 LLM 自行生成来源。
+- 当前仍不写 `retrieval_logs`。
+
+当前仍不是复杂 Agent 系统，暂不支持：
+
+- LangGraph。
+- 多轮记忆。
+- Agent 工具调用。
+- MinerU。
+- reranker 正式接入。
+- 流式输出。
+- 模型管理页面。
+- prompt 编辑页面。
+- 索引管理前端。
+
+第六阶段详细说明与手动验收流程见：
+
+- `docs/phase-6-rag-minimal-chain.md`
+# 第七阶段状态：知识条目自动抽取与专家审核闭环
+
+第七阶段已完成“知识条目自动抽取与专家审核闭环”，在不修改第五阶段混合检索和第六阶段 RAG 问答链路的前提下，新增独立的 `knowledge_items` 知识条目体系。
+
+本阶段新增能力：
+
+- 新增 `/knowledge-items` 前端页面，用于知识条目库、来源追溯、版本快照、审核记录和自动抽取入口。
+- 新增 `/api/v1/knowledge-items` 系列 API，覆盖 CRUD、chunks、versions、reviews、submit、approve、reject、deprecate、revise 和 extract。
+- 新增四表体系：`knowledge_items`、`knowledge_item_chunks`、`knowledge_item_reviews`、`knowledge_item_versions`。
+- 旧 `knowledge_entries` / `entry_versions` / `entry_review_records` 早期预留体系已被新 `knowledge_items` 体系替代。
+- 支持从 `document_chunks` 自动抽取候选知识条目，默认保存为 `draft`。
+- `auto_submit=true` 时抽取结果进入 `pending_review`，永远不会直接创建 `approved`。
+- 支持专家审核状态流转：`draft/rejected -> pending_review -> approved/rejected`，以及 `approved -> deprecated`。
+- 支持 `revise` 从 `approved` / `deprecated` 创建新的 `draft` 修订版，不直接修改原可信条目。
+- 支持 `source_chunk_ids` 与 `source_text` 来源追溯。
+- 支持 `knowledge_item_versions` 内容版本快照和 `knowledge_item_reviews` 审核记录。
+- `approved` 是可信知识状态，但当前暂不接入第六阶段 RAG 回答。
+
+第七阶段仍不做：
+
+- 不接入 Neo4j。
+- 不引入 LangGraph。
+- 不做 Graph-enhanced RAG。
+- 不正式接入 reranker。
+- 不让知识条目直接影响 `/api/v1/rag/ask`。
+- 不修改 `/api/v1/search`。
+- 不删除 `/api/v1/search/vector`。
+- 不写 `retrieval_logs`。
+
+详细说明和手动验收流程见 `docs/phase-7-knowledge-items-review.md`。

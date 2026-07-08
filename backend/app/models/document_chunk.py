@@ -13,7 +13,7 @@ from app.db.base import Base
 
 if TYPE_CHECKING:
     from app.models.document import Document
-    from app.models.knowledge_entry import KnowledgeEntry
+    from app.models.knowledge_item_chunk import KnowledgeItemChunk
 
 
 class DocumentChunk(Base):
@@ -48,7 +48,7 @@ class DocumentChunk(Base):
     )
 
     document: Mapped[Document] = relationship("Document", back_populates="chunks")
-    knowledge_entries: Mapped[list[KnowledgeEntry]] = relationship(
-        "KnowledgeEntry",
-        back_populates="source_chunk",
+    knowledge_item_chunks: Mapped[list[KnowledgeItemChunk]] = relationship(
+        "KnowledgeItemChunk",
+        back_populates="chunk",
     )

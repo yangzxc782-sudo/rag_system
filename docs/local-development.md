@@ -821,3 +821,479 @@ Invoke-RestMethod `
 - 没有可同步 chunks：确认 `document_chunks` 中存在 `embedding_status='embedded'`、`embedding_dim=1024`、`embedding_model='Qwen3-Embedding-0.6B'` 且 embedding 非空的记录。
 - 前端提示搜索引擎不可用：检查 OpenSearch 服务、后端 `SEARCH_ENGINE_URL` 和后端日志。
 - 前端暂无命中：确认 index 已创建、已同步，并尝试包含标准编号、材料牌号或铸型术语的 query。
+
+---
+
+## 第六阶段本地开发：RAG 问答最小闭环
+
+第六阶段新增 `/rag` 知识问答页面和 `POST /api/v1/rag/ask`。该链路基于第五阶段混合检索结果构建上下文，通过 OpenAI-compatible provider 调用本地 Ollama LLM，并返回答案与引用片段。
+
+本节命令仅作为用户手动执行参考。自动化助手不得在未确认时执行 Docker、npm、pip、pytest、uvicorn、Ollama 或数据库相关命令。
+
+### 1. Ollama 与模型
+
+建议本地安装并启动 Ollama，然后确认模型存在：
+
+```powershell
+ollama list
+```
+
+用户本地已下载：
+
+```text
+qwen3.5:9b
+```
+
+如需手动运行模型：
+
+```powershell
+ollama run qwen3.5:9b
+```
+
+第六阶段建议后端环境变量：
+
+```env
+LLM_PROVIDER=openai_compatible
+LLM_BASE_URL=http://localhost:11434/v1
+LLM_MODEL=qwen3.5:9b
+LLM_API_KEY=ollama
+LLM_TEMPERATURE=0.2
+LLM_MAX_TOKENS=2048
+LLM_TIMEOUT_SECONDS=120
+```
+
+说明：
+
+- `LLM_BASE_URL=http://localhost:11434/v1` 对应 Ollama 的 OpenAI-compatible API。
+- `LLM_API_KEY=ollama` 是本地兼容接口占位值。
+- 前端不写死模型名，页面展示以后端返回的 `llm.model` 为准。
+
+OpenAI-compatible API 手动验证示例：
+
+```powershell
+$body = @{
+  model = "qwen3.5:9b"
+  messages = @(
+    @{ role = "user"; content = "请用一句话说明冒口的作用。" }
+  )
+} | ConvertTo-Json -Depth 5
+
+Invoke-RestMethod `
+  -Uri "http://localhost:11434/v1/chat/completions" `
+  -Method Post `
+  -Headers @{ Authorization = "Bearer ollama" } `
+  -ContentType "application/json" `
+  -Body $body
+```
+
+### 2. 后端依赖
+
+第六阶段新增 OpenAI-compatible client 依赖：
+
+```powershell
+cd D:\rag_system\backend
+.\.venv\Scripts\Activate.ps1
+python -m pip install "openai>=1.0,<3.0"
+```
+
+不要由自动化助手自动执行依赖安装；依赖安装应由用户确认后手动执行。
+
+### 3. 启动基础服务
+
+从项目根目录启动本地基础服务：
+
+```powershell
+cd D:\rag_system
+docker compose --env-file .env -f infra/docker-compose.yml up -d postgres redis minio opensearch
+```
+
+安全提醒：
+
+- 不要执行 `docker compose down -v`。
+- 不要删除 PostgreSQL、MinIO 或 OpenSearch volume。
+- 不要清空 MinIO bucket。
+
+### 4. 确认第五阶段索引状态
+
+先确认第五阶段检索索引正常：
+
+```http
+GET /api/v1/search/index/status
+```
+
+检查要点：
+
+- OpenSearch 可用。
+- index 存在。
+- alias 存在。
+- index document count 正常。
+- PostgreSQL 可同步 chunks 数正常。
+
+再确认混合检索接口：
+
+```http
+POST /api/v1/search
+```
+
+请求示例：
+
+```json
+{
+  "query": "冒口如何保证热节补缩",
+  "limit": 8,
+  "document_id": null
+}
+```
+
+### 5. 启动后端
+
+```powershell
+cd D:\rag_system\backend
+.\.venv\Scripts\Activate.ps1
+uvicorn app.main:app --reload
+```
+
+### 6. 启动前端
+
+```powershell
+cd D:\rag_system\frontend
+npm run dev
+```
+
+访问：
+
+```text
+http://localhost:3000/rag
+```
+
+页面标题为“知识问答”。页面调用 `POST /api/v1/rag/ask`，展示 `answer`、`citations`、`retrieval.total`、`llm.provider` 和 `llm.model`。
+
+### 7. 第六阶段 RAG API 验收
+
+```http
+POST /api/v1/rag/ask
+```
+
+请求示例：
+
+```json
+{
+  "question": "冒口如何保证热节补缩？",
+  "limit": 8,
+  "document_id": null
+}
+```
+
+验收要点：
+
+- 返回 `answer`。
+- 返回 `citations`。
+- `citations` 均来自 `retrieval.items` 对应 chunks。
+- 返回 `llm.provider` 和 `llm.model`。
+- `context_status` 为 `ok` 或 `no_context`。
+- no-context 时 HTTP 200，`success=true`，`citations=[]`。
+- `retrieval_logs` 仍不写入。
+- LLM 不可用时返回明确错误。
+
+### 8. 测试与 lint 手动命令
+
+第六阶段后端测试：
+
+```powershell
+cd D:\rag_system\backend
+.\.venv\Scripts\Activate.ps1
+python -m pytest tests/test_llm_provider.py tests/test_rag_context.py tests/test_rag_service.py tests/test_rag_api.py -q
+```
+
+第五阶段回归测试：
+
+```powershell
+cd D:\rag_system\backend
+.\.venv\Scripts\Activate.ps1
+python -m pytest tests/test_search_engine.py tests/test_search_index.py tests/test_hybrid_search.py -q
+```
+
+前端 lint：
+
+```powershell
+cd D:\rag_system\frontend
+npm run lint
+```
+
+### 9. 常见问题
+
+#### openai 包未安装
+
+现象：
+
+- 后端 import OpenAI-compatible provider 失败。
+
+处理：
+
+```powershell
+cd D:\rag_system\backend
+.\.venv\Scripts\Activate.ps1
+python -m pip install "openai>=1.0,<3.0"
+```
+
+#### Ollama 未启动
+
+现象：
+
+- RAG API 返回 `LLM_UNAVAILABLE`。
+
+处理：
+
+- 确认 Ollama 已启动。
+- 确认 `LLM_BASE_URL=http://localhost:11434/v1`。
+
+#### 模型名不匹配
+
+现象：
+
+- LLM 生成失败或 Ollama 返回模型不存在。
+
+处理：
+
+```powershell
+ollama list
+```
+
+确认 `.env` 中 `LLM_MODEL` 与列表中的模型名一致，例如：
+
+```env
+LLM_MODEL=qwen3.5:9b
+```
+
+#### LLM_TIMEOUT
+
+现象：
+
+- RAG API 返回 `LLM_TIMEOUT`。
+
+处理：
+
+- 确认模型已加载或首次加载时间较长。
+- 可适当增大 `LLM_TIMEOUT_SECONDS`。
+- 检查本机 CPU/GPU/内存资源。
+
+#### LLM_UNAVAILABLE
+
+现象：
+
+- RAG API 返回 `LLM_UNAVAILABLE`。
+
+处理：
+
+- 确认 Ollama 服务可访问。
+- 确认 `LLM_BASE_URL` 指向 `http://localhost:11434/v1`。
+- 确认本机防火墙或代理没有拦截。
+
+#### OpenSearch 不可用
+
+现象：
+
+- 搜索接口或 RAG API 返回 `SEARCH_ENGINE_UNAVAILABLE`。
+
+处理：
+
+- 确认 OpenSearch 容器运行。
+- 确认 `SEARCH_ENGINE_URL=http://localhost:9200`。
+- Windows / Docker Desktop 下确认资源和 `vm.max_map_count` 设置。
+
+#### 索引为空
+
+现象：
+
+- `/api/v1/search/index/status` 中 index document count 为 0。
+- RAG 返回 no-context。
+
+处理：
+
+- 先确认文档已解析、chunks 已生成、embedding 已生成。
+- 再执行索引同步。
+- 不要自动 rebuild index；由用户明确确认后手动执行。
+
+#### no-context
+
+现象：
+
+- RAG API 返回 HTTP 200，`context_status="no_context"`。
+
+说明：
+
+- no-context 是正常状态，不是异常。
+- 表示当前知识库未检索到足够依据。
+- no-context 时不调用 LLM。
+- no-context 时 `citations=[]`。
+
+#### citations 为空
+
+可能原因：
+
+- 当前为 no-context。
+- 检索结果为空。
+- 上下文长度限制导致无可用片段进入上下文。
+
+处理：
+
+- 检查 `/api/v1/search` 是否有结果。
+- 检查 `RAG_CONTEXT_MAX_CHARS` 是否过小。
+
+#### 前端无法连接后端
+
+现象：
+
+- `/rag` 页面显示网络请求失败。
+
+处理：
+
+- 确认 FastAPI 后端已启动。
+- 确认 `NEXT_PUBLIC_API_BASE_URL` 指向后端地址。
+- 默认后端地址为 `http://127.0.0.1:8000`。
+# 第七阶段本地开发补充：知识条目自动抽取与专家审核
+
+第七阶段新增 `knowledge_items` 知识条目体系和 `/knowledge-items` 前端页面。它独立于第五阶段混合检索和第六阶段 RAG 问答链路：
+
+- knowledge extraction 只从 PostgreSQL `document_chunks` 读取输入。
+- knowledge extraction 复用第六阶段 OpenAI-compatible LLM provider。
+- knowledge extraction 不调用 `/api/v1/rag/ask`。
+- knowledge extraction 不调用 `hybrid_search_chunks()`。
+- knowledge extraction 不调用 OpenSearch。
+- knowledge extraction 不写 `retrieval_logs`。
+
+## 配置项
+
+第七阶段新增：
+
+```env
+KNOWLEDGE_EXTRACTION_MAX_CHUNKS=20
+KNOWLEDGE_EXTRACTION_MAX_CHARS=12000
+KNOWLEDGE_EXTRACTION_DEFAULT_STATUS=draft
+```
+
+说明：
+
+- `KNOWLEDGE_EXTRACTION_DEFAULT_STATUS` 只能为 `draft`。
+- `pending_review` 只能通过 extract 请求中的 `auto_submit=true` 触发。
+- `approved` 永远不能作为抽取默认状态。
+- Ollama / LLM 接入仍沿用第六阶段 OpenAI-compatible provider 配置。
+
+## 迁移前安全检查
+
+第七阶段用新 `knowledge_items` 四表体系替代旧 `knowledge_entries` 预留体系。执行 migration 前必须确认旧表为空或不存在。
+
+建议由用户手动执行只读检查：
+
+```sql
+SELECT COUNT(*) FROM knowledge_entries;
+SELECT COUNT(*) FROM entry_versions;
+SELECT COUNT(*) FROM entry_review_records;
+```
+
+如果任一旧表非空，停止迁移并确认处理策略。第七阶段 migration 本身也包含 inspector 表存在检查和旧表非空保护。
+
+用户单独确认后，才执行：
+
+```powershell
+cd D:\rag_system\backend
+.\.venv\Scripts\Activate.ps1
+alembic upgrade head
+```
+
+## 第七阶段测试
+
+```powershell
+cd D:\rag_system\backend
+.\.venv\Scripts\Activate.ps1
+python -m pytest tests/test_knowledge_item_models.py tests/test_knowledge_item_service.py tests/test_knowledge_item_api.py tests/test_knowledge_extraction.py -q
+```
+
+第五阶段回归：
+
+```powershell
+python -m pytest tests/test_search_engine.py tests/test_search_index.py tests/test_hybrid_search.py -q
+```
+
+第六阶段回归：
+
+```powershell
+python -m pytest tests/test_llm_provider.py tests/test_rag_context.py tests/test_rag_service.py tests/test_rag_api.py -q
+```
+
+前端 lint：
+
+```powershell
+cd D:\rag_system\frontend
+npm run lint
+```
+
+## 本地启动
+
+基础服务：
+
+```powershell
+cd D:\rag_system
+docker compose --env-file .env -f infra/docker-compose.yml up -d postgres redis minio opensearch
+```
+
+不要把 `docker compose down -v` 作为常规命令。
+
+后端：
+
+```powershell
+cd D:\rag_system\backend
+.\.venv\Scripts\Activate.ps1
+uvicorn app.main:app --reload
+```
+
+前端：
+
+```powershell
+cd D:\rag_system\frontend
+npm run dev
+```
+
+打开：
+
+```text
+http://localhost:3000/knowledge-items
+```
+
+## 常见问题
+
+### 缺少 fastapi
+
+如果 `python -c "import fastapi"` 失败，请按项目依赖说明安装后端依赖。不要在自动化任务中私自安装依赖。
+
+### migration 因旧表非空停止
+
+说明旧 `knowledge_entries` / `entry_versions` / `entry_review_records` 中存在数据。为避免误删，迁移会停止。需要用户确认是否备份、迁移或清理旧数据。
+
+### extract LLM 不可用
+
+第七阶段抽取复用第六阶段 OpenAI-compatible provider。请检查 Ollama 是否启动、模型是否存在、`LLM_BASE_URL` / `LLM_MODEL` / `LLM_API_KEY` 是否正确。
+
+### parser 失败
+
+LLM 输出必须是 JSON object，顶层形如 `{"items": [...]}`。如果输出包含非法 `item_type`、空 title/content、未知 `source_chunk_ids`、`status` 或 `approved` 字段，parser 会失败且不写半成品。
+
+### duplicate skipped
+
+抽取时检测到同一来源文档、同一类型和相同 `content_hash` 的非 deprecated 条目，会跳过并返回 `skipped_duplicates`。手工创建重复仍返回 `409`。
+
+### approved 不能编辑
+
+`approved` 和 `deprecated` 禁止直接 `PATCH`。如需修改，使用 `revise` 创建新的 `draft` 修订版。
+
+### source_text 为空或不可见
+
+`source_text` 来自抽取或创建时的 `document_chunks.content` 快照。若手工创建时没有传 `source_chunk_ids`，则不会有来源片段快照。
+
+### confidence 不等于可信度
+
+`confidence` 是 LLM 抽取置信度，不代表专家审核可信度。只有 `status=approved` 才表示可信知识。
+
+### retrieval_logs 不应增加
+
+第七阶段不写 `retrieval_logs`。如果发现日志增加，需要确认是否由其他检索或 RAG 流程触发。

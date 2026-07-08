@@ -349,3 +349,129 @@ OpenSearch index 不是 PostgreSQL schema。它是从 PostgreSQL `documents` 和
 OpenSearch 文档 `_id` 使用 `chunk_id`，以支持重复同步幂等。
 
 按 `document_id` 重建索引时，应先删除搜索索引中该 `document_id` 下的旧索引文档，再写入 PostgreSQL 中当前最新的 embedded chunks，避免文档重解析后旧 chunk 残留。
+# 第七阶段数据库结构补充：knowledge_items 新体系
+
+第七阶段删除未使用的旧 `knowledge_entries` / `entry_versions` / `entry_review_records` 预留体系，并以新的 `knowledge_items` 四表体系替代。
+
+## 旧表替换
+
+旧表：
+
+- `knowledge_entries`
+- `entry_versions`
+- `entry_review_records`
+
+说明：
+
+- 这些旧表是早期预留体系，未正式承载业务数据。
+- 第七阶段 migration 会删除旧表。
+- 删除旧表前使用 inspector 判断旧表是否存在。
+- 如果旧表存在且任一非空，migration 会停止并提示用户确认处理策略。
+- 删除范围仅限旧知识条目体系，不影响 `documents`、`document_chunks`、`retrieval_logs`、uploaded files、search、RAG 或 OpenSearch。
+
+## 新表：knowledge_items
+
+用途：保存结构化知识条目当前版本。
+
+关键字段：
+
+- `id`
+- `item_type`
+- `title`
+- `content`
+- `content_hash`
+- `structured_data`
+- `entities`
+- `parameters`
+- `conditions`
+- `confidence`
+- `status`
+- `source_document_id`
+- `source_filename`
+- `created_by`
+- `reviewed_by`
+- `review_comment`
+- `version`
+- `reviewed_at`
+- `created_at`
+- `updated_at`
+- `revises_item_id`
+
+约束与索引说明：
+
+- `content_hash` 是普通索引，不是唯一约束。
+- 重复检测在 service 层执行。
+- 不设置唯一约束是为了允许 `revise` 新 `draft` 与原 `approved` / `deprecated` 条目拥有相同 hash。
+
+语义说明：
+
+- `confidence` 是 LLM 抽取置信度，不等于知识可信度。
+- `confidence` ORM 层使用 `Numeric(5,4)`，API 层统一输出 `float | None`。
+- 只有 `status=approved` 才表示可信知识。
+- `approved` 当前暂不进入第六阶段 RAG 回答链路。
+
+## 新表：knowledge_item_chunks
+
+用途：保存知识条目与来源 chunk 的追溯关系。
+
+字段：
+
+- `id`
+- `knowledge_item_id`
+- `chunk_id`
+- `document_id`
+- `chunk_index`
+- `source_text`
+- `created_at`
+
+说明：
+
+- `source_text` 是抽取时 `document_chunks.content` 的原文快照。
+- `source_text` 不替代 `document_chunks.content`。
+- 即使后续 chunk 重新切分、重建或更新，仍可追溯当时抽取依据。
+- `source_text` 用于专家审核、citation 和后续图谱来源追溯。
+
+## 新表：knowledge_item_reviews
+
+用途：保存专家审核动作。
+
+字段：
+
+- `id`
+- `knowledge_item_id`
+- `review_action`
+- `from_status`
+- `to_status`
+- `review_comment`
+- `reviewer`
+- `created_at`
+
+说明：
+
+- 审核记录只记录状态流转和审核意见。
+- 审核记录不替代内容版本快照。
+
+## 新表：knowledge_item_versions
+
+用途：保存内容版本快照。
+
+字段：
+
+- `id`
+- `knowledge_item_id`
+- `version`
+- `snapshot`
+- `change_reason`
+- `created_by`
+- `created_at`
+
+说明：
+
+- 创建条目时写 `version=1`。
+- `PATCH` 编辑后 `version + 1`。
+- `revise` 创建新 `draft` 时写新条目的 `version=1`。
+- 审核状态变化主要写 `knowledge_item_reviews`，后续可扩展为同时写版本快照。
+
+## retrieval_logs
+
+第七阶段仍不写 `retrieval_logs`。知识条目 CRUD、审核、修订和抽取不应增加检索日志。

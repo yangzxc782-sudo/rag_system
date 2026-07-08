@@ -17,12 +17,14 @@ const modules = [
     href: "/search",
   },
   {
-    name: "知识条目库",
-    description: "预留抽取结果、版本和专家审核入口",
+    name: "知识问答",
+    description: "基于混合检索结果的单轮 RAG 问答入口",
+    href: "/rag",
   },
   {
-    name: "智能问答",
-    description: "预留会话、消息和检索日志入口",
+    name: "知识条目库",
+    description: "预留抽取结果、版本和专家审核入口",
+    href: "/knowledge-items",
   },
   {
     name: "系统状态",

@@ -78,6 +78,30 @@ class Settings(BaseSettings):
     hybrid_vector_top_k: int = 50
     hybrid_final_limit: int = 10
 
+    llm_provider: str = "openai_compatible"
+    llm_base_url: str = "http://localhost:11434/v1"
+    llm_model: str = "qwen3:8b"
+    llm_api_key: str = "ollama"
+    llm_temperature: float = 0.2
+    llm_max_tokens: int = 2048
+    llm_timeout_seconds: int = 120
+
+    rag_top_k: int = 8
+    rag_context_max_chars: int = 12000
+    rag_require_citations: bool = True
+    rag_no_context_message: str = "当前知识库中未检索到足够依据，无法可靠回答该问题。"
+    rag_system_prompt_name: str = "casting_rag_default"
+
+    knowledge_extraction_max_chunks: int = 20
+    knowledge_extraction_max_chars: int = 12000
+    knowledge_extraction_default_status: str = "draft"
+
+    reranker_enabled: bool = False
+    reranker_provider: str = "local_qwen3"
+    reranker_model: str = "Qwen3-Reranker-0.6B"
+    reranker_model_path: str = "D:/rag_system/models/Qwen3-Reranker-0.6B"
+    reranker_top_k: int = 8
+
     @model_validator(mode="after")
     def validate_search_settings(self) -> "Settings":
         self.search_vector_space = self.search_vector_space.strip().lower()
@@ -93,6 +117,39 @@ class Settings(BaseSettings):
             raise ValueError("hybrid_keyword_top_k must be greater than or equal to hybrid_final_limit")
         if self.hybrid_vector_top_k < self.hybrid_final_limit:
             raise ValueError("hybrid_vector_top_k must be greater than or equal to hybrid_final_limit")
+        self.llm_provider = self.llm_provider.strip().lower()
+        if self.llm_provider != "openai_compatible":
+            raise ValueError("llm_provider must be openai_compatible in phase 6")
+        self.llm_base_url = self.llm_base_url.strip()
+        if not self.llm_base_url:
+            raise ValueError("llm_base_url must not be empty")
+        self.llm_model = self.llm_model.strip()
+        if not self.llm_model:
+            raise ValueError("llm_model must not be empty")
+        if self.llm_timeout_seconds <= 0:
+            raise ValueError("llm_timeout_seconds must be greater than 0")
+        if self.llm_temperature < 0 or self.llm_temperature > 2:
+            raise ValueError("llm_temperature must be between 0 and 2")
+        if self.llm_max_tokens <= 0:
+            raise ValueError("llm_max_tokens must be greater than 0")
+        if self.rag_top_k <= 0:
+            raise ValueError("rag_top_k must be greater than 0")
+        if self.rag_context_max_chars <= 0:
+            raise ValueError("rag_context_max_chars must be greater than 0")
+        self.rag_no_context_message = self.rag_no_context_message.strip()
+        if not self.rag_no_context_message:
+            raise ValueError("rag_no_context_message must not be empty")
+        if self.knowledge_extraction_max_chunks <= 0:
+            raise ValueError("knowledge_extraction_max_chunks must be greater than 0")
+        if self.knowledge_extraction_max_chunks > 50:
+            raise ValueError("knowledge_extraction_max_chunks must be less than or equal to 50")
+        if self.knowledge_extraction_max_chars <= 0:
+            raise ValueError("knowledge_extraction_max_chars must be greater than 0")
+        self.knowledge_extraction_default_status = self.knowledge_extraction_default_status.strip().lower()
+        if self.knowledge_extraction_default_status != "draft":
+            raise ValueError("knowledge_extraction_default_status must be draft")
+        if self.reranker_top_k <= 0:
+            raise ValueError("reranker_top_k must be greater than 0")
         return self
 
     @property
