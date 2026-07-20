@@ -9,7 +9,7 @@ from app.core.errors import (
     DOCUMENT_ALREADY_PARSED,
     DOCUMENT_NOT_FOUND,
     DOCUMENT_PARSE_FAILED,
-    DOCUMENT_PARSER_UNAVAILABLE,
+    DOCUMENT_PARSER_CONFIG_INVALID,
     DOCUMENT_SOURCE_FILE_NOT_FOUND,
     BusinessError,
 )
@@ -90,13 +90,25 @@ def fake_document(process_status: str = "uploaded") -> SimpleNamespace:
     )
 
 
-def fake_settings(document_parser: str = "simple") -> SimpleNamespace:
+def fake_settings(
+    document_parser_provider: str = "basic",
+) -> SimpleNamespace:
     return SimpleNamespace(
-        document_parser=document_parser,
+        document_parser_provider=document_parser_provider,
+        document_parser="simple",
         chunk_size_chars=1000,
         chunk_overlap_chars=100,
         mineru_endpoint="",
         mineru_timeout_seconds=60,
+        mineru_api_base_url=None,
+        mineru_api_key=None,
+        mineru_api_timeout_seconds=300,
+        mineru_api_poll_interval_seconds=5,
+        mineru_api_max_poll_attempts=120,
+        mineru_output_prefix="parsed-assets",
+        mineru_parse_mode="auto",
+        mineru_enable_ocr=True,
+        mineru_save_intermediate=True,
     )
 
 
@@ -154,19 +166,34 @@ def test_parse_document_already_has_chunks_does_not_change_status(monkeypatch) -
     assert minio_called is False
 
 
-def test_parse_document_mineru_unavailable_marks_parse_failed(monkeypatch) -> None:
+def test_parse_document_unknown_provider_is_rejected_before_storage(monkeypatch) -> None:
     document = fake_document()
     db = FakeDb(document=document)
-    monkeypatch.setattr(document_parsing, "get_settings", lambda: fake_settings("mineru"))
-    monkeypatch.setattr(document_parsing, "get_object_bytes_from_minio", lambda **kwargs: b"%PDF")
+    storage_called = False
+
+    def fake_get_object_bytes_from_minio(**kwargs):
+        nonlocal storage_called
+        storage_called = True
+        return b"%PDF"
+
+    monkeypatch.setattr(
+        document_parsing,
+        "get_settings",
+        lambda: fake_settings("unsupported"),
+    )
+    monkeypatch.setattr(
+        document_parsing,
+        "get_object_bytes_from_minio",
+        fake_get_object_bytes_from_minio,
+    )
 
     with pytest.raises(BusinessError) as exc_info:
         document_parsing.parse_document(db, DOCUMENT_ID)
 
-    assert exc_info.value.code == DOCUMENT_PARSER_UNAVAILABLE
-    assert db.rollbacks == 1
-    assert document.process_status == "parse_failed"
-    assert document.error_message
+    assert exc_info.value.code == DOCUMENT_PARSER_CONFIG_INVALID
+    assert db.rollbacks == 0
+    assert document.process_status == "uploaded"
+    assert storage_called is False
 
 
 def test_parse_document_source_file_not_found_marks_parse_failed(monkeypatch) -> None:

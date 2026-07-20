@@ -9,6 +9,7 @@ import pytest
 from app.api.v1 import search as search_api
 from app.core.errors import (
     SEARCH_ENGINE_CONFIG_INVALID,
+    SEARCH_ENGINE_UNAVAILABLE,
     SEARCH_INDEX_MAPPING_MISMATCH,
     SEARCH_INDEX_REBUILD_FAILED,
     BusinessError,
@@ -34,6 +35,7 @@ def make_settings(**overrides: object) -> SimpleNamespace:
         "search_content_analyzer": "ik_max_word",
         "search_query_analyzer": "ik_smart",
         "embedding_dim": 1024,
+        "embedding_model": "Qwen3-Embedding-0.6B",
     }
     values.update(overrides)
     return SimpleNamespace(**values)
@@ -47,9 +49,12 @@ class FakeIndices:
         self.create_calls: list[dict[str, object]] = []
         self.put_alias_calls: list[dict[str, object]] = []
         self.calls: list[str] = []
+        self.raise_on_exists: Exception | None = None
 
     def exists(self, *, index: str) -> bool:
         self.calls.append(f"exists:{index}")
+        if self.raise_on_exists is not None:
+            raise self.raise_on_exists
         return self.exists_result
 
     def create(self, *, index: str, body: dict) -> dict:
@@ -248,6 +253,19 @@ def test_is_syncable_chunk_filters_embedding_status_dim_model_and_embedding() ->
     assert search_index.is_syncable_chunk(make_chunk(embedding_model="other-model"), settings) is False
 
 
+def test_is_syncable_chunk_uses_configured_model_and_dimension() -> None:
+    settings = make_settings(embedding_model="configured-model", embedding_dim=768)
+
+    assert search_index.is_syncable_chunk(
+        make_chunk(embedding_model="configured-model", embedding_dim=768),
+        settings,
+    ) is True
+    assert search_index.is_syncable_chunk(
+        make_chunk(embedding_model="Qwen3-Embedding-0.6B", embedding_dim=1024),
+        settings,
+    ) is False
+
+
 def test_build_payload_contains_source_metadata_embedding_and_exact_terms() -> None:
     document = make_document()
     chunk = make_chunk()
@@ -290,6 +308,167 @@ def test_rebuild_bulk_exception_raises_rebuild_failed(monkeypatch: pytest.Monkey
         search_index.rebuild_search_index(FakeDb(), scope="all", client=client, settings=make_settings())
 
     assert exc_info.value.code == SEARCH_INDEX_REBUILD_FAILED
+    assert chunk.embedding_status == "embedded"
+    assert chunk.embedding == [0.1, 0.2, 0.3]
+    assert chunk.embedding_model == "Qwen3-Embedding-0.6B"
+    assert chunk.embedding_dim == 1024
+
+
+def test_rebuild_bulk_partial_failure_raises_with_failed_chunk_details(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    document = make_document()
+    successful_chunk = make_chunk(document_id=document.id, chunk_index=0)
+    failed_chunk = make_chunk(document_id=document.id, chunk_index=1)
+    rows = [
+        SyncableChunkRow(document, successful_chunk),
+        SyncableChunkRow(document, failed_chunk),
+    ]
+    client = FakeClient()
+    client.bulk_response = {
+        "errors": True,
+        "items": [
+            {"index": {"_id": str(successful_chunk.id), "status": 201}},
+            {
+                "index": {
+                    "_id": str(failed_chunk.id),
+                    "status": 400,
+                    "error": {"type": "mapper_parsing_exception", "reason": "bad vector"},
+                }
+            },
+        ],
+    }
+    monkeypatch.setattr(search_index, "_load_syncable_chunks", lambda *args, **kwargs: rows)
+
+    with pytest.raises(BusinessError) as exc_info:
+        search_index.rebuild_search_index(
+            FakeDb(),
+            scope="all",
+            client=client,
+            settings=make_settings(),
+        )
+
+    assert exc_info.value.code == SEARCH_INDEX_REBUILD_FAILED
+    assert exc_info.value.detail["indexed"] == 1
+    assert exc_info.value.detail["failed"] == 1
+    assert str(failed_chunk.id) in str(exc_info.value.detail["errors"])
+    assert "bad vector" in str(exc_info.value.detail["errors"])
+    assert successful_chunk.embedding_status == "embedded"
+    assert failed_chunk.embedding_status == "embedded"
+    assert successful_chunk.embedding == [0.1, 0.2, 0.3]
+    assert failed_chunk.embedding == [0.1, 0.2, 0.3]
+
+
+def test_document_sync_indexes_25_mineru_chunks_with_stable_ids_and_is_idempotent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    document_id = uuid4()
+    document = make_document(id=document_id, original_filename="test1.pdf")
+    chunks = [
+        make_chunk(document_id=document_id, chunk_index=index)
+        for index in range(25)
+    ]
+    rows = [SyncableChunkRow(document, chunk) for chunk in chunks]
+    client = FakeClient()
+    client.bulk_response = {
+        "errors": False,
+        "items": [
+            {"index": {"_id": str(chunk.id), "status": 201}}
+            for chunk in chunks
+        ],
+    }
+    monkeypatch.setattr(search_index, "_load_syncable_chunks", lambda *args, **kwargs: rows)
+
+    client.delete_response = {"deleted": 0}
+    first = search_index.rebuild_search_index(
+        FakeDb(document=document),
+        scope="document",
+        document_id=document_id,
+        client=client,
+        settings=make_settings(),
+    )
+    client.delete_response = {"deleted": 25}
+    second = search_index.rebuild_search_index(
+        FakeDb(document=document),
+        scope="document",
+        document_id=document_id,
+        client=client,
+        settings=make_settings(),
+    )
+
+    first_ids = [item["index"]["_id"] for item in client.bulk_calls[0]["body"][::2]]
+    second_ids = [item["index"]["_id"] for item in client.bulk_calls[1]["body"][::2]]
+    expected_ids = [str(chunk.id) for chunk in chunks]
+    assert first.syncable_chunks == first.indexed == 25
+    assert second.syncable_chunks == second.indexed == 25
+    assert first.deleted == 0
+    assert second.deleted == 25
+    assert first_ids == expected_ids
+    assert second_ids == expected_ids
+    assert len(set(first_ids)) == 25
+    assert len(set(second_ids)) == 25
+    assert set(first_ids) == set(second_ids)
+
+
+def test_78_unembedded_chunks_are_not_syncable() -> None:
+    settings = make_settings()
+    chunks = [
+        make_chunk(
+            chunk_index=index,
+            embedding_status="not_started",
+            embedding=None,
+            embedding_model=None,
+            embedding_dim=None,
+        )
+        for index in range(78)
+    ]
+
+    assert [chunk for chunk in chunks if search_index.is_syncable_chunk(chunk, settings)] == []
+
+
+def test_basic_parser_chunk_uses_the_same_syncable_contract() -> None:
+    chunk = make_chunk(source_metadata={"parser_name": "simple"})
+
+    assert search_index.is_syncable_chunk(chunk, make_settings()) is True
+
+
+def test_rebuild_fails_cleanly_when_opensearch_is_unavailable() -> None:
+    indices = FakeIndices()
+    indices.raise_on_exists = ConnectionError("OpenSearch unavailable")
+    client = FakeClient(indices)
+
+    with pytest.raises(BusinessError) as exc_info:
+        search_index.rebuild_search_index(
+            FakeDb(),
+            scope="all",
+            client=client,
+            settings=make_settings(),
+        )
+
+    assert exc_info.value.code == SEARCH_ENGINE_UNAVAILABLE
+    assert exc_info.value.detail == {"error_type": "ConnectionError"}
+
+
+def test_api_rebuild_partial_failure_returns_index_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    def raise_partial_failure(*args: object, **kwargs: object) -> None:
+        raise BusinessError(
+            SEARCH_INDEX_REBUILD_FAILED,
+            "OpenSearch bulk indexing partially failed.",
+            detail={"indexed": 1, "failed": 1, "errors": ["chunk_id=test status=400"]},
+            status_code=500,
+        )
+
+    monkeypatch.setattr(search_api.search_index_service, "rebuild_search_index", raise_partial_failure)
+
+    response = search_api.rebuild_search_index_endpoint(
+        SearchIndexRebuildRequest(scope="document", document_id=uuid4()),
+        FakeDb(),
+    )
+
+    assert response.status_code == 500
+    body = bytes(response.body).decode("utf-8")
+    assert SEARCH_INDEX_REBUILD_FAILED in body
+    assert '"failed":1' in body
 
 
 def test_get_status_returns_count_and_postgres_syncable_count(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -5,7 +5,16 @@ import DocumentChunkList from "@/components/DocumentChunkList";
 import DocumentDetailView from "@/components/DocumentDetail";
 import DocumentEmbeddingPanel from "@/components/DocumentEmbeddingPanel";
 import DocumentParseButton from "@/components/DocumentParseButton";
-import { getDocument, getDocumentChunks, getDocumentEmbeddingStatus } from "@/lib/documents";
+import DocumentParseResults from "@/components/DocumentParseResults";
+import {
+  getDocument,
+  getDocumentAssets,
+  getDocumentBlocks,
+  getDocumentChunks,
+  getDocumentEmbeddingStatus,
+  getDocumentParseRuns,
+  getDocumentParseStatus,
+} from "@/lib/documents";
 
 type DocumentDetailPageProps = {
   params: Promise<{
@@ -29,6 +38,30 @@ export default async function DocumentDetailPage({ params }: DocumentDetailPageP
     embeddingStatusResult && !embeddingStatusResult.success
       ? (embeddingStatusResult.error?.message ?? "embedding 状态暂时不可用。")
       : null;
+
+  const parseStatusResult = document ? await getDocumentParseStatus(id) : null;
+  const parseStatus = parseStatusResult?.success ? parseStatusResult.data : null;
+  const parseRunsResult = document ? await getDocumentParseRuns(id, { limit: 50, offset: 0 }) : null;
+  const parseRuns = parseRunsResult?.success ? parseRunsResult.data : null;
+  const selectedParseRun =
+    parseStatus?.active_parse_run ?? parseStatus?.latest_parse_run ?? parseRuns?.items[0] ?? null;
+
+  const blocksResult =
+    document && selectedParseRun
+      ? await getDocumentBlocks(id, { parseRunId: selectedParseRun.id, limit: 50, offset: 0 })
+      : null;
+  const blocks = blocksResult?.success ? blocksResult.data : null;
+  const assetsResult =
+    document && selectedParseRun
+      ? await getDocumentAssets(id, { parseRunId: selectedParseRun.id, limit: 50, offset: 0 })
+      : null;
+  const assets = assetsResult?.success ? assetsResult.data : null;
+  const parseResultsErrorMessage =
+    (parseStatusResult && !parseStatusResult.success ? parseStatusResult.error?.message : null) ??
+    (parseRunsResult && !parseRunsResult.success ? parseRunsResult.error?.message : null) ??
+    (blocksResult && !blocksResult.success ? blocksResult.error?.message : null) ??
+    (assetsResult && !assetsResult.success ? assetsResult.error?.message : null) ??
+    null;
 
   return (
     <AppShell>
@@ -60,6 +93,14 @@ export default async function DocumentDetailPage({ params }: DocumentDetailPageP
         {document ? (
           <section className="grid gap-5">
             <DocumentParseButton documentId={document.id} />
+            <DocumentParseResults
+              documentId={document.id}
+              status={parseStatus}
+              parseRuns={parseRuns}
+              blocks={blocks}
+              assets={assets}
+              errorMessage={parseResultsErrorMessage}
+            />
             <DocumentEmbeddingPanel
               documentId={document.id}
               status={embeddingStatus}

@@ -11,7 +11,10 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base
 
 if TYPE_CHECKING:
+    from app.models.document_asset import DocumentAsset
+    from app.models.document_block import DocumentBlock
     from app.models.document_chunk import DocumentChunk
+    from app.models.document_parse_run import DocumentParseRun
     from app.models.knowledge_item import KnowledgeItem
     from app.models.knowledge_item_chunk import KnowledgeItemChunk
 
@@ -42,6 +45,9 @@ class Document(Base):
         back_populates="document",
         cascade="all, delete-orphan",
     )
+    parse_runs: Mapped[list[DocumentParseRun]] = relationship("DocumentParseRun", back_populates="document")
+    blocks: Mapped[list[DocumentBlock]] = relationship("DocumentBlock", back_populates="document")
+    assets: Mapped[list[DocumentAsset]] = relationship("DocumentAsset", back_populates="document")
     knowledge_items: Mapped[list[KnowledgeItem]] = relationship("KnowledgeItem", back_populates="source_document")
     knowledge_item_chunks: Mapped[list[KnowledgeItemChunk]] = relationship(
         "KnowledgeItemChunk",

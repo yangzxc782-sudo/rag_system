@@ -72,6 +72,19 @@ export type HybridSearchData = {
   items: HybridSearchItem[];
 };
 
+export type SearchIndexRebuildData = {
+  scope: string;
+  document_id: string | null;
+  index_name: string;
+  alias: string;
+  syncable_chunks: number;
+  indexed: number;
+  deleted: number;
+  failed: number;
+  errors: string[];
+  batch_size: number;
+};
+
 function fallbackError<T>(message: string, detail: unknown = null): ApiEnvelope<T> {
   return {
     success: false,
@@ -139,6 +152,30 @@ export async function vectorSearch(request: VectorSearchRequest): Promise<ApiEnv
     return parseEnvelope<VectorSearchData>(response);
   } catch (error) {
     return fallbackError<VectorSearchData>("向量检索请求失败。", {
+      error_type: error instanceof Error ? error.name : typeof error,
+    });
+  }
+}
+
+export async function syncDocumentSearchIndex(
+  documentId: string,
+): Promise<ApiEnvelope<SearchIndexRebuildData>> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/v1/search/index/rebuild`, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        scope: "document",
+        document_id: documentId,
+      }),
+    });
+
+    return parseEnvelope<SearchIndexRebuildData>(response);
+  } catch (error) {
+    return fallbackError<SearchIndexRebuildData>("搜索索引同步请求失败。", {
       error_type: error instanceof Error ? error.name : typeof error,
     });
   }

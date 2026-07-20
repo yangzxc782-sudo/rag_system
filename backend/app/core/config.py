@@ -2,6 +2,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from pydantic import model_validator
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -9,6 +10,17 @@ BACKEND_DIR = Path(__file__).resolve().parents[2]
 
 
 class Settings(BaseSettings):
+    document_parser_provider: str = "mineru_api"
+    mineru_api_base_url: str | None = None
+    mineru_api_key: SecretStr | None = None
+    mineru_api_timeout_seconds: int = 300
+    mineru_api_poll_interval_seconds: int = 5
+    mineru_api_max_poll_attempts: int = 120
+    mineru_output_prefix: str = "parsed-assets"
+    mineru_parse_mode: str = "auto"
+    mineru_enable_ocr: bool = True
+    mineru_save_intermediate: bool = True
+
     model_config = SettingsConfigDict(
         env_file=BACKEND_DIR / ".env",
         env_file_encoding="utf-8",
@@ -37,6 +49,8 @@ class Settings(BaseSettings):
     upload_allowed_content_types: str = ""
     backend_cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
 
+    # Deprecated compatibility fields. Phase 8 parsing ignores these values;
+    # use document_parser_provider and mineru_api_* exclusively for MinerU V4.
     document_parser: str = "simple"
     chunk_size_chars: int = 1000
     chunk_overlap_chars: int = 100

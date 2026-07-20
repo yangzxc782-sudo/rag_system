@@ -1297,3 +1297,110 @@ LLM 输出必须是 JSON object，顶层形如 `{"items": [...]}`。如果输出
 ### retrieval_logs 不应增加
 
 第七阶段不写 `retrieval_logs`。如果发现日志增加，需要确认是否由其他检索或 RAG 流程触发。
+
+## 第八阶段：MinerU 文档解析本地开发流程
+
+第八阶段将文档解析入库层升级为 MinerU API 主路径。以下内容只说明本地开发与手动验收流程，命令需由用户自行执行，本步骤不运行任何命令。
+
+### 1. 启动本地基础服务
+
+本地基础服务包括 PostgreSQL、Redis、MinIO 和 OpenSearch。所有 Docker Compose 命令必须从项目根目录执行，并显式指定 compose 文件：
+
+```powershell
+docker compose --env-file .env -f infra/docker-compose.yml up -d
+docker compose --env-file .env -f infra/docker-compose.yml ps
+```
+
+禁止使用：
+
+```powershell
+docker compose down -v
+docker volume prune
+docker system prune --volumes
+```
+
+### 2. 选择解析器
+
+正式解析推荐：
+
+```env
+DOCUMENT_PARSER_PROVIDER=mineru_api
+MINERU_API_BASE_URL=https://mineru.net
+MINERU_API_KEY=<your-mineru-api-key>
+MINERU_API_TIMEOUT_SECONDS=120
+MINERU_API_POLL_INTERVAL_SECONDS=5
+MINERU_API_MAX_POLL_ATTEMPTS=120
+MINERU_PARSE_MODE=vlm
+MINERU_ENABLE_OCR=true
+MINERU_OUTPUT_PREFIX=parsed-assets
+```
+
+最小本地 fallback / 测试：
+
+```env
+DOCUMENT_PARSER_PROVIDER=basic
+```
+
+说明：
+
+- `mineru_api` 是正式主路径。
+- `basic` 仅用于 fallback、测试 parser 或简单文本类文档验证。
+- 当 provider 为 `mineru_api` 且配置缺失时，后端会返回明确配置错误，不会静默 fallback 到 basic。
+- 不要把真实 API key 提交到仓库。
+
+`MINERU_API_BASE_URL` 只填写官方域名，后端自行拼接 V4 路径。当前本地文件流程先调用 `POST /api/v4/file-urls/batch`，再用签名地址 `PUT` 原始文件，随后轮询 `GET /api/v4/extract-results/batch/{batch_id}`。签名上传和结果 ZIP 下载不会携带 MinerU Bearer Token，上传时也不会主动设置 `Content-Type`。`MINERU_PARSE_MODE=auto` 仅作为兼容别名，实际按 `vlm` 请求；正式配置推荐直接写 `vlm`。
+
+### 3. 文档上传与解析
+
+本地开发的推荐顺序：
+
+1. 启动后端服务。
+2. 启动前端服务。
+3. 上传测试文档。
+4. 调用文档 parse API。
+5. 查看 parse status。
+6. 查看 blocks / assets。
+7. 查看 chunks。
+8. 后续手动触发 embedding。
+9. 后续手动重建或同步 OpenSearch 索引。
+10. 回归验证 search / RAG / knowledge-items。
+
+示例 API：
+
+```text
+POST /api/v1/documents/{document_id}/parse
+GET  /api/v1/documents/{document_id}/parse-status
+GET  /api/v1/documents/{document_id}/parse-runs
+GET  /api/v1/documents/{document_id}/blocks?limit=50&offset=0
+GET  /api/v1/documents/{document_id}/assets?limit=50&offset=0
+GET  /api/v1/documents/{document_id}/chunks
+```
+
+blocks / assets 查询默认分页，前端也不应一次性渲染巨大 JSON。
+
+### 4. 后续 embedding 与 OpenSearch
+
+第八阶段解析流程只生成 `document_chunks`，不自动生成 embedding，也不自动 rebuild OpenSearch。
+
+手动验收时应在 parse 成功后再执行 embedding 相关流程，然后重建或同步 OpenSearch 索引，最后验证：
+
+```text
+/api/v1/search
+/api/v1/rag/ask
+/api/v1/knowledge-items
+```
+
+### 5. 测试数据重建注意事项
+
+第八阶段 v1 不提供正式 reparse API。已有 chunks 的文档默认返回 `DOCUMENT_ALREADY_PARSED`。
+
+如果本地开发库只有测试数据，且需要重新解析同一测试文档，必须先由用户确认并手动清理测试数据。不要提供或运行自动删除生产数据的脚本。清理前应确认：
+
+- 当前是本地开发库。
+- 目标 document_id 是测试数据。
+- 相关 knowledge_items 也是测试数据，或没有需要保留的审核知识。
+- 不删除 MinIO 原始上传文件。
+- 不删除 PostgreSQL volume。
+- 不删除 OpenSearch volume。
+
+生产或正式数据不应直接删除 chunks，尤其不能删除已经被 `knowledge_item_chunks` 引用的 chunks。

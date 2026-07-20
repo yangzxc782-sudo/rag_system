@@ -8,6 +8,10 @@ import {
   type DocumentEmbeddingData,
   type DocumentEmbeddingStatusData,
 } from "@/lib/documents";
+import {
+  syncDocumentSearchIndex,
+  type SearchIndexRebuildData,
+} from "@/lib/search";
 
 type DocumentEmbeddingPanelProps = {
   documentId: string;
@@ -27,6 +31,10 @@ function resultMessage(data: DocumentEmbeddingData): string {
   return `本次生成 ${data.embedded} 个，跳过 ${data.skipped} 个，失败 ${data.failed} 个。`;
 }
 
+function indexResultMessage(data: SearchIndexRebuildData): string {
+  return `索引同步完成：符合条件 ${data.syncable_chunks} 个，写入 ${data.indexed} 个，移除旧记录 ${data.deleted} 个。`;
+}
+
 export default function DocumentEmbeddingPanel({
   documentId,
   status,
@@ -36,11 +44,16 @@ export default function DocumentEmbeddingPanel({
   const [isGenerating, setIsGenerating] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(errorMessage ?? null);
+  const [isSyncingIndex, setIsSyncingIndex] = useState(false);
+  const [indexMessage, setIndexMessage] = useState<string | null>(null);
+  const [indexError, setIndexError] = useState<string | null>(null);
 
   async function handleGenerate() {
     setIsGenerating(true);
     setMessage(null);
     setError(null);
+    setIndexMessage(null);
+    setIndexError(null);
 
     const result = await generateDocumentEmbeddings(documentId);
     setIsGenerating(false);
@@ -61,7 +74,26 @@ export default function DocumentEmbeddingPanel({
     }
 
     setMessage(result.data ? resultMessage(result.data) : "embedding 生成完成。");
+    if (result.data && result.data.embedded > 0) {
+      setIndexError("已生成新的 embedding，请重新同步搜索索引。");
+    }
     router.refresh();
+  }
+
+  async function handleSyncIndex() {
+    setIsSyncingIndex(true);
+    setIndexMessage(null);
+    setIndexError(null);
+
+    const result = await syncDocumentSearchIndex(documentId);
+    setIsSyncingIndex(false);
+
+    if (!result.success || !result.data) {
+      setIndexError(result.error?.message ?? "搜索索引同步失败。");
+      return;
+    }
+
+    setIndexMessage(indexResultMessage(result.data));
   }
 
   return (
@@ -77,7 +109,7 @@ export default function DocumentEmbeddingPanel({
         <button
           type="button"
           onClick={handleGenerate}
-          disabled={isGenerating}
+          disabled={isGenerating || isSyncingIndex}
           className="w-fit rounded-md bg-slate-950 px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:bg-slate-400"
         >
           {isGenerating ? "生成中..." : "生成 embedding"}
@@ -132,6 +164,37 @@ export default function DocumentEmbeddingPanel({
           {error}
         </p>
       ) : null}
+
+      <div className="mt-4 border-t border-slate-200 pt-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h4 className="text-sm font-semibold text-slate-950">OpenSearch 索引</h4>
+            <p className="mt-1 text-sm text-slate-600">
+              当前可同步 {status?.embedded ?? 0} 个 embedded chunks。
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={handleSyncIndex}
+            disabled={isSyncingIndex || isGenerating || !status || status.embedded === 0}
+            className="w-fit rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-950 hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
+          >
+            {isSyncingIndex ? "同步中..." : "同步搜索索引"}
+          </button>
+        </div>
+
+        {indexMessage ? (
+          <p className="mt-3 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+            {indexMessage}
+          </p>
+        ) : null}
+
+        {indexError ? (
+          <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+            {indexError}
+          </p>
+        ) : null}
+      </div>
     </div>
   );
 }

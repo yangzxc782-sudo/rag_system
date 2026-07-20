@@ -577,3 +577,29 @@ PostgreSQL MCP 仅允许只读核验，例如：
 - 不写 `retrieval_logs`。
 
 详细说明和手动验收流程见 `docs/phase-7-knowledge-items-review.md`。
+
+## 第八阶段：MinerU API 文档解析增强
+
+当前系统已经完成 FastAPI/PostgreSQL/MinIO/Redis 基础骨架、文档上传与基础解析、Qwen3-Embedding + pgvector、OpenSearch 混合检索、最小 RAG 问答闭环，以及 `knowledge_items` 知识条目抽取与专家审核闭环。第八阶段新增的是文档解析入库层增强：以 MinerU API 作为正式主解析器，提升 PDF、扫描 PDF、图文混排、表格、公式和图片类文档的解析质量。
+
+解析器配置边界：
+
+- `DOCUMENT_PARSER_PROVIDER=mineru_api` 是正式主路径。
+- `DOCUMENT_PARSER_PROVIDER=basic` 仅用于 fallback、单元测试、本地最小开发验证或 MinerU 不可用时的受控兜底。
+- 当 provider 为 `mineru_api` 且 MinerU API 配置缺失时，后端应返回明确配置错误，不会静默 fallback 到 basic。
+- 第八阶段 v1 不实现正式 reparse API；已有 `document_chunks` 的文档默认仍返回 `DOCUMENT_ALREADY_PARSED`。
+
+第八阶段核心数据流：
+
+```text
+documents
+-> document_parse_runs
+-> document_blocks / document_assets
+-> document_chunks
+-> document_chunk_blocks
+-> embedding
+-> OpenSearch
+-> search / RAG / knowledge_items
+```
+
+`document_chunks` 仍是 `/api/v1/search`、`/api/v1/rag/ask` 和 `/api/v1/knowledge-items` 的共同基础。`document_blocks` 和 `document_assets` 是 MinerU 输出的解析中间层，不直接进入 RAG 检索；MinerU 输出也不会直接变成 `approved` 知识条目，知识条目仍必须经过第七阶段审核闭环。

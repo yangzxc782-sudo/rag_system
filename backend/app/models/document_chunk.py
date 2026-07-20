@@ -13,6 +13,8 @@ from app.db.base import Base
 
 if TYPE_CHECKING:
     from app.models.document import Document
+    from app.models.document_chunk_block import DocumentChunkBlock
+    from app.models.document_parse_run import DocumentParseRun
     from app.models.knowledge_item_chunk import KnowledgeItemChunk
 
 
@@ -21,10 +23,12 @@ class DocumentChunk(Base):
     __table_args__ = (
         Index("ix_document_chunks_document_id", "document_id"),
         Index("ix_document_chunks_document_id_chunk_index", "document_id", "chunk_index"),
+        Index("ix_document_chunks_parse_run_id", "parse_run_id"),
     )
 
     id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
     document_id: Mapped[UUID] = mapped_column(ForeignKey("documents.id"), nullable=False)
+    parse_run_id: Mapped[UUID | None] = mapped_column(ForeignKey("document_parse_runs.id", ondelete="RESTRICT"))
     chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     token_count: Mapped[int | None] = mapped_column(Integer)
@@ -32,6 +36,8 @@ class DocumentChunk(Base):
     page_end: Mapped[int | None] = mapped_column(Integer)
     section_title: Mapped[str | None] = mapped_column(String(255))
     chunk_type: Mapped[str | None] = mapped_column(String(50))
+    chunk_method: Mapped[str | None] = mapped_column(String(50))
+    content_format: Mapped[str | None] = mapped_column(String(50))
     source_metadata: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     embedding: Mapped[list[float] | None] = mapped_column(VECTOR(1024), nullable=True)
     embedding_model: Mapped[str | None] = mapped_column(String(255))
@@ -48,6 +54,11 @@ class DocumentChunk(Base):
     )
 
     document: Mapped[Document] = relationship("Document", back_populates="chunks")
+    parse_run: Mapped[DocumentParseRun | None] = relationship("DocumentParseRun", back_populates="chunks")
+    block_mappings: Mapped[list[DocumentChunkBlock]] = relationship(
+        "DocumentChunkBlock",
+        back_populates="chunk",
+    )
     knowledge_item_chunks: Mapped[list[KnowledgeItemChunk]] = relationship(
         "KnowledgeItemChunk",
         back_populates="chunk",

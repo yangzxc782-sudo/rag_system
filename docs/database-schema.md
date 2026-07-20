@@ -475,3 +475,179 @@ OpenSearch 文档 `_id` 使用 `chunk_id`，以支持重复同步幂等。
 ## retrieval_logs
 
 第七阶段仍不写 `retrieval_logs`。知识条目 CRUD、审核、修订和抽取不应增加检索日志。
+
+## 第八阶段：MinerU 解析中间层
+
+第八阶段以 MinerU API 作为正式主解析器，新增解析中间层表，用于承接 MinerU 的结构化输出，再生成最终用于检索与 RAG 的 `document_chunks`。
+
+核心关系：
+
+```text
+documents
+-> document_parse_runs
+-> document_blocks / document_assets
+-> document_chunks
+-> document_chunk_blocks
+```
+
+后续检索链路仍保持：
+
+```text
+document_chunks
+-> embedding
+-> OpenSearch
+-> /api/v1/search
+-> /api/v1/rag/ask
+-> /api/v1/knowledge-items
+```
+
+### document_parse_runs
+
+`document_parse_runs` 记录一次文档解析任务，可以来自 `mineru_api` 或 `basic`。第八阶段正式主路径为 `mineru_api`。
+
+主要字段：
+
+- `id`：解析任务 ID。
+- `document_id`：关联 `documents.id`。
+- `parser_provider`：解析器来源，例如 `mineru_api` / `basic`。
+- `parser_version`：解析器版本。
+- `parse_mode`：解析模式，例如 `auto`。
+- `status`：`pending` / `running` / `succeeded` / `failed`。
+- `is_active`：默认 `false`；只有完整入库成功后才可为 `true`。
+- `input_file_key`：原始上传文件对象 key。
+- `output_prefix`：解析产物保存前缀。
+- `output_markdown_key` / `output_json_key`：解析产物 key。
+- `page_count` / `block_count` / `asset_count`：解析统计。
+- `error_message`：简短失败摘要，不保存完整原文、完整 MinerU JSON 或 API key。
+- `source_metadata`：任务级元数据摘要，例如 MinerU 任务 ID、API 版本、解析模式、产物状态摘要。
+- `started_at` / `completed_at` / `created_at` / `updated_at`：时间字段。
+
+状态语义：
+
+- `status=succeeded` 不只表示 MinerU API 调用成功，而是表示 MinerU 解析、产物保存策略、assets 写入、blocks 写入、chunks 写入、chunk-block 映射全部成功。
+- `is_active=true` 只应出现在完整成功的解析任务上；service 层应避免同一文档出现多个 active parse run。
+- `output_markdown_status` / `output_json_status` 可为 `saved`、`download_deferred`、`unavailable`。
+- `failure_status_persisted=false` 表示解析失败后，失败状态本身未能可靠持久化，需要人工排查。
+
+### document_blocks
+
+`document_blocks` 保存 MinerU 输出标准化后的结构块，不作为直接检索表。
+
+主要字段：
+
+- `id`
+- `document_id`
+- `parse_run_id`
+- `block_index`
+- `block_key`
+- `block_type`
+- `page_start` / `page_end`
+- `bbox`
+- `text`
+- `markdown`
+- `html`
+- `latex`
+- `caption`
+- `parent_block_key`
+- `section_path`
+- `confidence`
+- `source_metadata`
+- `created_at`
+
+约束和索引：
+
+- `unique(parse_run_id, block_index)` 保证同一次解析内顺序稳定。
+- `index(parse_run_id)`
+- `index(document_id)`
+- `index(block_type)`
+- `block_key` 第八阶段 v1 不强制唯一。
+- `parent_block_key` 是弱关联，不做自引用强外键。
+
+说明：
+
+- `text` 用于纯文本表达。
+- `markdown` 可保存表格或结构化段落。
+- `html` 可保存表格 HTML。
+- `latex` 可保存公式。
+- `caption` 可保存图片说明。
+- `bbox`、`section_path`、`source_metadata` 使用 JSON 结构保存必要摘要。
+- `document_blocks` 不直接进入 RAG；必须先生成 `document_chunks`。
+
+### document_assets
+
+`document_assets` 保存 MinerU 输出资产和 MinIO 资产元数据，不保存大二进制。
+
+主要字段：
+
+- `id`
+- `document_id`
+- `parse_run_id`
+- `asset_type`
+- `page_number`
+- `asset_key`
+- `filename`
+- `mime_type`
+- `size_bytes`
+- `caption`
+- `source_block_key`
+- `source_metadata`
+- `created_at`
+
+约束和索引：
+
+- `unique(parse_run_id, asset_key)`
+- `index(parse_run_id)`
+- `index(document_id)`
+- `index(asset_type)`
+- `source_block_key` 是弱关联，不与 `document_blocks` 形成双向强外键。
+
+资产建议存储前缀：
+
+```text
+parsed-assets/{document_id}/{parse_run_id}/...
+```
+
+`document_assets` 不直接进入 RAG，也不直接参与检索；它用于解析产物追溯、前端轻量展示和未来多模态扩展。
+
+### document_chunk_blocks
+
+`document_chunk_blocks` 记录最终 chunk 与来源 block 的映射。
+
+主要字段：
+
+- `id`
+- `chunk_id`
+- `block_id`
+- `block_order`
+- `created_at`
+
+约束和索引：
+
+- `index(chunk_id)`
+- `index(block_id)`
+- `unique(chunk_id, block_order)`
+
+说明：
+
+- 一个 chunk 可以由多个 blocks 合并而来。
+- 一个 block 在拆分场景下可以被多个 chunks 引用。
+- `block_order` 用于在回溯时恢复同一 chunk 内的 block 顺序。
+- 外键不使用危险级联删除；测试数据清理必须按依赖顺序手动执行。
+
+### document_chunks 扩展字段
+
+第八阶段小幅扩展 `document_chunks`，但不改变它作为最终检索/RAG chunk 的定位。
+
+新增字段：
+
+- `parse_run_id`：nullable，表示该 chunk 来源于哪次解析；不破坏旧数据和 basic fallback 数据。
+- `chunk_method`：例如 `basic_text_split` / `mineru_block_merge`。
+- `content_format`：例如 `plain_text` / `markdown` / `mixed`。
+
+保留规则：
+
+- 不删除 `embedding`。
+- 不删除 `source_metadata`。
+- 不破坏 `document_chunks.id`。
+- 不破坏 `knowledge_item_chunks.chunk_id` 依赖。
+- `document_chunks` 仍是 `/api/v1/search`、`/api/v1/rag/ask` 和 `/api/v1/knowledge-items` 的共同基础。

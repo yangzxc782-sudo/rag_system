@@ -337,16 +337,24 @@ def extract_exact_terms(content: str) -> list[str]:
     return results
 
 
-def get_syncable_chunks_query(db: Session, document_id: UUID | None = None) -> Select[tuple[Document, DocumentChunk]]:
+def get_syncable_chunks_query(
+    db: Session,
+    document_id: UUID | None = None,
+    *,
+    settings: Any | None = None,
+) -> Select[tuple[Document, DocumentChunk]]:
     del db
+    settings = settings or get_settings()
+    embedding_dim = int(settings.embedding_dim)
+    embedding_model = str(settings.embedding_model)
     statement = (
         select(Document, DocumentChunk)
         .join(DocumentChunk, DocumentChunk.document_id == Document.id)
         .where(
             DocumentChunk.embedding_status == EMBEDDING_STATUS_EMBEDDED,
             DocumentChunk.embedding.is_not(None),
-            DocumentChunk.embedding_dim == DEFAULT_EMBEDDING_DIM,
-            DocumentChunk.embedding_model == DEFAULT_EMBEDDING_MODEL,
+            DocumentChunk.embedding_dim == embedding_dim,
+            DocumentChunk.embedding_model == embedding_model,
         )
         .order_by(Document.id, DocumentChunk.chunk_index)
     )
@@ -361,7 +369,8 @@ def count_postgres_syncable_chunks(
     settings: Any,
     document_id: UUID | None = None,
 ) -> int:
-    del settings
+    embedding_dim = int(settings.embedding_dim)
+    embedding_model = str(settings.embedding_model)
     statement = (
         select(func.count())
         .select_from(DocumentChunk)
@@ -369,8 +378,8 @@ def count_postgres_syncable_chunks(
         .where(
             DocumentChunk.embedding_status == EMBEDDING_STATUS_EMBEDDED,
             DocumentChunk.embedding.is_not(None),
-            DocumentChunk.embedding_dim == DEFAULT_EMBEDDING_DIM,
-            DocumentChunk.embedding_model == DEFAULT_EMBEDDING_MODEL,
+            DocumentChunk.embedding_dim == embedding_dim,
+            DocumentChunk.embedding_model == embedding_model,
         )
     )
     if document_id is not None:
@@ -379,12 +388,11 @@ def count_postgres_syncable_chunks(
 
 
 def is_syncable_chunk(chunk: Any, settings: Any) -> bool:
-    del settings
     return (
         getattr(chunk, "embedding_status", None) == EMBEDDING_STATUS_EMBEDDED
         and getattr(chunk, "embedding", None) is not None
-        and getattr(chunk, "embedding_dim", None) == DEFAULT_EMBEDDING_DIM
-        and getattr(chunk, "embedding_model", None) == DEFAULT_EMBEDDING_MODEL
+        and getattr(chunk, "embedding_dim", None) == int(settings.embedding_dim)
+        and getattr(chunk, "embedding_model", None) == str(settings.embedding_model)
     )
 
 
@@ -394,7 +402,9 @@ def _load_syncable_chunks(
     settings: Any,
     document_id: UUID | None,
 ) -> list[SyncableChunkRow]:
-    rows = db.execute(get_syncable_chunks_query(db, document_id=document_id)).all()
+    rows = db.execute(
+        get_syncable_chunks_query(db, document_id=document_id, settings=settings)
+    ).all()
     return [
         SyncableChunkRow(document=document, chunk=chunk)
         for document, chunk in rows
@@ -439,6 +449,18 @@ def _bulk_index_rows(
         failed += batch_failed
         errors.extend(batch_errors)
 
+        if batch_failed:
+            raise BusinessError(
+                SEARCH_INDEX_REBUILD_FAILED,
+                "OpenSearch bulk indexing partially failed.",
+                detail={
+                    "indexed": indexed,
+                    "failed": failed,
+                    "errors": errors[:50],
+                },
+                status_code=500,
+            )
+
     return indexed, failed, errors
 
 
@@ -457,9 +479,23 @@ def _parse_bulk_response(response: dict[str, Any]) -> tuple[int, int, list[str]]
             indexed += 1
         else:
             failed += 1
-            if "error" in operation:
-                errors.append(str(operation["error"]))
+            errors.append(_format_bulk_item_error(operation))
     return indexed, failed, errors
+
+
+def _format_bulk_item_error(operation: dict[str, Any]) -> str:
+    chunk_id = str(operation.get("_id") or "unknown")[:64]
+    status_code = int(operation.get("status", 0))
+    error = operation.get("error")
+    if not isinstance(error, dict):
+        return f"chunk_id={chunk_id} status={status_code}"
+
+    error_type = str(error.get("type") or "unknown")[:80]
+    reason = str(error.get("reason") or "")[:200]
+    return (
+        f"chunk_id={chunk_id} status={status_code} "
+        f"error_type={error_type} reason={reason}"
+    ).strip()
 
 
 def _delete_document_from_index(

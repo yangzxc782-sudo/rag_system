@@ -100,6 +100,100 @@ export type DocumentChunkListData = {
   stats: DocumentChunkStats;
 };
 
+export type ParseOutputStatus = "saved" | "download_deferred" | "unavailable";
+
+export type DocumentParseRunRead = {
+  id: string;
+  document_id: string;
+  parser_provider: string;
+  parser_version: string | null;
+  parse_mode: string | null;
+  status: string;
+  is_active: boolean;
+  input_file_key: string | null;
+  output_prefix: string | null;
+  output_markdown_key: string | null;
+  output_json_key: string | null;
+  output_markdown_status: ParseOutputStatus;
+  output_json_status: ParseOutputStatus;
+  failure_status_persisted: boolean | null;
+  page_count: number | null;
+  block_count: number | null;
+  asset_count: number | null;
+  error_message: string | null;
+  source_metadata_summary: Record<string, unknown>;
+  started_at: string | null;
+  completed_at: string | null;
+  created_at: string;
+};
+
+export type DocumentParseRunListData = {
+  items: DocumentParseRunRead[];
+  total: number;
+  limit: number;
+  offset: number;
+};
+
+export type DocumentParseStatusRead = {
+  document_id: string;
+  process_status: string;
+  latest_parse_run: DocumentParseRunRead | null;
+  active_parse_run: DocumentParseRunRead | null;
+};
+
+export type DocumentBlockRead = {
+  id: string;
+  document_id: string;
+  parse_run_id: string;
+  block_index: number;
+  block_key: string | null;
+  block_type: string;
+  page_start: number | null;
+  page_end: number | null;
+  bbox: unknown;
+  text: string | null;
+  markdown: string | null;
+  html: string | null;
+  latex: string | null;
+  caption: string | null;
+  parent_block_key: string | null;
+  section_path: string[];
+  confidence: number | null;
+  source_metadata_summary: Record<string, unknown>;
+  content_truncated: boolean;
+  created_at: string;
+};
+
+export type PaginatedDocumentBlocks = {
+  items: DocumentBlockRead[];
+  total: number;
+  limit: number;
+  offset: number;
+};
+
+export type DocumentAssetRead = {
+  id: string;
+  document_id: string;
+  parse_run_id: string;
+  asset_type: string;
+  page_number: number | null;
+  asset_key: string;
+  filename: string | null;
+  mime_type: string | null;
+  size_bytes: number | null;
+  caption: string | null;
+  source_block_key: string | null;
+  source_metadata_summary: Record<string, unknown>;
+  created_at: string;
+};
+
+export type PaginatedDocumentAssets = {
+  items: DocumentAssetRead[];
+  total: number;
+  limit: number;
+  offset: number;
+};
+
 function fallbackError<T>(message: string, detail: unknown = null): ApiEnvelope<T> {
   return {
     success: false,
@@ -263,6 +357,122 @@ export async function getDocumentChunks(
     return parseEnvelope<DocumentChunkListData>(response);
   } catch (error) {
     return fallbackError<DocumentChunkListData>("文档切片列表请求失败。", {
+      error_type: error instanceof Error ? error.name : typeof error,
+    });
+  }
+}
+
+export async function getDocumentParseRuns(
+  id: string,
+  params: { limit?: number; offset?: number } = {},
+): Promise<ApiEnvelope<DocumentParseRunListData>> {
+  const searchParams = new URLSearchParams({
+    limit: String(params.limit ?? 50),
+    offset: String(params.offset ?? 0),
+  });
+
+  try {
+    const response = await fetch(
+      `${API_BASE_URL}/api/v1/documents/${id}/parse-runs?${searchParams}`,
+      {
+        cache: "no-store",
+        headers: { Accept: "application/json" },
+      },
+    );
+    return parseEnvelope<DocumentParseRunListData>(response);
+  } catch (error) {
+    return fallbackError<DocumentParseRunListData>("解析任务列表请求失败。", {
+      error_type: error instanceof Error ? error.name : typeof error,
+    });
+  }
+}
+
+export async function getDocumentParseStatus(
+  id: string,
+): Promise<ApiEnvelope<DocumentParseStatusRead>> {
+  try {
+    const response = await fetch(
+      `${API_BASE_URL}/api/v1/documents/${id}/parse-status`,
+      {
+        cache: "no-store",
+        headers: { Accept: "application/json" },
+      },
+    );
+    return parseEnvelope<DocumentParseStatusRead>(response);
+  } catch (error) {
+    return fallbackError<DocumentParseStatusRead>("解析状态请求失败。", {
+      error_type: error instanceof Error ? error.name : typeof error,
+    });
+  }
+}
+
+export async function getDocumentBlocks(
+  id: string,
+  params: {
+    parseRunId?: string;
+    blockType?: string;
+    limit?: number;
+    offset?: number;
+  } = {},
+): Promise<ApiEnvelope<PaginatedDocumentBlocks>> {
+  const searchParams = new URLSearchParams({
+    limit: String(params.limit ?? 50),
+    offset: String(params.offset ?? 0),
+  });
+  if (params.parseRunId) {
+    searchParams.set("parse_run_id", params.parseRunId);
+  }
+  if (params.blockType) {
+    searchParams.set("block_type", params.blockType);
+  }
+
+  try {
+    const response = await fetch(
+      `${API_BASE_URL}/api/v1/documents/${id}/blocks?${searchParams}`,
+      {
+        cache: "no-store",
+        headers: { Accept: "application/json" },
+      },
+    );
+    return parseEnvelope<PaginatedDocumentBlocks>(response);
+  } catch (error) {
+    return fallbackError<PaginatedDocumentBlocks>("结构块列表请求失败。", {
+      error_type: error instanceof Error ? error.name : typeof error,
+    });
+  }
+}
+
+export async function getDocumentAssets(
+  id: string,
+  params: {
+    parseRunId?: string;
+    assetType?: string;
+    limit?: number;
+    offset?: number;
+  } = {},
+): Promise<ApiEnvelope<PaginatedDocumentAssets>> {
+  const searchParams = new URLSearchParams({
+    limit: String(params.limit ?? 50),
+    offset: String(params.offset ?? 0),
+  });
+  if (params.parseRunId) {
+    searchParams.set("parse_run_id", params.parseRunId);
+  }
+  if (params.assetType) {
+    searchParams.set("asset_type", params.assetType);
+  }
+
+  try {
+    const response = await fetch(
+      `${API_BASE_URL}/api/v1/documents/${id}/assets?${searchParams}`,
+      {
+        cache: "no-store",
+        headers: { Accept: "application/json" },
+      },
+    );
+    return parseEnvelope<PaginatedDocumentAssets>(response);
+  } catch (error) {
+    return fallbackError<PaginatedDocumentAssets>("解析资产列表请求失败。", {
       error_type: error instanceof Error ? error.name : typeof error,
     });
   }
