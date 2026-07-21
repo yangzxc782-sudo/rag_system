@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import builtins
+import json
 from types import SimpleNamespace
 
+import httpx
 import pytest
+from openai import OpenAI
 
 from app.core.errors import (
     LLM_CONFIG_INVALID,
@@ -54,6 +57,36 @@ class FakeOpenAIClient:
     def __init__(self, completions: FakeCompletions | None = None) -> None:
         self.completions = completions or FakeCompletions()
         self.chat = FakeChat(self.completions)
+
+
+def make_mock_transport_openai_client(
+    captured_bodies: list[dict[str, object]],
+) -> OpenAI:
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured_bodies.append(json.loads(request.content.decode("utf-8")))
+        return httpx.Response(
+            200,
+            headers={"x-request-id": "req-m0-test"},
+            json={
+                "id": "chatcmpl-m0-test",
+                "object": "chat.completion",
+                "created": 1,
+                "model": "qwen3:8b",
+                "choices": [
+                    {
+                        "index": 0,
+                        "finish_reason": "stop",
+                        "message": {"role": "assistant", "content": '{"items":[]}'},
+                    }
+                ],
+            },
+        )
+
+    return OpenAI(
+        api_key="test-key-not-real",
+        base_url="https://example.invalid/v1",
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
 
 
 class APIConnectionError(Exception):
@@ -161,7 +194,7 @@ def test_generate_passes_openai_compatible_parameters_and_returns_result() -> No
         }
     ]
     assert "response_format" not in fake_client.completions.calls[0]
-    assert "think" not in fake_client.completions.calls[0]
+    assert "extra_body" not in fake_client.completions.calls[0]
 
 
 def test_generate_passes_optional_json_mode_and_think_parameters() -> None:
@@ -177,7 +210,40 @@ def test_generate_passes_optional_json_mode_and_think_parameters() -> None:
     )
 
     assert fake_client.completions.calls[0]["response_format"] == {"type": "json_object"}
-    assert fake_client.completions.calls[0]["think"] is False
+    assert fake_client.completions.calls[0]["extra_body"] == {"think": False}
+
+
+def test_openai_sdk_merges_json_mode_and_think_into_wire_body() -> None:
+    captured_bodies: list[dict[str, object]] = []
+    client = make_mock_transport_openai_client(captured_bodies)
+    provider = OpenAICompatibleLLMProvider(make_settings(), client=client)
+
+    try:
+        provider.generate(
+            LLMGenerateRequest(
+                prompt='{"items":[]}',
+                response_format={"type": "json_object"},
+                think=False,
+            )
+        )
+    finally:
+        client.close()
+
+    assert captured_bodies[0]["think"] is False
+    assert captured_bodies[0]["response_format"] == {"type": "json_object"}
+
+
+def test_openai_sdk_does_not_send_think_when_request_omits_it() -> None:
+    captured_bodies: list[dict[str, object]] = []
+    client = make_mock_transport_openai_client(captured_bodies)
+    provider = OpenAICompatibleLLMProvider(make_settings(), client=client)
+
+    try:
+        provider.generate(LLMGenerateRequest(prompt="plain request"))
+    finally:
+        client.close()
+
+    assert "think" not in captured_bodies[0]
 
 
 def test_generate_without_system_prompt_sends_user_message_only() -> None:
