@@ -89,12 +89,23 @@ def _normalize_provider(settings: Any) -> Literal["local", "api"]:
 
 def _required_text(settings: Any, field: str) -> str:
     value = getattr(settings, field, "")
-    if hasattr(value, "get_secret_value"):
-        value = value.get_secret_value()
     resolved = str(value or "").strip()
     if not resolved:
         _config_error(field, f"{field} must not be empty.")
     return resolved
+
+
+def _require_secret(settings: Any, field: str) -> None:
+    value = getattr(settings, field, None)
+    get_secret_value = getattr(value, "get_secret_value", None)
+    if callable(get_secret_value):
+        resolved_secret = str(get_secret_value() or "").strip()
+    else:
+        resolved_secret = str(value or "").strip()
+    is_missing = not resolved_secret
+    resolved_secret = ""
+    if is_missing:
+        _config_error(field, f"{field} must not be empty.")
 
 
 def _positive_number(settings: Any, field: str) -> float:
@@ -190,7 +201,7 @@ def validate_active_llm_configuration(settings: Any) -> ActiveLLMMetadata:
         return metadata
 
     remote_base_url = _required_text(settings, "llm_remote_base_url")
-    _required_text(settings, "llm_remote_api_key")
+    _require_secret(settings, "llm_remote_api_key")
     _required_text(settings, "llm_remote_model")
     _positive_number(settings, "llm_remote_timeout_seconds")
     allow_insecure_http = getattr(settings, "llm_remote_allow_insecure_http", False)

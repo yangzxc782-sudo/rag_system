@@ -6,7 +6,6 @@ from typing import Any, Protocol
 
 from app.core.config import get_settings
 from app.core.errors import (
-    LLM_CONFIG_INVALID,
     LLM_GENERATION_FAILED,
     LLM_PARAMETER_UNSUPPORTED,
     LLM_REQUEST_INVALID,
@@ -517,12 +516,9 @@ def build_llm_provider(
         from app.llm.local import LocalLLMProvider
 
         return LocalLLMProvider(settings, client=client)
-    raise BusinessError(
-        LLM_CONFIG_INVALID,
-        "API LLM provider is not available in M1B.",
-        detail={"field": "llm_provider"},
-        status_code=400,
-    )
+    from app.llm.api import APILLMProvider
+
+    return APILLMProvider(settings, client=client)
 
 
 def get_llm_provider(

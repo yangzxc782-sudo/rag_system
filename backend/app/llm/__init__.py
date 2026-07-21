@@ -14,6 +14,7 @@ from app.llm.configuration import (
     validate_active_llm_configuration,
 )
 from app.llm.local import LocalLLMProvider
+from app.llm.api import APILLMProvider
 from app.llm.provider import (
     LLMCapabilities,
     LLMGenerateRequest,
@@ -27,6 +28,7 @@ from app.llm.provider import (
 
 __all__ = [
     "ActiveLLMMetadata",
+    "APILLMProvider",
     "LLMCapabilities",
     "LLMContentPart",
     "LLMFunctionCall",

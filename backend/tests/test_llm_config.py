@@ -5,6 +5,7 @@ import logging
 from types import SimpleNamespace
 
 import pytest
+from pydantic import SecretStr
 
 from app.core.errors import LLM_CONFIG_INVALID, BusinessError
 from app.core.config import Settings
@@ -39,6 +40,15 @@ def test_remote_capability_and_insecure_http_defaults_are_conservative() -> None
 
     assert settings.llm_remote_supports_json_mode is False
     assert settings.llm_remote_allow_insecure_http is False
+
+
+def test_remote_json_capability_accepts_explicit_true() -> None:
+    settings = Settings(
+        _env_file=None,
+        llm_remote_supports_json_mode=True,
+    )
+
+    assert settings.llm_remote_supports_json_mode is True
 
 
 @pytest.mark.parametrize(
@@ -119,6 +129,34 @@ def test_api_validation_does_not_require_local_credentials() -> None:
     )
 
     assert metadata.provider == "api"
+
+
+def test_api_validation_uses_nonpersisting_secret_check(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = configuration_module()
+    original_required_text = module._required_text
+    checked_text_fields: list[str] = []
+
+    def tracked_required_text(settings: object, field: str) -> str:
+        checked_text_fields.append(field)
+        if field == "llm_remote_api_key":
+            raise AssertionError("remote key must use the secret-only validator")
+        return original_required_text(settings, field)
+
+    monkeypatch.setattr(module, "_required_text", tracked_required_text)
+    secret_value = "test-validation-secret-not-real"
+    settings = make_settings(
+        llm_provider="api",
+        llm_remote_api_key=SecretStr(secret_value),
+    )
+
+    metadata = module.validate_active_llm_configuration(settings)
+
+    assert metadata.provider == "api"
+    assert "llm_remote_api_key" not in checked_text_fields
+    assert secret_value not in repr(metadata)
+    assert all(value != secret_value for value in vars(module).values())
 
 
 @pytest.mark.parametrize(

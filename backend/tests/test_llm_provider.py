@@ -16,8 +16,8 @@ from openai import OpenAI
 from app.core.errors import (
     LLM_CONFIG_INVALID,
     LLM_GENERATION_FAILED,
+    LLM_EMPTY_CONTENT,
     LLM_PARAMETER_UNSUPPORTED,
-    LLM_PROVIDER_INVALID,
     LLM_RESPONSE_INVALID,
     LLM_TIMEOUT,
     LLM_UNAVAILABLE,
@@ -35,6 +35,7 @@ from app.llm import (
 
 class FakeMessage:
     def __init__(self, content: str | None, *, tool_calls: list[object] | None = None) -> None:
+        self.role = "assistant"
         self.content = content
         self.tool_calls = tool_calls
 
@@ -271,7 +272,7 @@ def test_legacy_get_with_settings_stays_isolated_from_global_cache(
     assert second_legacy.close_calls == 0
 
 
-def test_api_provider_before_m2_is_valid_but_unavailable_without_local_fallback(
+def test_api_provider_factory_builds_api_without_local_fallback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from app.llm.configuration import (
@@ -321,31 +322,15 @@ def test_api_provider_before_m2_is_valid_but_unavailable_without_local_fallback(
     assert validate_active_llm_configuration(settings).provider == "api"
     assert validate_active_llm_configuration(settings).model == remote_model
 
-    def assert_m2_stage_error(call: object) -> None:
-        with pytest.raises(BusinessError) as exc_info:
-            call()  # type: ignore[operator]
+    built = module.build_llm_provider(settings, client=FakeOpenAIClient())
 
-        error = exc_info.value
-        assert error.code == LLM_CONFIG_INVALID
-        assert error.code != LLM_PROVIDER_INVALID
-        assert error.status_code == 400
-        assert error.detail == {"field": "llm_provider"}
-        rendered_error = f"{error.message} {error.detail!r}"
-        for sensitive_value in (
-            remote_url,
-            remote_key,
-            remote_model,
-            "Authorization",
-            "headers",
-            "prompt",
-        ):
-            assert sensitive_value not in rendered_error
-
-    assert_m2_stage_error(lambda: module.build_llm_provider(settings))
+    assert built.__class__.__name__ == "APILLMProvider"
+    assert built.provider_name == "api"
+    assert built.model == remote_model
     assert module._provider_cache is None
-    assert_m2_stage_error(lambda: module.get_llm_provider(settings))
-    assert module._provider_cache is None
-    assert_m2_stage_error(module.get_llm_provider)
+    legacy = module.get_llm_provider(settings, client=FakeOpenAIClient())
+    assert legacy.__class__.__name__ == "APILLMProvider"
+    assert legacy.provider_name == "api"
     assert module._provider_cache is None
     assert local_constructions == []
 
@@ -448,7 +433,9 @@ def test_local_generate_preserves_four_turn_text_message_order() -> None:
 
 
 def test_generate_passes_optional_json_mode_and_think_parameters() -> None:
-    fake_client = FakeOpenAIClient()
+    fake_client = FakeOpenAIClient(
+        FakeCompletions(response=FakeCompletion(content='{"items":[]}'))
+    )
     provider = local_module().LocalLLMProvider(make_settings(), client=fake_client)
 
     provider.generate(
@@ -595,14 +582,20 @@ def test_transport_maps_sdk_failures_without_exposing_exception_text(
 
 
 @pytest.mark.parametrize(
-    "completion",
+    ("completion", "expected_code"),
     [
-        FakeCompletion(choices=[]),
-        FakeCompletion(content=None),
-        FakeCompletion(content="", tool_calls=[object()]),
+        (FakeCompletion(choices=[]), LLM_RESPONSE_INVALID),
+        (FakeCompletion(content=None), LLM_EMPTY_CONTENT),
+        (
+            FakeCompletion(content="", tool_calls=[object()]),
+            LLM_RESPONSE_INVALID,
+        ),
     ],
 )
-def test_invalid_local_response_maps_to_response_invalid(completion: object) -> None:
+def test_invalid_local_response_maps_to_specific_error(
+    completion: object,
+    expected_code: str,
+) -> None:
     provider = local_module().LocalLLMProvider(
         make_settings(),
         client=FakeOpenAIClient(FakeCompletions(response=completion)),
@@ -611,7 +604,7 @@ def test_invalid_local_response_maps_to_response_invalid(completion: object) -> 
     with pytest.raises(BusinessError) as exc_info:
         provider.generate(LLMGenerateRequest.from_prompt("问题"))
 
-    assert exc_info.value.code == LLM_RESPONSE_INVALID
+    assert exc_info.value.code == expected_code
 
 
 def test_result_constructor_no_longer_accepts_raw_parameter() -> None:
