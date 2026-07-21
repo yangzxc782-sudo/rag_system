@@ -320,7 +320,7 @@ def test_extract_returns_zero_when_llm_returns_no_items() -> None:
     assert result.auto_submit is False
     assert result.status == "draft"
     assert len(llm.calls) == 1
-    assert getattr(llm.calls[0], "response_format") == {"type": "json_object"}
+    assert llm.calls[0].json_mode is True
     assert getattr(llm.calls[0], "think") is False
 
 
@@ -347,7 +347,7 @@ def test_extract_creates_draft_and_auto_submit_creates_pending_review() -> None:
         assert result.created == 1
         assert result.llm_provider == "fake"
         assert result.llm_model == "fake-model"
-        assert getattr(llm.calls[0], "response_format") == {"type": "json_object"}
+        assert llm.calls[0].json_mode is True
         assert getattr(llm.calls[0], "think") is False
 
 

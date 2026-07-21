@@ -92,13 +92,19 @@ class Settings(BaseSettings):
     hybrid_vector_top_k: int = 50
     hybrid_final_limit: int = 10
 
-    llm_provider: str = "openai_compatible"
+    llm_provider: str = "local"
     llm_base_url: str = "http://localhost:11434/v1"
     llm_model: str = "qwen3:8b"
-    llm_api_key: str = "ollama"
+    llm_api_key: str = ""
     llm_temperature: float = 0.2
     llm_max_tokens: int = 2048
     llm_timeout_seconds: int = 120
+    llm_remote_base_url: str = ""
+    llm_remote_api_key: SecretStr | None = None
+    llm_remote_model: str = ""
+    llm_remote_timeout_seconds: int = 60
+    llm_remote_supports_json_mode: bool = False
+    llm_remote_allow_insecure_http: bool = False
 
     rag_top_k: int = 8
     rag_context_max_chars: int = 12000
@@ -131,21 +137,6 @@ class Settings(BaseSettings):
             raise ValueError("hybrid_keyword_top_k must be greater than or equal to hybrid_final_limit")
         if self.hybrid_vector_top_k < self.hybrid_final_limit:
             raise ValueError("hybrid_vector_top_k must be greater than or equal to hybrid_final_limit")
-        self.llm_provider = self.llm_provider.strip().lower()
-        if self.llm_provider != "openai_compatible":
-            raise ValueError("llm_provider must be openai_compatible in phase 6")
-        self.llm_base_url = self.llm_base_url.strip()
-        if not self.llm_base_url:
-            raise ValueError("llm_base_url must not be empty")
-        self.llm_model = self.llm_model.strip()
-        if not self.llm_model:
-            raise ValueError("llm_model must not be empty")
-        if self.llm_timeout_seconds <= 0:
-            raise ValueError("llm_timeout_seconds must be greater than 0")
-        if self.llm_temperature < 0 or self.llm_temperature > 2:
-            raise ValueError("llm_temperature must be between 0 and 2")
-        if self.llm_max_tokens <= 0:
-            raise ValueError("llm_max_tokens must be greater than 0")
         if self.rag_top_k <= 0:
             raise ValueError("rag_top_k must be greater than 0")
         if self.rag_context_max_chars <= 0:

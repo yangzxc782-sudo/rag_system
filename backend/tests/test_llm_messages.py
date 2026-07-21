@@ -390,15 +390,13 @@ def test_legacy_constructor_does_not_store_a_second_copy_of_prompt_state() -> No
         response_format={"type": "json_object"},
     )
 
-    request.response_format["type"] = "mutated"  # type: ignore[index]
-
     assert not hasattr(request, "__dict__")
     assert "prompt" not in request.__slots__
     assert "system_prompt" not in request.__slots__
     assert "response_format" not in request.__slots__
-    assert request.prompt == request.messages[1].content[0].text
-    assert request.system_prompt == request.messages[0].content[0].text
-    assert request.response_format == {"type": "json_object"}
+    assert not hasattr(request, "prompt")
+    assert not hasattr(request, "system_prompt")
+    assert not hasattr(request, "response_format")
 
 
 def test_legacy_bridge_accepts_current_rag_request_shape() -> None:

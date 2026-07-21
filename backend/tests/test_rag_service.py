@@ -168,9 +168,10 @@ def test_answer_question_with_context_calls_llm_and_returns_citations(monkeypatc
     assert [citation.chunk_id for citation in answer.citations] == ["chunk-b", "chunk-a"]
     assert len(llm_provider.calls) == 1
     request = llm_provider.calls[0]
-    assert getattr(request, "system_prompt")
-    assert "question" in getattr(request, "prompt")
-    assert "chunk-b" in getattr(request, "prompt")
+    assert [message.role for message in request.messages] == ["system", "user"]
+    assert "你是铸型工艺知识库问答助手" in request.messages[0].content[0].text
+    assert "question" in request.messages[1].content[0].text
+    assert "chunk-b" in request.messages[1].content[0].text
 
 
 def test_optional_rerank_chunks_is_noop_when_disabled() -> None:

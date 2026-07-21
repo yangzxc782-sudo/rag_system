@@ -1,17 +1,21 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from threading import Lock
 from typing import Any, Protocol
 
+from app.core.config import get_settings
 from app.core.errors import (
     LLM_CONFIG_INVALID,
     LLM_GENERATION_FAILED,
+    LLM_PARAMETER_UNSUPPORTED,
     LLM_REQUEST_INVALID,
     LLM_RESPONSE_INVALID,
     BusinessError,
 )
 from app.llm.messages import (
     LLMFunctionTool,
+    LLMImageURLContentPart,
     LLMMessage,
     LLMTextContentPart,
 )
@@ -334,48 +338,6 @@ class LLMGenerateRequest:
                 )
             answered_tool_call_ids.add(message.tool_call_id)
 
-    def _legacy_prompt_messages(self) -> tuple[LLMMessage | None, LLMMessage]:
-        if len(self.messages) == 1 and self.messages[0].role == "user":
-            return None, self.messages[0]
-        if (
-            len(self.messages) == 2
-            and self.messages[0].role == "system"
-            and self.messages[1].role == "user"
-        ):
-            return self.messages[0], self.messages[1]
-        _raise_request_invalid(
-            "The legacy adapter only accepts system-to-user prompt messages.",
-            detail={"field": "messages"},
-        )
-
-    @staticmethod
-    def _single_text(message: LLMMessage) -> str:
-        if len(message.content) != 1 or not isinstance(
-            message.content[0], LLMTextContentPart
-        ):
-            _raise_request_invalid(
-                "The legacy adapter only accepts one text part per message.",
-                detail={"field": "messages"},
-            )
-        return message.content[0].text
-
-    # Temporary read-only bridge for the M1B migration of openai_compatible.py.
-    # These are deliberately properties, not formal request dataclass fields.
-    @property
-    def prompt(self) -> str:
-        _, user_message = self._legacy_prompt_messages()
-        return self._single_text(user_message)
-
-    @property
-    def system_prompt(self) -> str | None:
-        system_message, _ = self._legacy_prompt_messages()
-        return None if system_message is None else self._single_text(system_message)
-
-    @property
-    def response_format(self) -> dict[str, str] | None:
-        return {"type": "json_object"} if self.json_mode else None
-
-
 @dataclass(frozen=True, slots=True)
 class LLMUsage:
     prompt_tokens: int | None = None
@@ -400,17 +362,11 @@ class LLMGenerateResult:
         request_id: str | None = None,
         *,
         text: str | None = None,
-        raw: Any | None = None,
     ) -> None:
         if message is not None and text is not None:
             _raise_response_invalid(
                 "LLM result cannot provide both message and legacy text.",
                 detail={"field": "message"},
-            )
-        if raw is not None:
-            _raise_response_invalid(
-                "Raw LLM responses cannot enter the provider result contract.",
-                detail={"field": "raw"},
             )
         if message is None:
             if text is None:
@@ -484,18 +440,112 @@ class LLMProvider(Protocol):
     def generate(self, request: LLMGenerateRequest) -> LLMGenerateResult:
         ...
 
+    def close(self) -> None:
+        ...
 
-def get_llm_provider(settings: Any, *, client: Any | None = None) -> LLMProvider:
-    provider = str(getattr(settings, "llm_provider", "")).strip().lower()
 
-    if provider == "openai_compatible":
-        from app.llm.openai_compatible import OpenAICompatibleLLMProvider
-
-        return OpenAICompatibleLLMProvider(settings, client=client)
-
+def _raise_parameter_unsupported(
+    provider_name: str,
+    parameter: str,
+    required_capability: str,
+) -> None:
     raise BusinessError(
-        LLM_CONFIG_INVALID,
-        "Unsupported LLM provider.",
-        detail={"llm_provider": getattr(settings, "llm_provider", None)},
+        LLM_PARAMETER_UNSUPPORTED,
+        "LLM provider does not support a requested parameter.",
+        detail={
+            "provider": provider_name,
+            "parameter": parameter,
+            "required_capability": required_capability,
+        },
         status_code=400,
     )
+
+
+def validate_llm_request_capabilities(
+    request: LLMGenerateRequest,
+    *,
+    provider_name: str,
+    capabilities: LLMCapabilities,
+) -> None:
+    if request.json_mode and not capabilities.supports_json_mode:
+        _raise_parameter_unsupported(
+            provider_name, "json_mode", "supports_json_mode"
+        )
+    if request.think_required and not capabilities.supports_think:
+        _raise_parameter_unsupported(provider_name, "think", "supports_think")
+    if request.tools and not capabilities.supports_tools:
+        _raise_parameter_unsupported(provider_name, "tools", "supports_tools")
+    if any(message.role == "tool" or message.tool_calls for message in request.messages):
+        if not capabilities.supports_tools:
+            _raise_parameter_unsupported(provider_name, "tools", "supports_tools")
+    if request.parallel_tool_calls is True and not capabilities.supports_parallel_tool_calls:
+        _raise_parameter_unsupported(
+            provider_name,
+            "parallel_tool_calls",
+            "supports_parallel_tool_calls",
+        )
+    if any(len(message.tool_calls) > 1 for message in request.messages):
+        if not capabilities.supports_parallel_tool_calls:
+            _raise_parameter_unsupported(
+                provider_name,
+                "parallel_tool_calls",
+                "supports_parallel_tool_calls",
+            )
+    if any(
+        isinstance(part, LLMImageURLContentPart)
+        for message in request.messages
+        for part in message.content
+    ) and not capabilities.supports_image_input:
+        _raise_parameter_unsupported(
+            provider_name, "image_input", "supports_image_input"
+        )
+
+
+_provider_cache_lock = Lock()
+_provider_cache: LLMProvider | None = None
+
+
+def build_llm_provider(
+    settings: Any,
+    *,
+    client: Any | None = None,
+) -> LLMProvider:
+    from app.llm.configuration import validate_active_llm_configuration
+
+    metadata = validate_active_llm_configuration(settings)
+    if metadata.provider == "local":
+        from app.llm.local import LocalLLMProvider
+
+        return LocalLLMProvider(settings, client=client)
+    raise BusinessError(
+        LLM_CONFIG_INVALID,
+        "API LLM provider is not available in M1B.",
+        detail={"field": "llm_provider"},
+        status_code=400,
+    )
+
+
+def get_llm_provider(
+    settings: Any | None = None,
+    *,
+    client: Any | None = None,
+) -> LLMProvider:
+    # Temporary M3 bridge: current services still pass Settings explicitly.
+    # That path stays uncached until M3 migrates services to the formal no-arg API.
+    if settings is not None or client is not None:
+        return build_llm_provider(settings or get_settings(), client=client)
+
+    global _provider_cache
+    with _provider_cache_lock:
+        if _provider_cache is None:
+            _provider_cache = build_llm_provider(get_settings())
+        return _provider_cache
+
+
+def clear_llm_provider_cache() -> None:
+    global _provider_cache
+    with _provider_cache_lock:
+        provider = _provider_cache
+        _provider_cache = None
+    if provider is not None:
+        provider.close()
