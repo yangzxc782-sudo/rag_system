@@ -164,9 +164,9 @@ def test_generate_passes_openai_compatible_parameters_and_returns_result() -> No
 
     provider = OpenAICompatibleLLMProvider(make_settings(), client_factory=factory)
     result = provider.generate(
-        LLMGenerateRequest(
-            prompt="用户问题",
-            system_prompt="系统提示",
+        LLMGenerateRequest.from_prompt(
+            "用户问题",
+            "系统提示",
             temperature=0.3,
             max_tokens=512,
         )
@@ -202,9 +202,9 @@ def test_generate_passes_optional_json_mode_and_think_parameters() -> None:
     provider = OpenAICompatibleLLMProvider(make_settings(), client=fake_client)
 
     provider.generate(
-        LLMGenerateRequest(
-            prompt='{"items":[]}',
-            response_format={"type": "json_object"},
+        LLMGenerateRequest.from_prompt(
+            '{"items":[]}',
+            json_mode=True,
             think=False,
         )
     )
@@ -220,9 +220,9 @@ def test_openai_sdk_merges_json_mode_and_think_into_wire_body() -> None:
 
     try:
         provider.generate(
-            LLMGenerateRequest(
-                prompt='{"items":[]}',
-                response_format={"type": "json_object"},
+            LLMGenerateRequest.from_prompt(
+                '{"items":[]}',
+                json_mode=True,
                 think=False,
             )
         )
@@ -239,7 +239,7 @@ def test_openai_sdk_does_not_send_think_when_request_omits_it() -> None:
     provider = OpenAICompatibleLLMProvider(make_settings(), client=client)
 
     try:
-        provider.generate(LLMGenerateRequest(prompt="plain request"))
+        provider.generate(LLMGenerateRequest.from_prompt("plain request"))
     finally:
         client.close()
 
@@ -250,7 +250,7 @@ def test_generate_without_system_prompt_sends_user_message_only() -> None:
     fake_client = FakeOpenAIClient()
     provider = OpenAICompatibleLLMProvider(make_settings(), client=fake_client)
 
-    provider.generate(LLMGenerateRequest(prompt="只包含用户问题"))
+    provider.generate(LLMGenerateRequest.from_prompt("只包含用户问题"))
 
     assert fake_client.completions.calls[0]["messages"] == [
         {"role": "user", "content": "只包含用户问题"}
@@ -264,7 +264,7 @@ def test_connection_failure_maps_to_llm_unavailable() -> None:
     )
 
     with pytest.raises(BusinessError) as exc_info:
-        provider.generate(LLMGenerateRequest(prompt="问题"))
+        provider.generate(LLMGenerateRequest.from_prompt("问题"))
 
     assert exc_info.value.code == LLM_UNAVAILABLE
 
@@ -276,7 +276,7 @@ def test_timeout_maps_to_llm_timeout() -> None:
     )
 
     with pytest.raises(BusinessError) as exc_info:
-        provider.generate(LLMGenerateRequest(prompt="问题"))
+        provider.generate(LLMGenerateRequest.from_prompt("问题"))
 
     assert exc_info.value.code == LLM_TIMEOUT
 
@@ -288,7 +288,7 @@ def test_status_error_maps_to_llm_generation_failed() -> None:
     )
 
     with pytest.raises(BusinessError) as exc_info:
-        provider.generate(LLMGenerateRequest(prompt="问题"))
+        provider.generate(LLMGenerateRequest.from_prompt("问题"))
 
     assert exc_info.value.code == LLM_GENERATION_FAILED
 
@@ -300,7 +300,7 @@ def test_response_without_text_maps_to_llm_generation_failed() -> None:
     )
 
     with pytest.raises(BusinessError) as exc_info:
-        provider.generate(LLMGenerateRequest(prompt="问题"))
+        provider.generate(LLMGenerateRequest.from_prompt("问题"))
 
     assert exc_info.value.code == LLM_GENERATION_FAILED
 
@@ -314,7 +314,7 @@ def test_response_with_reasoning_but_without_content_still_maps_to_llm_generatio
     )
 
     with pytest.raises(BusinessError) as exc_info:
-        provider.generate(LLMGenerateRequest(prompt="问题"))
+        provider.generate(LLMGenerateRequest.from_prompt("问题"))
 
     assert exc_info.value.code == LLM_GENERATION_FAILED
 
@@ -328,6 +328,8 @@ def test_generate_does_not_print_api_key_or_prompt(monkeypatch: pytest.MonkeyPat
     monkeypatch.setattr(builtins, "print", fake_print)
     provider = OpenAICompatibleLLMProvider(make_settings(), client=FakeOpenAIClient())
 
-    provider.generate(LLMGenerateRequest(prompt="不要打印的问题", system_prompt="不要打印的系统提示"))
+    provider.generate(
+        LLMGenerateRequest.from_prompt("不要打印的问题", "不要打印的系统提示")
+    )
 
     assert printed == []
