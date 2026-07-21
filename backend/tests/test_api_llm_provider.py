@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import traceback
 from types import SimpleNamespace
 from typing import Any
@@ -35,6 +36,7 @@ from app.llm import (
     clear_llm_provider_cache,
 )
 from app.llm.api import APILLMProvider
+from app.llm.local import LocalLLMProvider
 
 
 class FakeMessage:
@@ -249,6 +251,35 @@ def test_api_rejects_disabled_json_mode_before_client_call() -> None:
     assert client.completions.calls == []
 
 
+def test_api_capability_rejection_logs_only_safe_metadata(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    client = FakeOpenAIClient()
+    provider = APILLMProvider(api_settings(), client=client)
+    sensitive_prompt = "sensitive capability prompt"
+    caplog.set_level(logging.WARNING, logger="app.llm.provider")
+
+    with pytest.raises(BusinessError):
+        provider.generate(
+            LLMGenerateRequest.from_prompt(sensitive_prompt, json_mode=True)
+        )
+
+    records = [
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "llm_capability_rejected"
+    ]
+    assert len(records) == 1
+    record = records[0]
+    assert record.provider == "api"
+    assert record.operation == "capability_preflight"
+    assert record.error_code == LLM_PARAMETER_UNSUPPORTED
+    assert record.capability == "supports_json_mode"
+    assert record.retryable is False
+    assert client.completions.calls == []
+    assert sensitive_prompt not in caplog.text
+
+
 def test_api_json_mode_and_four_turn_history_reach_wire_without_think() -> None:
     captured_bodies: list[dict[str, object]] = []
     client = make_wire_client(captured_bodies)
@@ -388,9 +419,11 @@ def test_api_required_think_is_rejected_before_client_call() -> None:
 def test_api_unsupported_capabilities_are_rejected_before_client_call(
     llm_request: LLMGenerateRequest,
     parameter: str,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     client = FakeOpenAIClient()
     provider = APILLMProvider(api_settings(), client=client)
+    caplog.set_level(logging.WARNING, logger="app.llm.provider")
 
     with pytest.raises(BusinessError) as exc_info:
         provider.generate(llm_request)
@@ -399,6 +432,16 @@ def test_api_unsupported_capabilities_are_rejected_before_client_call(
     assert exc_info.value.detail["provider"] == "api"
     assert exc_info.value.detail["parameter"] == parameter
     assert client.completions.calls == []
+    records = [
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "llm_capability_rejected"
+    ]
+    assert len(records) == 1
+    assert records[0].capability == exc_info.value.detail["required_capability"]
+    rendered = f"{records[0].getMessage()} {records[0].__dict__!r}"
+    assert "lookup" not in rendered
+    assert "secret.png" not in rendered
 
 
 def test_api_constructs_lazy_client_with_remote_fields_and_zero_retries() -> None:
@@ -509,6 +552,99 @@ def test_api_success_returns_assistant_message_usage_and_request_id() -> None:
     assert result.request_id == "chatcmpl-remote-test"
 
 
+def test_api_success_logs_safe_result_metadata_without_request_content(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    sensitive_prompt = "sensitive successful prompt"
+    caplog.set_level(logging.INFO, logger="app.llm.openai_chat_transport")
+    provider = APILLMProvider(api_settings(), client=FakeOpenAIClient())
+
+    provider.generate(LLMGenerateRequest.from_prompt(sensitive_prompt))
+
+    records = [
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "llm_generation_completed"
+    ]
+    assert len(records) == 1
+    record = records[0]
+    assert record.provider == "api"
+    assert record.model == "remote-model"
+    assert record.operation == "chat.completions"
+    assert isinstance(record.latency_ms, int)
+    assert record.latency_ms >= 0
+    assert record.request_id == "chatcmpl-remote-test"
+    assert record.prompt_tokens == 21
+    assert record.completion_tokens == 8
+    assert record.total_tokens == 29
+    assert sensitive_prompt not in caplog.text
+
+
+def test_untrusted_request_id_is_preserved_in_result_but_omitted_from_logs(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    untrusted_request_id = "remote body secret as request id"
+    completion = FakeCompletion()
+    completion.id = untrusted_request_id
+    caplog.set_level(logging.INFO, logger="app.llm.openai_chat_transport")
+    provider = APILLMProvider(
+        api_settings(),
+        client=FakeOpenAIClient(FakeCompletions(response=completion)),
+    )
+
+    result = provider.generate(LLMGenerateRequest.from_prompt("question"))
+
+    record = next(
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "llm_generation_completed"
+    )
+    assert result.request_id == untrusted_request_id
+    assert record.request_id is None
+    assert untrusted_request_id not in caplog.text
+    assert untrusted_request_id not in repr(record.__dict__)
+
+
+def test_local_and_api_response_errors_use_provider_neutral_wording() -> None:
+    local_settings = SimpleNamespace(
+        llm_provider="local",
+        llm_temperature=0.2,
+        llm_max_tokens=2048,
+        llm_base_url="http://localhost:11434/v1",
+        llm_model="local-model",
+        llm_api_key="",
+        llm_timeout_seconds=120,
+    )
+    providers = (
+        LocalLLMProvider(
+            local_settings,
+            client=FakeOpenAIClient(
+                FakeCompletions(response=FakeCompletion(content=None))
+            ),
+        ),
+        APILLMProvider(
+            api_settings(),
+            client=FakeOpenAIClient(
+                FakeCompletions(response=FakeCompletion(content=None))
+            ),
+        ),
+    )
+
+    messages: list[str] = []
+    for provider in providers:
+        with pytest.raises(BusinessError) as exc_info:
+            provider.generate(LLMGenerateRequest.from_prompt("question"))
+        messages.append(exc_info.value.message)
+
+    assert messages == [
+        "LLM response did not contain generated text.",
+        "LLM response did not contain generated text.",
+    ]
+    assert all("local" not in message.lower() for message in messages)
+    assert all("api" not in message.lower() for message in messages)
+    assert all("ollama" not in message.lower() for message in messages)
+
+
 @pytest.mark.parametrize(
     ("exc", "expected_code", "expected_status"),
     [
@@ -536,6 +672,18 @@ def test_api_maps_upstream_errors_without_retry(
     assert exc_info.value.code == expected_code
     assert exc_info.value.status_code == expected_status
     assert len(client.completions.calls) == 1
+    assert exc_info.value.__cause__ is None
+    assert exc_info.value.__context__ is None
+    assert set(exc_info.value.detail) <= {
+        "source",
+        "error_type",
+        "upstream_status",
+        "retryable",
+    }
+    assert all(
+        not isinstance(value, (openai.APIError, httpx.Request, httpx.Response))
+        for value in vars(exc_info.value).values()
+    )
 
 
 def test_api_rate_limit_detail_is_retryable_and_excludes_remote_data() -> None:
@@ -570,6 +718,46 @@ def test_api_rate_limit_detail_is_retryable_and_excludes_remote_data() -> None:
     ):
         assert forbidden not in rendered
     assert len(client.completions.calls) == 1
+
+
+def test_api_failure_log_is_structured_and_excludes_upstream_data(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    sensitive_prompt = "sensitive failed prompt"
+    caplog.set_level(logging.WARNING, logger="app.llm.openai_chat_transport")
+    client = FakeOpenAIClient(
+        FakeCompletions(exc=make_status_error(openai.RateLimitError, 429))
+    )
+    provider = APILLMProvider(api_settings(), client=client)
+
+    with pytest.raises(BusinessError):
+        provider.generate(LLMGenerateRequest.from_prompt(sensitive_prompt))
+
+    records = [
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "llm_generation_failed"
+    ]
+    assert len(records) == 1
+    record = records[0]
+    assert record.provider == "api"
+    assert record.model == "remote-model"
+    assert record.operation == "chat.completions"
+    assert record.error_code == LLM_RATE_LIMITED
+    assert record.upstream_status == 429
+    assert record.retryable is True
+    assert isinstance(record.latency_ms, int)
+    rendered_record = f"{record.getMessage()} {record.__dict__!r}"
+    for forbidden in (
+        sensitive_prompt,
+        "test-remote-key-not-real",
+        "remote.example.invalid/v1",
+        "Authorization",
+        "Retry-After",
+        "remote-header-secret",
+        "remote body secret",
+    ):
+        assert forbidden not in rendered_record
 
 
 @pytest.mark.parametrize(
@@ -647,6 +835,8 @@ def test_api_json_mode_requires_valid_json_object(content: str) -> None:
 
     assert exc_info.value.code == LLM_JSON_INVALID
     assert exc_info.value.status_code == 502
+    assert exc_info.value.__cause__ is None
+    assert exc_info.value.__context__ is None
 
 
 def test_api_errors_and_tracebacks_do_not_expose_remote_secrets(

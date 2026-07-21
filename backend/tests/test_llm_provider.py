@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 import importlib
 import inspect
 import json
+import traceback
 from threading import Lock
 import time
 from types import SimpleNamespace
@@ -527,6 +528,32 @@ def test_transport_maps_sdk_failures_without_exposing_exception_text(
 
     assert exc_info.value.code == expected_code
     assert "secret" not in str(exc_info.value.detail)
+
+
+def test_missing_openai_dependency_error_detaches_import_exception(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.llm.openai_chat_transport as transport_module
+
+    marker = "sensitive-import-failure"
+
+    def fail_import(_name: str) -> object:
+        raise RuntimeError(marker)
+
+    monkeypatch.setattr(transport_module, "import_module", fail_import)
+    provider = local_module().LocalLLMProvider(make_settings())
+    sensitive_prompt = "sensitive prompt"
+
+    with pytest.raises(BusinessError) as exc_info:
+        provider.generate(LLMGenerateRequest.from_prompt(sensitive_prompt))
+
+    error = exc_info.value
+    assert error.code == LLM_CONFIG_INVALID
+    assert error.__cause__ is None
+    assert error.__context__ is None
+    rendered = "".join(traceback.format_exception(error))
+    assert marker not in rendered
+    assert sensitive_prompt not in rendered
 
 
 @pytest.mark.parametrize(

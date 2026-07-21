@@ -58,8 +58,16 @@ class LLMImageURLContentPart:
                 detail={"field": "detail"},
             )
 
-        parsed = urlsplit(image_url)
-        if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
+        parsed = None
+        try:
+            parsed = urlsplit(image_url)
+        except ValueError:
+            pass
+        if (
+            parsed is None
+            or parsed.scheme.lower() not in {"http", "https"}
+            or not parsed.netloc
+        ):
             _raise_request_invalid(
                 "LLM image URL must be an absolute HTTP(S) URL.",
                 detail={"field": "image_url"},
@@ -124,6 +132,9 @@ class LLMFunctionTool:
             )
 
         parameters_object = dict(parameters)
+        serialization_error_type: str | None = None
+        copied_parameters: Any = None
+        parameters_json = ""
         try:
             parameters_json = json.dumps(
                 parameters_object,
@@ -133,9 +144,15 @@ class LLMFunctionTool:
             )
             copied_parameters = json.loads(parameters_json)
         except (TypeError, ValueError) as exc:
+            serialization_error_type = type(exc).__name__
+
+        if serialization_error_type is not None:
             _raise_request_invalid(
                 "LLM function tool parameters must be strict JSON.",
-                detail={"field": "tool.parameters", "error_type": type(exc).__name__},
+                detail={
+                    "field": "tool.parameters",
+                    "error_type": serialization_error_type,
+                },
             )
 
         if not isinstance(copied_parameters, dict):

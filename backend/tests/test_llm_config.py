@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import logging
+import traceback
 from types import SimpleNamespace
 
 import pytest
@@ -225,6 +226,26 @@ def test_remote_url_rejects_unsafe_forms(base_url: str, reason: str) -> None:
     }
     assert "secret" not in str(exc_info.value.detail)
     assert "password" not in str(exc_info.value.detail)
+
+
+def test_remote_url_parser_error_has_no_exception_context_or_url_echo() -> None:
+    module = configuration_module()
+    marker = "sensitive-remote-host"
+
+    with pytest.raises(BusinessError) as exc_info:
+        module.validate_active_llm_configuration(
+            make_settings(
+                llm_provider="api",
+                llm_remote_base_url=f"https://[{marker}",
+            )
+        )
+
+    error = exc_info.value
+    assert error.code == LLM_CONFIG_INVALID
+    assert error.detail == {"field": "llm_remote_base_url", "reason": "host"}
+    assert error.__cause__ is None
+    assert error.__context__ is None
+    assert marker not in "".join(traceback.format_exception(error))
 
 
 def test_insecure_remote_http_requires_flag_and_warns_once(

@@ -63,7 +63,7 @@ export function friendlyRagErrorMessage(error: ApiError | null): string {
     case "RAG_QUERY_EMPTY":
       return "请输入问题。";
     case "LLM_UNAVAILABLE":
-      return "本地大语言模型服务不可用，请检查 Ollama 是否启动。";
+      return "大语言模型服务不可用，请检查当前 Provider 配置与服务状态。";
     case "LLM_TIMEOUT":
       return "大语言模型响应超时，请稍后重试。";
     case "LLM_GENERATION_FAILED":

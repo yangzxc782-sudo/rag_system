@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 from threading import Lock
 from typing import Any, Protocol
 
@@ -17,6 +18,9 @@ from app.llm.messages import (
     LLMMessage,
     LLMTextContentPart,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 def _raise_request_invalid(
@@ -306,6 +310,17 @@ def _raise_parameter_unsupported(
     parameter: str,
     required_capability: str,
 ) -> None:
+    logger.warning(
+        "LLM capability preflight rejected a request.",
+        extra={
+            "event": "llm_capability_rejected",
+            "provider": provider_name,
+            "operation": "capability_preflight",
+            "error_code": LLM_PARAMETER_UNSUPPORTED,
+            "capability": required_capability,
+            "retryable": False,
+        },
+    )
     raise BusinessError(
         LLM_PARAMETER_UNSUPPORTED,
         "LLM provider does not support a requested parameter.",

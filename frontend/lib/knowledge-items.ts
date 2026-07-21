@@ -267,7 +267,7 @@ export function friendlyKnowledgeItemErrorMessage(error: ApiError | null): strin
     case "KNOWLEDGE_ITEM_CONFIG_INVALID":
       return "知识抽取配置或参数非法。";
     case "LLM_UNAVAILABLE":
-      return "本地大语言模型服务不可用。";
+      return "大语言模型服务不可用，请检查当前 Provider 配置与服务状态。";
     case "LLM_TIMEOUT":
       return "大语言模型响应超时。";
     case "LLM_GENERATION_FAILED":

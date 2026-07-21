@@ -130,10 +130,14 @@ def _validate_shared_defaults(settings: Any) -> None:
 
 
 def _validate_remote_url(base_url: str, *, allow_insecure_http: bool) -> None:
+    parsed = None
     try:
         parsed = urlsplit(base_url)
         hostname = parsed.hostname
     except ValueError:
+        hostname = None
+
+    if parsed is None:
         _config_error(
             "llm_remote_base_url",
             "Remote LLM base URL is invalid.",

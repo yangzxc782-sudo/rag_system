@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import fields
 import inspect
 import math
+import traceback
 
 import pytest
 
@@ -245,6 +246,37 @@ def test_function_tool_parameters_must_be_strict_json(bad_value: object) -> None
             parameters={"type": "object", "invalid": bad_value},
         )
     )
+
+
+def test_tool_parameter_validation_detaches_serialization_exception_context() -> None:
+    marker = "sensitive-tool-parameter"
+
+    with pytest.raises(BusinessError) as exc_info:
+        LLMFunctionTool(
+            name="lookup",
+            parameters={"type": "object", "invalid": RuntimeError(marker)},
+        )
+
+    error = exc_info.value
+    assert error.code == LLM_REQUEST_INVALID
+    assert error.__cause__ is None
+    assert error.__context__ is None
+    assert marker not in "".join(traceback.format_exception(error))
+    assert marker not in repr(error.detail)
+
+
+def test_malformed_image_url_is_request_invalid_without_parser_context() -> None:
+    marker = "sensitive-image-host"
+
+    with pytest.raises(BusinessError) as exc_info:
+        LLMImageURLContentPart(image_url=f"https://[{marker}")
+
+    error = exc_info.value
+    assert error.code == LLM_REQUEST_INVALID
+    assert error.detail == {"field": "image_url"}
+    assert error.__cause__ is None
+    assert error.__context__ is None
+    assert marker not in "".join(traceback.format_exception(error))
 
 
 def test_function_tool_parameters_are_defensively_deep_copied() -> None:

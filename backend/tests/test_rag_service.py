@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import logging
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -190,11 +191,15 @@ def test_invalid_limit_raises_rag_config_invalid() -> None:
     assert exc_info.value.code == RAG_CONFIG_INVALID
 
 
-def test_empty_retrieval_returns_no_context_without_calling_llm(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_empty_retrieval_returns_no_context_without_calling_llm(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     result = make_result(items=[])
     patch_hybrid_search(monkeypatch, result)
     llm_provider = FakeLLMProvider()
     settings = make_settings(rag_no_context_message="No context available.")
+    caplog.set_level(logging.INFO, logger="app.llm")
 
     answer = rag_service.answer_question(object(), "question", settings=settings, llm_provider=llm_provider)
 
@@ -204,6 +209,10 @@ def test_empty_retrieval_returns_no_context_without_calling_llm(monkeypatch: pyt
     assert answer.retrieval.total == 0
     assert answer.retrieval.items == []
     assert llm_provider.calls == []
+    assert not any(
+        str(getattr(record, "event", "")).startswith("llm_generation")
+        for record in caplog.records
+    )
 
 
 @pytest.mark.parametrize(

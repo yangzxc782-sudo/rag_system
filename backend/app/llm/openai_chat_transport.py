@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from importlib import import_module
 import json
+import logging
+import re
 from threading import Lock
+from time import perf_counter
 from typing import Any, Callable, NoReturn
 
 from pydantic import SecretStr
@@ -30,6 +33,10 @@ from app.llm.provider import (
     LLMGenerateResult,
     LLMUsage,
 )
+
+
+logger = logging.getLogger(__name__)
+_SAFE_REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 
 
 class OpenAIChatTransport:
@@ -84,22 +91,47 @@ class OpenAIChatTransport:
         if self.send_think and request.think is not None:
             payload["extra_body"] = {"think": request.think}
 
+        started_at = perf_counter()
         mapped_error: BusinessError | None = None
         try:
             completion = self._get_client().chat.completions.create(**payload)
-        except BusinessError:
+        except BusinessError as error:
+            _log_generation_failure(
+                error,
+                provider_name=provider_name,
+                model=model,
+                started_at=started_at,
+            )
             raise
         except Exception as exc:
             mapped_error = _map_llm_error(exc)
         if mapped_error is not None:
+            _log_generation_failure(
+                mapped_error,
+                provider_name=provider_name,
+                model=model,
+                started_at=started_at,
+            )
             raise mapped_error
 
-        return self._parse_result(
-            completion,
-            provider_name=provider_name,
-            model=model,
-            json_mode=request.json_mode,
-        )
+        try:
+            result = self._parse_result(
+                completion,
+                provider_name=provider_name,
+                model=model,
+                json_mode=request.json_mode,
+            )
+        except BusinessError as error:
+            _log_generation_failure(
+                error,
+                provider_name=provider_name,
+                model=model,
+                started_at=started_at,
+            )
+            raise
+
+        _log_generation_success(result, started_at=started_at)
+        return result
 
     def close(self) -> None:
         with self._client_lock:
@@ -194,11 +226,13 @@ class OpenAIChatTransport:
                 "choices[0].message.content",
             )
         if json_mode:
+            parsed_content: Any = None
+            json_parse_failed = False
             try:
                 parsed_content = json.loads(content)
             except (TypeError, ValueError):
-                _raise_json_invalid()
-            if not isinstance(parsed_content, dict):
+                json_parse_failed = True
+            if json_parse_failed or not isinstance(parsed_content, dict):
                 _raise_json_invalid()
 
         usage_object = getattr(completion, "usage", None)
@@ -231,16 +265,21 @@ def _default_openai_client_factory(
     timeout: float,
     max_retries: int,
 ) -> Any:
+    import_error_type: str | None = None
+    openai_client: Any = None
     try:
         openai_module = import_module("openai")
         openai_client = getattr(openai_module, "OpenAI")
     except Exception as exc:
+        import_error_type = type(exc).__name__
+
+    if import_error_type is not None:
         raise BusinessError(
             LLM_CONFIG_INVALID,
             "OpenAI Python client dependency is not available.",
-            detail={"dependency": "openai", "error_type": type(exc).__name__},
+            detail={"dependency": "openai", "error_type": import_error_type},
             status_code=500,
-        ) from exc
+        )
     return openai_client(
         base_url=base_url,
         api_key=api_key,
@@ -281,7 +320,66 @@ def _raise_json_invalid() -> NoReturn:
         "LLM JSON response must contain a valid JSON object.",
         detail={"field": "choices[0].message.content"},
         status_code=502,
-    ) from None
+    )
+
+
+def _latency_ms(started_at: float) -> int:
+    return max(0, int((perf_counter() - started_at) * 1000))
+
+
+def _safe_request_id(request_id: str | None) -> str | None:
+    if request_id is None or _SAFE_REQUEST_ID_PATTERN.fullmatch(request_id) is None:
+        return None
+    return request_id
+
+
+def _log_generation_success(
+    result: LLMGenerateResult,
+    *,
+    started_at: float,
+) -> None:
+    usage = result.usage
+    logger.info(
+        "LLM generation completed.",
+        extra={
+            "event": "llm_generation_completed",
+            "provider": result.provider,
+            "model": result.model,
+            "operation": "chat.completions",
+            "latency_ms": _latency_ms(started_at),
+            "request_id": _safe_request_id(result.request_id),
+            "prompt_tokens": usage.prompt_tokens if usage is not None else None,
+            "completion_tokens": usage.completion_tokens if usage is not None else None,
+            "total_tokens": usage.total_tokens if usage is not None else None,
+        },
+    )
+
+
+def _log_generation_failure(
+    error: BusinessError,
+    *,
+    provider_name: str,
+    model: str,
+    started_at: float,
+) -> None:
+    detail = error.detail if isinstance(error.detail, dict) else {}
+    upstream_status = detail.get("upstream_status")
+    if not isinstance(upstream_status, int):
+        upstream_status = None
+    retryable = detail.get("retryable") is True
+    logger.warning(
+        "LLM generation failed.",
+        extra={
+            "event": "llm_generation_failed",
+            "provider": provider_name,
+            "model": model,
+            "operation": "chat.completions",
+            "latency_ms": _latency_ms(started_at),
+            "error_code": error.code,
+            "upstream_status": upstream_status,
+            "retryable": retryable,
+        },
+    )
 
 
 def _map_llm_error(exc: Exception) -> BusinessError:
