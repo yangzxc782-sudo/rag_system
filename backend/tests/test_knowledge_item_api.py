@@ -120,6 +120,31 @@ def test_router_registers_knowledge_items_without_removing_search_or_rag() -> No
     assert "/api/v1/rag/ask" in paths
 
 
+def test_extraction_openapi_request_schema_does_not_add_messages_or_history() -> None:
+    schemas = make_client().app.openapi()["components"]["schemas"]
+    schema = schemas["KnowledgeExtractionRequest"]
+
+    assert set(schema["properties"]) == {
+        "mode",
+        "document_id",
+        "chunk_ids",
+        "item_types",
+        "auto_submit",
+        "max_chunks",
+        "created_by",
+    }
+    assert "messages" not in schema["properties"]
+    assert "history" not in schema["properties"]
+    assert set(schemas["KnowledgeExtractionData"]["properties"]) == {
+        "items",
+        "created",
+        "skipped_duplicates",
+        "status",
+        "auto_submit",
+        "llm",
+    }
+
+
 def test_list_knowledge_items_success(monkeypatch: pytest.MonkeyPatch) -> None:
     item = make_item()
 

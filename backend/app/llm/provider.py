@@ -6,7 +6,6 @@ from typing import Any, Protocol
 
 from app.core.config import get_settings
 from app.core.errors import (
-    LLM_GENERATION_FAILED,
     LLM_PARAMETER_UNSUPPORTED,
     LLM_REQUEST_INVALID,
     LLM_RESPONSE_INVALID,
@@ -46,13 +45,6 @@ def _raise_response_invalid(
     )
 
 
-class _UnsetType:
-    __slots__ = ()
-
-
-_UNSET = _UnsetType()
-
-
 @dataclass(frozen=True, slots=True)
 class LLMCapabilities:
     supports_json_mode: bool
@@ -81,7 +73,7 @@ class LLMCapabilities:
             )
 
 
-@dataclass(frozen=True, slots=True, init=False)
+@dataclass(frozen=True, slots=True)
 class LLMGenerateRequest:
     messages: tuple[LLMMessage, ...]
     temperature: float | None = None
@@ -93,101 +85,6 @@ class LLMGenerateRequest:
     stop: tuple[str, ...] | None = None
     tools: tuple[LLMFunctionTool, ...] = ()
     parallel_tool_calls: bool | None = None
-
-    def __init__(
-        self,
-        messages: tuple[LLMMessage, ...] | _UnsetType = _UNSET,
-        temperature: float | None = None,
-        max_tokens: int | None = None,
-        json_mode: bool | _UnsetType = _UNSET,
-        think: bool | None = None,
-        think_required: bool = False,
-        timeout_seconds: float | None = None,
-        stop: tuple[str, ...] | None = None,
-        tools: tuple[LLMFunctionTool, ...] = (),
-        parallel_tool_calls: bool | None = None,
-        *,
-        prompt: str | None | _UnsetType = _UNSET,
-        system_prompt: str | None | _UnsetType = _UNSET,
-        response_format: dict[str, Any] | None | _UnsetType = _UNSET,
-    ) -> None:
-        legacy_input_supplied = any(
-            value is not _UNSET for value in (prompt, system_prompt, response_format)
-        )
-        messages_supplied = messages is not _UNSET
-
-        if messages_supplied and legacy_input_supplied:
-            _raise_request_invalid(
-                "LLM messages cannot be combined with legacy prompt inputs.",
-                detail={"field": "messages"},
-            )
-
-        resolved_messages: object
-        resolved_json_mode: object
-        if legacy_input_supplied:
-            if prompt is _UNSET:
-                _raise_request_invalid(
-                    "Legacy LLM request construction requires prompt.",
-                    detail={"field": "prompt"},
-                )
-            if response_format is not _UNSET and json_mode is not _UNSET:
-                _raise_request_invalid(
-                    "Legacy response_format cannot be combined with json_mode.",
-                    detail={"field": "json_mode"},
-                )
-
-            # Temporary M1A bridge: existing RAG and knowledge extraction still
-            # construct prompt-based requests. M3 must migrate those services to
-            # from_prompt() and then delete these legacy constructor parameters.
-            legacy_messages: list[LLMMessage] = []
-            if system_prompt is not _UNSET and system_prompt is not None:
-                legacy_messages.append(
-                    LLMMessage(
-                        role="system",
-                        content=(LLMTextContentPart(text=system_prompt),),
-                    )
-                )
-            legacy_messages.append(
-                LLMMessage(
-                    role="user",
-                    content=(LLMTextContentPart(text=prompt),),
-                )
-            )
-            resolved_messages = tuple(legacy_messages)
-            resolved_json_mode = self._legacy_json_mode(response_format, json_mode)
-        else:
-            resolved_messages = () if messages is _UNSET else messages
-            resolved_json_mode = False if json_mode is _UNSET else json_mode
-
-        object.__setattr__(self, "messages", resolved_messages)
-        object.__setattr__(self, "temperature", temperature)
-        object.__setattr__(self, "max_tokens", max_tokens)
-        object.__setattr__(self, "json_mode", resolved_json_mode)
-        object.__setattr__(self, "think", think)
-        object.__setattr__(self, "think_required", think_required)
-        object.__setattr__(self, "timeout_seconds", timeout_seconds)
-        object.__setattr__(self, "stop", stop)
-        object.__setattr__(self, "tools", tools)
-        object.__setattr__(self, "parallel_tool_calls", parallel_tool_calls)
-        self.__post_init__()
-
-    @staticmethod
-    def _legacy_json_mode(
-        response_format: dict[str, Any] | None | _UnsetType,
-        json_mode: bool | _UnsetType,
-    ) -> bool | _UnsetType:
-        if response_format is _UNSET:
-            return False if json_mode is _UNSET else json_mode
-        if response_format is None:
-            return False
-        if isinstance(response_format, dict) and response_format == {
-            "type": "json_object"
-        }:
-            return True
-        _raise_request_invalid(
-            "Legacy LLM response_format is unsupported.",
-            detail={"field": "response_format"},
-        )
 
     def __post_init__(self) -> None:
         if not isinstance(self.messages, tuple) or not self.messages:
@@ -337,6 +234,7 @@ class LLMGenerateRequest:
                 )
             answered_tool_call_ids.add(message.tool_call_id)
 
+
 @dataclass(frozen=True, slots=True)
 class LLMUsage:
     prompt_tokens: int | None = None
@@ -344,80 +242,40 @@ class LLMUsage:
     total_tokens: int | None = None
 
 
-@dataclass(frozen=True, slots=True, init=False)
+@dataclass(frozen=True, slots=True)
 class LLMGenerateResult:
     message: LLMMessage
     provider: str
     model: str
-    usage: LLMUsage | None
-    request_id: str | None
+    usage: LLMUsage | None = None
+    request_id: str | None = None
 
-    def __init__(
-        self,
-        message: LLMMessage | None = None,
-        provider: str = "",
-        model: str = "",
-        usage: LLMUsage | None = None,
-        request_id: str | None = None,
-        *,
-        text: str | None = None,
-    ) -> None:
-        if message is not None and text is not None:
-            _raise_response_invalid(
-                "LLM result cannot provide both message and legacy text.",
-                detail={"field": "message"},
-            )
-        if message is None:
-            if text is None:
-                _raise_response_invalid(
-                    "LLM result must contain an assistant message.",
-                    detail={"field": "message"},
-                )
-            try:
-                message = LLMMessage(
-                    role="assistant",
-                    content=(LLMTextContentPart(text=text),),
-                )
-            except BusinessError:
-                # Temporary compatibility for pre-M3 service fakes that still
-                # construct text-first results and expect the legacy error code.
-                raise BusinessError(
-                    LLM_GENERATION_FAILED,
-                    "LLM response did not contain generated text.",
-                    detail={"field": "message.content"},
-                    status_code=500,
-                )
-        if not isinstance(message, LLMMessage) or message.role != "assistant":
+    def __post_init__(self) -> None:
+        if not isinstance(self.message, LLMMessage) or self.message.role != "assistant":
             _raise_response_invalid(
                 "LLM result message must have the assistant role.",
                 detail={"field": "message.role"},
             )
-        if not isinstance(provider, str) or not provider.strip():
+        if not isinstance(self.provider, str) or not self.provider.strip():
             _raise_response_invalid(
                 "LLM result provider must not be empty.",
                 detail={"field": "provider"},
             )
-        if not isinstance(model, str) or not model.strip():
+        if not isinstance(self.model, str) or not self.model.strip():
             _raise_response_invalid(
                 "LLM result model must not be empty.",
                 detail={"field": "model"},
             )
-        if usage is not None and not isinstance(usage, LLMUsage):
+        if self.usage is not None and not isinstance(self.usage, LLMUsage):
             _raise_response_invalid(
                 "LLM result usage is invalid.",
                 detail={"field": "usage"},
             )
-        if request_id is not None and not isinstance(request_id, str):
+        if self.request_id is not None and not isinstance(self.request_id, str):
             _raise_response_invalid(
                 "LLM result request_id is invalid.",
                 detail={"field": "request_id"},
             )
-
-        object.__setattr__(self, "message", message)
-        object.__setattr__(self, "provider", provider)
-        object.__setattr__(self, "model", model)
-        object.__setattr__(self, "usage", usage)
-        object.__setattr__(self, "request_id", request_id)
 
     @property
     def text(self) -> str:
@@ -521,16 +379,7 @@ def build_llm_provider(
     return APILLMProvider(settings, client=client)
 
 
-def get_llm_provider(
-    settings: Any | None = None,
-    *,
-    client: Any | None = None,
-) -> LLMProvider:
-    # Temporary M3 bridge: current services still pass Settings explicitly.
-    # That path stays uncached until M3 migrates services to the formal no-arg API.
-    if settings is not None or client is not None:
-        return build_llm_provider(settings or get_settings(), client=client)
-
+def get_llm_provider() -> LLMProvider:
     global _provider_cache
     with _provider_cache_lock:
         if _provider_cache is None:

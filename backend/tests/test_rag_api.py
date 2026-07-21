@@ -218,6 +218,23 @@ def test_router_registers_rag_without_removing_search_routes() -> None:
     assert "/api/v1/search/vector" in paths
 
 
+def test_rag_openapi_request_schema_does_not_add_messages_or_history() -> None:
+    schemas = make_client().app.openapi()["components"]["schemas"]
+    schema = schemas["RagAskRequest"]
+
+    assert set(schema["properties"]) == {"question", "limit", "document_id"}
+    assert "messages" not in schema["properties"]
+    assert "history" not in schema["properties"]
+    assert set(schemas["RagAskData"]["properties"]) == {
+        "question",
+        "answer",
+        "context_status",
+        "citations",
+        "retrieval",
+        "llm",
+    }
+
+
 def test_rag_api_does_not_call_search_or_log_directly() -> None:
     source = inspect.getsource(rag_api)
 

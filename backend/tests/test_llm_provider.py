@@ -214,62 +214,14 @@ def test_build_llm_provider_returns_normalized_local_provider(
     assert provider.capabilities.supports_image_input is False
 
 
-def test_legacy_get_with_settings_remains_available_until_m3() -> None:
+def test_get_llm_provider_formal_signature_is_no_arg() -> None:
     module = provider_module()
 
-    provider = module.get_llm_provider(make_settings(), client=FakeOpenAIClient())
-
-    assert provider.provider_name == "local"
-
-
-def test_legacy_get_with_settings_stays_isolated_from_global_cache(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    module = provider_module()
-    legacy_settings = make_settings(llm_model="legacy-model")
-    cached_settings = make_settings(llm_model="cached-model")
-    providers: list[SimpleNamespace] = []
-
-    def fake_build(settings: object, *, client: object | None = None) -> object:
-        provider = SimpleNamespace(settings=settings, close_calls=0)
-
-        def close() -> None:
-            provider.close_calls += 1
-
-        provider.close = close
-        providers.append(provider)
-        return provider
-
-    monkeypatch.setattr(module, "get_settings", lambda: cached_settings)
-    monkeypatch.setattr(module, "build_llm_provider", fake_build)
-
-    first_legacy = module.get_llm_provider(legacy_settings)
-    second_legacy = module.get_llm_provider(legacy_settings)
-
-    assert first_legacy is not second_legacy
-    assert module._provider_cache is None
-
-    first_cached = module.get_llm_provider()
-
-    assert first_cached is module._provider_cache
-    assert first_cached is not first_legacy
-    assert first_cached is not second_legacy
-    assert module.get_llm_provider() is first_cached
-
-    module.clear_llm_provider_cache()
-
-    assert module._provider_cache is None
-    assert first_cached.close_calls == 1
-    # Legacy providers are deliberately outside the formal cache lifecycle until M3.
-    assert first_legacy.close_calls == 0
-    assert second_legacy.close_calls == 0
-
-    second_cached = module.get_llm_provider()
-
-    assert second_cached is not first_cached
-    assert second_cached is module._provider_cache
-    assert first_legacy.close_calls == 0
-    assert second_legacy.close_calls == 0
+    assert inspect.signature(module.get_llm_provider).parameters == {}
+    with pytest.raises(TypeError):
+        module.get_llm_provider(make_settings())
+    with pytest.raises(TypeError):
+        module.get_llm_provider(client=FakeOpenAIClient())
 
 
 def test_api_provider_factory_builds_api_without_local_fallback(
@@ -327,10 +279,6 @@ def test_api_provider_factory_builds_api_without_local_fallback(
     assert built.__class__.__name__ == "APILLMProvider"
     assert built.provider_name == "api"
     assert built.model == remote_model
-    assert module._provider_cache is None
-    legacy = module.get_llm_provider(settings, client=FakeOpenAIClient())
-    assert legacy.__class__.__name__ == "APILLMProvider"
-    assert legacy.provider_name == "api"
     assert module._provider_cache is None
     assert local_constructions == []
 

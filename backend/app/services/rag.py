@@ -13,7 +13,13 @@ from app.core.errors import (
     RAG_QUERY_EMPTY,
     BusinessError,
 )
-from app.llm.provider import LLMGenerateRequest, LLMGenerateResult, LLMProvider, get_llm_provider
+from app.llm.configuration import resolve_active_llm_metadata
+from app.llm.provider import (
+    LLMGenerateRequest,
+    LLMGenerateResult,
+    LLMProvider,
+    get_llm_provider,
+)
 from app.rag.citations import RagCitation
 from app.rag.citations import build_citations as build_context_citations
 from app.rag.context_builder import RagContext, RagContextStatus, build_rag_context
@@ -108,9 +114,9 @@ def build_prompt(question: str, context: RagContext, settings: Any) -> RagPrompt
 def generate_answer(prompt: RagPrompt, llm_provider: LLMProvider, settings: Any) -> LLMGenerateResult:
     try:
         result = llm_provider.generate(
-            LLMGenerateRequest(
-                prompt=prompt.user_prompt,
-                system_prompt=prompt.system_prompt,
+            LLMGenerateRequest.from_prompt(
+                prompt.user_prompt,
+                prompt.system_prompt,
                 temperature=getattr(settings, "llm_temperature", None),
                 max_tokens=getattr(settings, "llm_max_tokens", None),
             )
@@ -161,18 +167,19 @@ def answer_question(
     context = build_context(normalized_question, search_result, settings)
 
     if context.context_status == "no_context":
+        active_llm = resolve_active_llm_metadata(settings)
         return RagAnswerResult(
             question=normalized_question,
             answer=str(getattr(settings, "rag_no_context_message", "") or ""),
             context_status="no_context",
             citations=[],
             retrieval=search_result,
-            llm_provider=str(getattr(settings, "llm_provider", "") or "") or None,
-            llm_model=str(getattr(settings, "llm_model", "") or "") or None,
+            llm_provider=active_llm.provider,
+            llm_model=active_llm.model or None,
         )
 
     prompt = build_prompt(normalized_question, context, settings)
-    provider = llm_provider or get_llm_provider(settings)
+    provider = llm_provider or get_llm_provider()
     llm_result = generate_answer(prompt, provider, settings)
 
     return RagAnswerResult(

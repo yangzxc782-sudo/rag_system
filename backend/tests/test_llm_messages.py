@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import fields
+import inspect
 import math
 
 import pytest
 
 from app.core.errors import (
-    LLM_GENERATION_FAILED,
     LLM_REQUEST_INVALID,
     LLM_RESPONSE_INVALID,
     BusinessError,
@@ -287,159 +287,32 @@ def test_from_prompt_with_system_prompt_preserves_system_then_user_order() -> No
     assert request.think is False
 
 
-def test_legacy_prompt_constructor_creates_one_user_message() -> None:
-    request = LLMGenerateRequest(prompt="旧业务用户问题")
-
-    assert request.messages == (message("user", "旧业务用户问题"),)
-    assert request.json_mode is False
-
-
-def test_legacy_system_prompt_constructor_preserves_system_then_user_order() -> None:
-    request = LLMGenerateRequest(
-        prompt="旧业务用户问题",
-        system_prompt="旧业务系统提示",
-    )
-
-    assert request.messages == (
-        message("system", "旧业务系统提示"),
-        message("user", "旧业务用户问题"),
-    )
-
-
 @pytest.mark.parametrize(
-    ("response_format", "expected_json_mode"),
+    ("legacy_name", "legacy_value"),
     [
-        (None, False),
-        ({"type": "json_object"}, True),
+        ("prompt", "旧业务用户问题"),
+        ("system_prompt", "旧业务系统提示"),
+        ("response_format", {"type": "json_object"}),
     ],
 )
-def test_legacy_response_format_maps_to_json_mode(
-    response_format: dict[str, str] | None,
-    expected_json_mode: bool,
+def test_request_constructor_rejects_removed_legacy_parameters(
+    legacy_name: str,
+    legacy_value: object,
 ) -> None:
-    request = LLMGenerateRequest(
-        prompt="抽取知识",
-        response_format=response_format,
-    )
-
-    assert request.json_mode is expected_json_mode
-
-
-@pytest.mark.parametrize(
-    "legacy_kwargs",
-    [
-        {"prompt": "冲突用户问题"},
-        {"prompt": None},
-        {"system_prompt": "冲突系统提示"},
-        {"system_prompt": None},
-        {"response_format": {"type": "json_object"}},
-        {"response_format": None},
-    ],
-)
-def test_messages_cannot_be_combined_with_legacy_constructor_inputs(
-    legacy_kwargs: dict[str, object],
-) -> None:
-    with pytest.raises(BusinessError) as exc_info:
-        LLMGenerateRequest(
-            messages=(message("user", "正式消息"),),
-            **legacy_kwargs,  # type: ignore[arg-type]
+    with pytest.raises(TypeError):
+        LLMGenerateRequest(  # type: ignore[call-arg]
+            **{legacy_name: legacy_value},
         )
 
-    assert exc_info.value.code == LLM_REQUEST_INVALID
-    assert exc_info.value.detail == {"field": "messages"}
 
-
-@pytest.mark.parametrize(
-    "response_format",
-    [
-        {},
-        {"type": "text"},
-        {"type": "json_object", "strict": True},
-        "json_object",
-    ],
-)
-def test_legacy_constructor_rejects_unknown_response_format(
-    response_format: object,
-) -> None:
-    with pytest.raises(BusinessError) as exc_info:
-        LLMGenerateRequest(
-            prompt="抽取知识",
-            response_format=response_format,  # type: ignore[arg-type]
-        )
-
-    assert exc_info.value.code == LLM_REQUEST_INVALID
-    assert exc_info.value.detail == {"field": "response_format"}
-
-
-def test_legacy_response_format_cannot_be_combined_with_formal_json_mode() -> None:
-    with pytest.raises(BusinessError) as exc_info:
-        LLMGenerateRequest(
-            prompt="抽取知识",
-            response_format={"type": "json_object"},
-            json_mode=True,
-        )
-
-    assert exc_info.value.code == LLM_REQUEST_INVALID
-    assert exc_info.value.detail == {"field": "json_mode"}
-
-
-def test_legacy_constructor_does_not_store_a_second_copy_of_prompt_state() -> None:
-    request = LLMGenerateRequest(
-        prompt="用户问题",
-        system_prompt="系统提示",
-        response_format={"type": "json_object"},
-    )
-
-    assert not hasattr(request, "__dict__")
-    assert "prompt" not in request.__slots__
-    assert "system_prompt" not in request.__slots__
-    assert "response_format" not in request.__slots__
-    assert not hasattr(request, "prompt")
-    assert not hasattr(request, "system_prompt")
-    assert not hasattr(request, "response_format")
-
-
-def test_legacy_bridge_accepts_current_rag_request_shape() -> None:
-    request = LLMGenerateRequest(
-        prompt="RAG 用户问题",
-        system_prompt="RAG 系统提示",
-        temperature=0.2,
-        max_tokens=2048,
-    )
-
-    assert request.messages == (
-        message("system", "RAG 系统提示"),
-        message("user", "RAG 用户问题"),
-    )
-    assert request.temperature == 0.2
-    assert request.max_tokens == 2048
-
-
-def test_legacy_bridge_accepts_current_knowledge_extraction_request_shape() -> None:
-    request = LLMGenerateRequest(
-        prompt="抽取用户提示",
-        system_prompt="抽取系统提示",
-        temperature=0.0,
-        max_tokens=2048,
-        response_format={"type": "json_object"},
-        think=False,
-    )
-
-    assert request.messages == (
-        message("system", "抽取系统提示"),
-        message("user", "抽取用户提示"),
-    )
-    assert request.json_mode is True
-    assert request.think is False
-
-
-def test_formal_request_fields_do_not_include_prompt_or_system_prompt() -> None:
+def test_formal_request_fields_and_signature_exclude_legacy_inputs() -> None:
     field_names = {field.name for field in fields(LLMGenerateRequest)}
+    parameter_names = set(inspect.signature(LLMGenerateRequest).parameters)
 
     assert "messages" in field_names
-    assert "prompt" not in field_names
-    assert "system_prompt" not in field_names
-    assert "response_format" not in field_names
+    for legacy_name in ("prompt", "system_prompt", "response_format"):
+        assert legacy_name not in field_names
+        assert legacy_name not in parameter_names
 
 
 def test_result_requires_assistant_message_and_has_no_raw_field() -> None:
@@ -484,11 +357,13 @@ def test_result_text_rejects_assistant_message_without_text() -> None:
     assert exc_info.value.code == LLM_RESPONSE_INVALID
 
 
-def test_legacy_result_text_constructor_preserves_empty_text_error_code() -> None:
-    with pytest.raises(BusinessError) as exc_info:
-        LLMGenerateResult(text=" ", provider="fake", model="fake-model")
-
-    assert exc_info.value.code == LLM_GENERATION_FAILED
+def test_result_constructor_rejects_removed_text_parameter() -> None:
+    with pytest.raises(TypeError):
+        LLMGenerateResult(  # type: ignore[call-arg]
+            text="旧文本结果",
+            provider="fake",
+            model="fake-model",
+        )
 
 
 def test_capabilities_reject_parallel_tools_without_tools_support() -> None:

@@ -13,11 +13,13 @@ from app.core.errors import (
     KNOWLEDGE_ITEM_EXTRACTION_PARSE_FAILED,
     KNOWLEDGE_ITEM_SOURCE_CHUNK_NOT_FOUND,
     KNOWLEDGE_ITEM_SOURCE_DOCUMENT_NOT_FOUND,
+    LLM_PARAMETER_UNSUPPORTED,
     BusinessError,
 )
 from app.extraction.knowledge_parser import parse_extraction_json, strip_json_code_fence
 from app.extraction.knowledge_prompt import build_knowledge_extraction_prompt
-from app.llm.provider import LLMGenerateResult
+from app.llm.messages import LLMMessage, LLMTextContentPart
+from app.llm.provider import LLMGenerateResult, build_llm_provider
 from app.models.document import Document
 from app.models.document_chunk import DocumentChunk
 from app.models.knowledge_item import KnowledgeItem
@@ -109,7 +111,46 @@ class FakeLLMProvider:
         self.calls.append(request)
         if self.exc is not None:
             raise self.exc
-        return LLMGenerateResult(text=self.text, provider="fake", model="fake-model")
+        return LLMGenerateResult(
+            message=LLMMessage(
+                role="assistant",
+                content=(LLMTextContentPart(text=self.text),),
+            ),
+            provider="fake",
+            model="fake-model",
+        )
+
+
+class FakeSDKCompletions:
+    def __init__(self, content: str = '{"items":[]}') -> None:
+        self.content = content
+        self.calls: list[dict[str, object]] = []
+
+    def create(self, **kwargs: object) -> object:
+        self.calls.append(kwargs)
+        return SimpleNamespace(
+            id="chatcmpl-extraction-business",
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(
+                        role="assistant",
+                        content=self.content,
+                        tool_calls=None,
+                    )
+                )
+            ],
+            usage=None,
+        )
+
+
+class FakeSDKClient:
+    def __init__(self, content: str = '{"items":[]}') -> None:
+        self.completions = FakeSDKCompletions(content)
+        self.chat = SimpleNamespace(completions=self.completions)
+        self.close_calls = 0
+
+    def close(self) -> None:
+        self.close_calls += 1
 
 
 def make_settings(**overrides: object) -> SimpleNamespace:
@@ -118,9 +159,18 @@ def make_settings(**overrides: object) -> SimpleNamespace:
         "knowledge_extraction_max_chars": 12000,
         "knowledge_extraction_default_status": "draft",
         "llm_provider": "openai_compatible",
+        "llm_base_url": "http://localhost:11434/v1",
         "llm_model": "qwen3:8b",
+        "llm_api_key": "",
         "llm_temperature": 0.2,
         "llm_max_tokens": 2048,
+        "llm_timeout_seconds": 120,
+        "llm_remote_base_url": "https://remote.example.invalid/v1",
+        "llm_remote_api_key": "test-key-not-real",
+        "llm_remote_model": "remote-model",
+        "llm_remote_timeout_seconds": 60,
+        "llm_remote_supports_json_mode": False,
+        "llm_remote_allow_insecure_http": False,
     }
     values.update(overrides)
     return SimpleNamespace(**values)
@@ -322,6 +372,145 @@ def test_extract_returns_zero_when_llm_returns_no_items() -> None:
     assert len(llm.calls) == 1
     assert llm.calls[0].json_mode is True
     assert getattr(llm.calls[0], "think") is False
+    assert llm.calls[0].think_required is False
+    assert [message.role for message in llm.calls[0].messages] == ["system", "user"]
+
+
+def test_generate_extraction_uses_from_prompt_with_json_and_advisory_think(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: list[dict[str, object]] = []
+
+    class RequestFactorySpy:
+        @classmethod
+        def from_prompt(
+            cls,
+            prompt: str,
+            system_prompt: str | None = None,
+            **kwargs: object,
+        ) -> object:
+            captured.append(
+                {
+                    "prompt": prompt,
+                    "system_prompt": system_prompt,
+                    **kwargs,
+                }
+            )
+            return SimpleNamespace()
+
+    monkeypatch.setattr(
+        knowledge_extraction,
+        "LLMGenerateRequest",
+        RequestFactorySpy,
+    )
+    provider = FakeLLMProvider('{"items":[]}')
+
+    result = knowledge_extraction._generate_extraction_json(
+        "extraction system",
+        "extraction user",
+        make_settings(),
+        provider,
+    )
+
+    assert result.text == '{"items":[]}'
+    assert captured == [
+        {
+            "prompt": "extraction user",
+            "system_prompt": "extraction system",
+            "temperature": 0.0,
+            "max_tokens": 2048,
+            "json_mode": True,
+            "think": False,
+            "think_required": False,
+        }
+    ]
+
+
+def test_generate_extraction_uses_no_arg_provider_getter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = FakeLLMProvider('{"items":[]}')
+    get_calls = 0
+
+    def fake_get_provider() -> FakeLLMProvider:
+        nonlocal get_calls
+        get_calls += 1
+        return provider
+
+    monkeypatch.setattr(
+        knowledge_extraction,
+        "get_llm_provider",
+        fake_get_provider,
+    )
+
+    result = knowledge_extraction._generate_extraction_json(
+        "extraction system",
+        "extraction user",
+        make_settings(),
+        None,
+    )
+
+    assert result.text == '{"items":[]}'
+    assert get_calls == 1
+
+
+def test_api_json_capability_false_rejects_extraction_before_network() -> None:
+    db = FakeDb(chunks={CHUNK_ID: make_chunk()})
+    client = FakeSDKClient()
+    provider = build_llm_provider(
+        make_settings(llm_provider="api", llm_remote_supports_json_mode=False),
+        client=client,
+    )
+
+    with pytest.raises(BusinessError) as exc_info:
+        knowledge_extraction.extract_knowledge_items(
+            db,
+            KnowledgeExtractionRequest(mode="chunks", chunk_ids=[CHUNK_ID]),
+            settings=make_settings(),
+            llm_provider=provider,
+        )
+
+    assert exc_info.value.code == LLM_PARAMETER_UNSUPPORTED
+    assert client.completions.calls == []
+
+
+@pytest.mark.parametrize(
+    ("provider_name", "settings"),
+    [
+        ("local", make_settings(llm_provider="local")),
+        (
+            "api",
+            make_settings(
+                llm_provider="api",
+                llm_remote_supports_json_mode=True,
+            ),
+        ),
+    ],
+)
+def test_local_and_api_use_the_same_extraction_business_path(
+    provider_name: str,
+    settings: SimpleNamespace,
+) -> None:
+    db = FakeDb(chunks={CHUNK_ID: make_chunk()})
+    client = FakeSDKClient()
+    provider = build_llm_provider(settings, client=client)
+
+    result = knowledge_extraction.extract_knowledge_items(
+        db,
+        KnowledgeExtractionRequest(mode="chunks", chunk_ids=[CHUNK_ID]),
+        settings=settings,
+        llm_provider=provider,
+    )
+
+    assert result.created == 0
+    assert result.llm_provider == provider_name
+    assert client.completions.calls[0]["response_format"] == {
+        "type": "json_object"
+    }
+    if provider_name == "local":
+        assert client.completions.calls[0]["extra_body"] == {"think": False}
+    else:
+        assert "extra_body" not in client.completions.calls[0]
 
 
 def test_extract_creates_draft_and_auto_submit_creates_pending_review() -> None:
@@ -418,3 +607,7 @@ def test_extraction_service_does_not_reference_rag_hybrid_or_retrieval_logs() ->
     assert "services.rag" not in source
     assert "retrieval_logs" not in source
     assert "opensearch" not in source.lower()
+    assert "generate_document_embeddings" not in source
+    assert "create_or_update_search_index" not in source
+    assert "sync_document_chunks" not in source
+    assert "rebuild" not in source.lower()

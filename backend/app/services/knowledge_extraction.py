@@ -216,16 +216,17 @@ def _generate_extraction_json(
     settings: Any,
     llm_provider: LLMProvider | None,
 ) -> LLMGenerateResult:
-    provider = llm_provider or get_llm_provider(settings)
+    provider = llm_provider or get_llm_provider()
     try:
         return provider.generate(
-            LLMGenerateRequest(
-                prompt=user_prompt,
-                system_prompt=system_prompt,
+            LLMGenerateRequest.from_prompt(
+                user_prompt,
+                system_prompt,
                 temperature=0.0,
                 max_tokens=getattr(settings, "llm_max_tokens", None),
-                response_format={"type": "json_object"},
+                json_mode=True,
                 think=False,
+                think_required=False,
             )
         )
     except BusinessError:
