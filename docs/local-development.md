@@ -1404,3 +1404,150 @@ blocks / assets 查询默认分页，前端也不应一次性渲染巨大 JSON�
 - 不删除 OpenSearch volume。
 
 生产或正式数据不应直接删除 chunks，尤其不能删除已经被 `knowledge_item_chunks` 引用的 chunks。
+
+## 第九阶段：Local/API LLM Provider 本地开发
+
+第九阶段只改造 LLM generation。Embedding 继续固定为本地 `Qwen3-Embedding-0.6B`、1024 维；切换 LLM Provider 不会自动解析、embedding、同步或重建 OpenSearch。
+
+### 1. Provider 选择与启动行为
+
+正式配置值只有：
+
+```text
+LLM_PROVIDER=local
+LLM_PROVIDER=api
+```
+
+`openai_compatible` 仍可作为 deprecated Local alias 使用一个兼容阶段；它会规范化为 `local` 并每进程警告一次。新配置不要继续使用该别名。
+
+后端启动时，`create_app()` 会在导入 API router 前调用 `validate_active_llm_configuration()`。Factory 构造 Provider 时还会再次校验。只校验当前 active Provider：
+
+- Local 不读取或要求 remote key/model/base URL；
+- API 不读取 Local URL/model/key，也不 fallback 到 Local；
+- 应用启动只校验配置，不提前创建 Provider、transport 或 OpenAI SDK client；
+- Provider/client 在第一次真实生成时惰性创建并在进程内复用；
+- FastAPI shutdown 会从缓存摘除 Provider，并在锁外幂等关闭 client；
+- 修改 `.env` 后必须完整重启后端才能切换 Provider。
+
+### 2. Local/Ollama 配置
+
+以下为非秘密示例；模型名按本机 `ollama list` 的实际结果修改：
+
+```env
+LLM_PROVIDER=local
+LLM_TEMPERATURE=0.2
+LLM_MAX_TOKENS=2048
+LLM_BASE_URL=http://localhost:11434/v1
+LLM_MODEL=qwen3:8b
+LLM_API_KEY=
+LLM_TIMEOUT_SECONDS=120
+```
+
+Local capability：
+
+| Capability | 状态 |
+|---|---:|
+| system/user/assistant text | 支持 |
+| JSON mode | 支持 |
+| Ollama `think` | 支持，通过 `extra_body` |
+| tools | 不支持，网络前拒绝 |
+| parallel tool calls | 不支持，网络前拒绝 |
+| image input | 不支持，网络前拒绝 |
+
+`LLM_API_KEY` 为空时使用非秘密占位值 `ollama`。Knowledge extraction 会请求 `json_mode=True`、`think=False`；普通 RAG 不强制 JSON mode。
+
+### 3. Generic OpenAI-compatible API 配置
+
+以下域名、模型和空 key 都是假值：
+
+```env
+LLM_PROVIDER=api
+LLM_TEMPERATURE=0.2
+LLM_MAX_TOKENS=2048
+LLM_REMOTE_BASE_URL=https://api.example.invalid/v1
+LLM_REMOTE_API_KEY=
+LLM_REMOTE_MODEL=example-chat-model
+LLM_REMOTE_TIMEOUT_SECONDS=60
+LLM_REMOTE_SUPPORTS_JSON_MODE=false
+LLM_REMOTE_ALLOW_INSECURE_HTTP=false
+```
+
+说明：
+
+- 真实 key 只写入本机 `backend/.env`，不得提交、复制到 issue、日志或测试快照；
+- Remote JSON capability 默认 `false`，不会仅因服务“OpenAI-compatible”就假定支持；
+- 普通 RAG 可以使用不支持 JSON mode 的 API；
+- knowledge extraction 要求 JSON object。确认供应商真实兼容 `response_format={"type":"json_object"}` 后，才设置 `LLM_REMOTE_SUPPORTS_JSON_MODE=true`；
+- capability 为 false 时，knowledge extraction 返回 `LLM_PARAMETER_UNSUPPORTED`，且不会发送网络请求；
+- Generic API 忽略 advisory `think=True/False`，不发送 `think` 或 `extra_body`；`think_required=True` 会在网络前拒绝；
+- SDK 使用 `max_retries=0`，系统不自动 retry，也不做 API→Local fallback。
+
+### 4. Remote URL 安全规则
+
+`LLM_REMOTE_BASE_URL` 必须满足：
+
+- HTTPS 默认允许；
+- HTTP 只对 `localhost`、`127.0.0.1`、`[::1]` 默认允许；
+- 其他 HTTP 需要显式设置 `LLM_REMOTE_ALLOW_INSECURE_HTTP=true`；
+- 非 loopback HTTP 会每进程警告一次，日志只含 `provider=api`、`scheme=http`、hostname 和事件名，不含完整 URL；
+- 拒绝 userinfo，例如 `https://user:pass@example.invalid/v1`；
+- 拒绝 query、fragment、缺失 host 和非 HTTP(S) scheme；
+- 即使显式允许 insecure HTTP，也必须理解明文传输 API key 和消息内容的风险，正式远程服务应使用 HTTPS。
+
+### 5. 密钥、错误与日志边界
+
+- Remote key 在 Pydantic Settings 和 transport 中保持 `SecretStr`；
+- 配置校验只在局部作用域短暂读取明文判断非空，不保存、不返回、不记录；
+- SDK client 惰性创建时才再次读取并直接交给 client factory；
+- Python 不能提供可验证的物理内存擦除，项目不作此类承诺；
+- 错误、日志和 traceback 不包含 key、Authorization、完整 URL、messages/prompt、tool arguments/schema、image URL、上游 body 或 headers；
+- 安全日志可包含 provider、model、operation、latency、usage token count、受控 request ID、error code、upstream status、capability、retryable 和脱敏 hostname；
+- 429 返回 `LLM_RATE_LIMITED` 和 `retryable=true`，但不会自动重试。
+
+### 6. 当前内部消息能力与 REST 边界
+
+内部 `LLMGenerateRequest.messages` 支持 system/user/assistant 文本历史并保持原顺序。`LLMGenerateResult` 返回完整 assistant message，`result.text` 返回唯一文本 part。
+
+Phase 9 没有开放 messages/history REST 字段：
+
+- `/api/v1/rag/ask` 仍只接收 `question`、`limit`、`document_id`；
+- `/api/v1/knowledge-items/extract` schema 不变；
+- no-context 仍是 HTTP 200，并通过 metadata resolver 返回规范化 Provider/model，不创建 LLM client；
+- 不存在对外 Chat API、会话持久化、多轮 RAG、LangChain/LangGraph、Agent/tool execution 或多模态传输。
+
+### 7. 自动化验证命令
+
+Backend 全量：
+
+```powershell
+cd D:\rag_system\backend
+.\.venv\Scripts\pytest.exe -q -p no:cacheprovider --basetemp=.venv\phase9-m5-final-pytest-tmp
+```
+
+Phase 9 聚焦集：
+
+```powershell
+cd D:\rag_system\backend
+.\.venv\Scripts\pytest.exe `
+  tests/test_llm_messages.py `
+  tests/test_llm_provider.py `
+  tests/test_llm_config.py `
+  tests/test_llm_startup.py `
+  tests/test_api_llm_provider.py `
+  tests/test_rag_service.py `
+  tests/test_rag_api.py `
+  tests/test_knowledge_extraction.py `
+  tests/test_knowledge_item_api.py `
+  -q -p no:cacheprovider
+```
+
+Frontend 当前没有 test script。正式命令与 Phase 9 文件定向 lint：
+
+```powershell
+cd D:\rag_system\frontend
+npm.cmd run build
+npm.cmd run lint
+npx.cmd eslint lib/rag.ts lib/knowledge-items.ts
+```
+
+全量 build/ESLint 仍分别受既有 `KnowledgeItemsPanel.tsx` TypeScript 债务和 `DocumentParseResults.tsx` ESLint 债务影响；这两个文件不属于 Phase 9 diff，不应在 M5 顺带修复。

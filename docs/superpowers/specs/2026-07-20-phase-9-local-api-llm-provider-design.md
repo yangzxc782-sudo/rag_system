@@ -1,7 +1,7 @@
 # Phase 9：本地/API 双通道大语言模型 Provider 设计
 
 **日期：** 2026-07-20  
-**状态：** 待项目负责人审查  
+**状态：** M0—M4 已验收，M5 最终回归与文档已完成，待项目负责人终审
 **阶段：** Phase 9  
 **适用仓库：** `D:\rag_system`
 
@@ -731,3 +731,81 @@ API 模式验证 HTTPS endpoint、RAG 远程生成、本地 embedding/retrieval 
 4. 前端聊天功能；
 5. tool calling、注册和执行循环；
 6. 多模态上传、对象存储和 URL 转发。
+
+## 28. As-built 实施状态与 M5 验收记录
+
+截至 2026-07-21，本设计的 M0—M4 已按独立提交完成并由项目负责人验收：
+
+| 边界 | 提交 | 已落地内容 |
+|---|---|---|
+| M0 | `3de9323` | 修正 `think` 测试边界并锁定 SDK/wire contract |
+| M1A | `ee939c8` | message-first 消息、请求、结果及 tool linkage 契约 |
+| M1B | `7254a72` | Local Adapter、配置、启动校验、共享 transport 与缓存生命周期 |
+| M2 | `fdbabeb` | Generic OpenAI-compatible API Adapter |
+| M3 | `74bbf5c` | RAG 与 knowledge extraction 正式接线，移除临时构造 bridge |
+| M4 | `a337ce6` | 错误映射、脱敏、结构化日志与 Provider 中立前端文案 |
+
+### 28.1 已实现能力
+
+- `LLM_PROVIDER=local|api` 双通道，修改环境配置后重启生效；
+- message-first 内部契约，以及 system/user/assistant 文本历史的有序传输；
+- `LLMGenerateRequest.from_prompt()` 和 `LLMGenerateResult.text` 兼容入口；
+- Local/Ollama Adapter 与 Generic OpenAI-compatible Chat Completions API Adapter；
+- Local JSON mode、Local `think` 扩展和配置驱动的 Remote JSON capability；
+- tools、parallel tools 和 image input 的结构契约与网络前 capability rejection；
+- active-only 配置校验、`create_app()` 启动校验和 factory 防御性复验；
+- Provider/SDK client 惰性缓存、并发锁、幂等 clear/close 和 FastAPI shutdown 清理；
+- 远程 URL 安全策略、错误分类、敏感信息脱敏和安全结构化日志；
+- RAG no-context metadata 路径、RAG 生成和 knowledge extraction 统一 Provider 接线；
+- 既有 RAG 与 knowledge-items REST 请求/响应 schema 保持不变。
+
+### 28.2 未实现能力
+
+内部 tool/image 类型是受控的未来协议边界，不是可用业务功能。Phase 9 未实现：
+
+- 对外无状态 Chat API 或 REST messages/history；
+- 会话/消息持久化、多轮 RAG、查询重写或历史裁剪；
+- LangChain Adapter、LangGraph 编排、Agent loop、工具注册或执行；
+- tool calling wire transport、multimodal wire transport、图片上传或对象存储转发；
+- streaming/SSE、自动 retry、Local/API fallback 或运行时热切换；
+- API embedding 或任何 embedding/vector-space 改造。
+
+### 28.3 M5 自动化证据
+
+- Backend 全量：`583 passed, 2 warnings`；
+- LLM/RAG/knowledge extraction 聚焦集：`252 passed, 2 warnings`；
+- embedding/OpenSearch/MinerU 隔离集：`145 passed, 2 warnings`；
+- Frontend Phase 9 文件定向 ESLint：通过；
+- Frontend 全量 build 仍被既有 `KnowledgeItemsPanel.tsx:270` TypeScript 债务阻断；
+- Frontend 全量 ESLint 仍被既有 `DocumentParseResults.tsx:254` 债务阻断；
+- 两个前端失败文件均不在 Phase 9 diff 中，不在 M5 修复范围。
+
+自动化 LLM 测试使用 fake client、SDK mock 和 HTTPX MockTransport，不调用真实 Ollama 或远程 API。
+
+### 28.4 数据隔离快照
+
+M5 以只读事务和 OpenSearch 只读接口取得前后快照：
+
+- PostgreSQL 当前为 110 chunks、106 个 `embedded`、106 个非空 vectors；
+- 所有非空 embedding 的 model 仍为 `Qwen3-Embedding-0.6B`，dimension 仍为 `1024`；
+- `chunk_id + vector` 有序 SHA-256 前后均为 `37468b3772d0188d74512254342f672c53093171581fac59942c88c9cf27a9fb`；
+- `test1.pdf` 仍为 25/25/25 chunks/embedded/vectors，88 blocks、15 assets；
+- `test.pdf` 仍为 78/78/78 chunks/embedded/vectors，183 blocks、17 assets；
+- OpenSearch alias 仍为 `casting_chunks_current`，目标仍为 `casting_chunks_v1`；
+- OpenSearch document count 仍为 105，重复 `chunk_id` bucket 为 0；
+- mapping SHA-256 前后均为 `ca3156f6515f3a5b864f997997da14bd855a24b9ce0ac631010c9a36afdd4e8a`，vector dimension 为 1024；
+- 两个已验收 MinerU parse run 仍为 `succeeded`、`is_active=true`，未重新解析。
+
+Phase 8 没有记录全库 embedding checksum，因此该 SHA-256 仅用于证明 M5 前后没有写入；不能把它表述为与未记录的 Phase 8 历史哈希比较。
+
+### 28.5 最终安全说明
+
+- Remote key 在 Settings 和 transport 中保持 `SecretStr`；仅在配置非空检查的局部作用域和惰性创建 SDK client 的边界短暂读取明文；
+- Python 运行时不提供可验证的物理内存擦除保证，文档不作此类承诺；
+- key 只写入本机真实 `.env`，示例文件和 Git 中保持空值；
+- 错误、日志和 traceback 不记录 messages、prompt、tool 内容、image URL、key、Authorization、上游 body 或 headers；
+- 429 的 `retryable=true` 只是分类元数据；SDK 仍为 `max_retries=0`，系统不会自动重试或 fallback；
+- HTTPS 默认允许，loopback HTTP 允许；其他 HTTP 只有显式启用 `LLM_REMOTE_ALLOW_INSECURE_HTTP=true` 才允许，并只记录 scheme、脱敏 hostname 和安全事件名；
+- `openai_compatible` 只是 deprecated Local 配置别名，规范化 metadata 为 `local`，新配置只使用 `local` 或 `api`。
+
+真实 Local/Remote 端到端调用属于人工验收步骤。Remote 调用只有在项目负责人提供临时测试 key 并明确授权后执行；M5 自动化和文档落盘没有使用真实 key 或调用真实 API。

@@ -10,6 +10,21 @@
 
 **Tech Stack:** Python 3.11+、FastAPI、Pydantic Settings v2、OpenAI Python SDK、HTTPX MockTransport、pytest。
 
+## Execution Status（2026-07-21）
+
+本表是里程碑实际执行状态；后文复选框保留为实施时的验收定义，不应再被解释为当前未完成状态。
+
+| 检查点 | 状态 | 独立提交/证据 |
+|---|---|---|
+| 文档落盘门禁 | 已验收 | `2789b6b` |
+| M0 | 已验收 | `3de9323` |
+| M1A | 已验收 | `ee939c8` |
+| M1B | 已验收 | `7254a72` |
+| M2 | 已验收 | `fdbabeb` |
+| M3 | 已验收 | `74bbf5c` |
+| M4 | 已验收 | `a337ce6` |
+| M5 | 自动回归与文档完成，待负责人终审 | 当前仅文档 diff，未提交 |
+
 ## Global Constraints
 
 - 本计划只改造 LLM generation，不增加 API embedding。
@@ -611,6 +626,25 @@ cd D:\rag_system\backend
 **停止点：** Phase 9 最终项目负责人验收。
 
 **回退原则：** 经授权的独立提交使用非破坏性 `git revert`；否则保留 diff 由负责人指定恢复范围。禁止 reset、clean 或删除数据。
+
+### 14.1 M5 实际执行记录（2026-07-21）
+
+- [x] Git 门禁通过，M0—M4 均为独立提交，起始工作区干净；
+- [x] Backend 全量测试：`583 passed, 2 warnings`；
+- [x] LLM/RAG/knowledge extraction 聚焦集：`252 passed, 2 warnings`；
+- [x] embedding/OpenSearch/MinerU 隔离集：`145 passed, 2 warnings`；
+- [x] 使用只读 SQL 与 OpenSearch GET 取得 M5 前后数据快照；
+- [x] PostgreSQL embedding checksum、OpenSearch alias/count/mapping 和 MinerU parse 状态前后相同；
+- [x] Phase 9 frontend lib 定向 ESLint 通过；
+- [x] 记录两个不在 Phase 9 diff 中的既有前端失败，不扩大范围修复；
+- [x] 更新设计、计划、README、本地开发、人工验收和 Phase 9 final handoff 文档；
+- [ ] 真实 Local 端到端人工验收：需负责人按人工验收清单启动本地服务并确认；
+- [ ] 真实 Remote API 人工验收：需负责人提供临时测试 key 并单独授权；
+- [ ] M5 最终负责人验收与提交。
+
+自动化覆盖 Local/API success、multi-turn wire、JSON capability false/true、Local `think`、capability 零网络拒绝、startup/cache/shutdown、错误映射和脱敏。所有远程路径使用 fake/MockTransport，未调用真实 API。
+
+首次运行隔离聚焦集时未指定 `--basetemp`，系统临时目录 `C:\Users\32884\AppData\Local\Temp\pytest-of-32884` 权限导致 6 个 `tmp_path` setup error；使用工作区内 `--basetemp=.venv\phase9-m5-isolation-pytest-tmp` 重跑后 `145 passed`。这不是代码失败，也没有通过改代码规避。
 
 ## 15. 自动化测试矩阵
 

@@ -603,3 +603,81 @@ documents
 ```
 
 `document_chunks` 仍是 `/api/v1/search`、`/api/v1/rag/ask` 和 `/api/v1/knowledge-items` 的共同基础。`document_blocks` 和 `document_assets` 是 MinerU 输出的解析中间层，不直接进入 RAG 检索；MinerU 输出也不会直接变成 `approved` 知识条目，知识条目仍必须经过第七阶段审核闭环。
+
+## 第九阶段：Local/API 双通道 LLM Provider
+
+第九阶段把第六、七阶段仅面向本地 Ollama 的 LLM 调用升级为 Local/API 双通道，同时保持 embedding、OpenSearch、MinerU 和既有 REST schema 不变。
+
+### 已实现
+
+- `LLM_PROVIDER=local`：通过 OpenAI-compatible Chat Completions 调用本地 Ollama；
+- `LLM_PROVIDER=api`：调用 Generic OpenAI-compatible Chat Completions API；
+- 修改 `.env` 后重启后端切换 Provider，不支持运行时热切换或自动 fallback；
+- 内部正式契约以 `messages` 为输入，支持 system/user/assistant 文本历史；
+- 当前 RAG 与 knowledge extraction 通过 `LLMGenerateRequest.from_prompt()` 接入同一 Provider；
+- 结果同时提供完整 assistant `message` 与只读 `text` 属性；
+- Local 支持 JSON mode 与 Ollama `think` 扩展；
+- Generic API 的 JSON mode 由 `LLM_REMOTE_SUPPORTS_JSON_MODE` 声明，默认 `false`；
+- tools、parallel tool calls 和 image input 在内部有受控类型，但当前 Provider 均在网络调用前明确拒绝；
+- Provider/SDK client 在进程内惰性复用，并在 cache clear 或 FastAPI shutdown 时幂等关闭；
+- `create_app()` 主动校验 active 配置，factory 再防御性复验；
+- 远程 URL 安全、错误分类、敏感信息脱敏和安全结构化日志已落地；
+- `/api/v1/rag/ask` 与 `/api/v1/knowledge-items/extract` 的公开请求/响应 schema 不变。
+
+### Local 配置
+
+以下只是假值示例。复制到本机真实 `backend/.env` 后按实际安装模型修改，不要提交真实 `.env`：
+
+```env
+LLM_PROVIDER=local
+LLM_TEMPERATURE=0.2
+LLM_MAX_TOKENS=2048
+LLM_BASE_URL=http://localhost:11434/v1
+LLM_MODEL=qwen3:8b
+LLM_API_KEY=
+LLM_TIMEOUT_SECONDS=120
+```
+
+Local key 可以为空；Adapter 会在 SDK 创建边界使用非秘密占位值 `ollama`。Remote 配置为空不会阻止 Local 模式启动。
+
+### Generic API 配置
+
+```env
+LLM_PROVIDER=api
+LLM_TEMPERATURE=0.2
+LLM_MAX_TOKENS=2048
+LLM_REMOTE_BASE_URL=https://api.example.invalid/v1
+LLM_REMOTE_API_KEY=
+LLM_REMOTE_MODEL=example-chat-model
+LLM_REMOTE_TIMEOUT_SECONDS=60
+LLM_REMOTE_SUPPORTS_JSON_MODE=false
+LLM_REMOTE_ALLOW_INSECURE_HTTP=false
+```
+
+- 真实 remote key 只写入本机未跟踪的 `backend/.env`；示例、日志、响应和前端中保持为空；
+- 普通 RAG 不要求 JSON mode；
+- knowledge extraction 固定要求 JSON object，因此 remote Provider 必须真实支持该能力，并显式设置 `LLM_REMOTE_SUPPORTS_JSON_MODE=true`；
+- capability 为 `false` 时，knowledge extraction 在网络调用前返回 `LLM_PARAMETER_UNSUPPORTED`；
+- 切换配置后必须完整重启后端；不存在 API 失败后自动改用 Local 的行为；
+- LLM Provider 配置不改变本地 `Qwen3-Embedding-0.6B`、1024 维 embedding 或 OpenSearch mapping。
+
+### Remote URL 与密钥安全
+
+- HTTPS 默认允许；
+- `http://localhost`、`http://127.0.0.1`、`http://[::1]` 允许；
+- 其他 HTTP 只有设置 `LLM_REMOTE_ALLOW_INSECURE_HTTP=true` 才允许，并产生一次只含 scheme/hostname 的警告；
+- 拒绝 userinfo、query、fragment 和非 HTTP(S) scheme；
+- Remote key 在 Settings/transport 中保持 `SecretStr`，仅在局部非空校验和惰性创建 SDK client 时短暂读取；
+- Python 运行时不能承诺物理擦除密钥内存；安全边界是不持久化、不返回、不记录；
+- 429 的 `retryable=true` 是分类信息，不代表自动重试；SDK 使用 `max_retries=0`。
+
+### 尚未实现
+
+第九阶段没有实现对外 Chat API、REST 多轮 history、会话持久化、多轮 RAG、查询重写、LangChain、LangGraph、Agent loop、工具执行、tool calling wire transport、多模态传输、streaming/SSE、自动 retry、fallback、运行时 Provider 切换或 API embedding。内部 tool/image 类型不能视为这些业务能力已经可用。
+
+详细设计、实施状态和人工验收见：
+
+- `docs/superpowers/specs/2026-07-20-phase-9-local-api-llm-provider-design.md`
+- `docs/superpowers/plans/2026-07-20-phase-9-local-api-llm-provider-implementation-plan.md`
+- `docs/manual-acceptance.md`
+- `docs/phase-9-final-handoff.md`
