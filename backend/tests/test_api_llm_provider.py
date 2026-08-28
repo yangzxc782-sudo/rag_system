@@ -467,6 +467,28 @@ def test_api_constructs_lazy_client_with_remote_fields_and_zero_retries() -> Non
     ]
 
 
+def test_api_default_http_client_keeps_environment_proxy_semantics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"):
+        monkeypatch.setenv(name, "http://proxy.example.invalid:8899")
+    for name in ("NO_PROXY", "no_proxy"):
+        monkeypatch.delenv(name, raising=False)
+
+    provider = APILLMProvider(api_settings())
+    transport = provider._transport
+
+    assert transport._client is None
+    sdk_client = transport._get_client()
+    http_client = sdk_client._client
+
+    try:
+        assert isinstance(http_client, httpx.Client)
+        assert http_client._trust_env is True
+    finally:
+        provider.close()
+
+
 def test_api_keeps_secret_wrapped_until_lazy_client_creation() -> None:
     class CountingSecretStr(SecretStr):
         calls = 0

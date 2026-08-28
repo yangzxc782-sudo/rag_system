@@ -176,33 +176,8 @@ PostgreSQL 运行在 Docker 容器中，FastAPI 后端从本机连接 PostgreSQL
 - 初始化数据只能放入明确标记的 seed 脚本，不得与结构迁移混在一起。
 - 文档、分块、向量、任务状态等核心表应在 `docs/` 中先有设计说明，再落到迁移脚本。
 
-## 7.第一阶段初始数据表
 
-第一阶段至少预留以下 ORM 模型和迁移：
-
-- documents：原始文档元数据；
-- document_chunks：文档切片；
-- knowledge_entries：知识条目；
-- entry_versions：知识条目版本；
-- entry_review_records：专家审核记录；
-- qa_sessions：问答会话；
-- qa_messages：问答消息；
-- retrieval_logs：检索日志。
-
-自动抽取的知识条目默认状态必须是 `pending_review`。
-
-所有知识条目必须预留以下字段：
-
-- source_document_id
-- source_chunk_id
-- source_text
-- confidence
-- review_status
-- version
-- created_at
-- updated_at
-
-## 8. 禁止执行的危险命令
+## 7. 禁止执行的危险命令
 
 任何 Agent、脚本或开发者在本项目中都禁止执行以下危险操作，除非用户单独、明确、逐条授权，并且已经完成备份。
 
@@ -238,25 +213,8 @@ Git 禁止操作：
 
 如果确实需要重置环境，必须先说明影响范围、备份方式和可恢复路径，并等待用户明确确认。
 
-## 9. 第一阶段验收标准
 
-第一阶段完成时，应满足以下标准：
-
-- 项目根目录结构清晰，后端、前端、基础设施、文档分层明确。
-- FastAPI 后端可在本机启动，并提供基础健康检查能力。
-- Next.js 前端可在本机启动，并能展示基础应用壳。
-- Docker Compose 可启动 PostgreSQL + pgvector、Redis、MinIO。
-- Docker Compose 不包含 Neo4j、Elasticsearch、模型服务、Celery Worker。
-- PostgreSQL 数据库连接配置通过环境变量管理。
-- PostgreSQL 表结构已有清晰设计，并通过 Alembic 或 SQL 初始化脚本管理。
-- pgvector 扩展有明确启用方式。
-- Redis 和 MinIO 有基础连接配置说明。
-- `.env.example` 或等价配置示例完整，不包含真实密钥。
-- README 或 `docs/` 中有本地启动说明。
-- 没有执行业务代码实现、复杂检索逻辑、模型调用逻辑或生产级部署配置。
-- 没有执行 `docker compose down -v`，没有删除 volume，没有执行 `DROP DATABASE` 或 `DROP TABLE`。
-
-## 10.PostgreSQL MCP 使用规则
+## 8.PostgreSQL MCP 使用规则
 
 - PostgreSQL MCP 仅允许用于本地开发库 rag_system 的只读核验。
 - 默认连接账号必须为 codex_ro 等只读账号。

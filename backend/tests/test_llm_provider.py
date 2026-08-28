@@ -306,6 +306,109 @@ def test_local_provider_does_not_create_client_before_generate() -> None:
     assert created == []
 
 
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "http://localhost:11434/v1",
+        "http://127.0.0.1:11434/v1",
+    ],
+)
+def test_local_default_http_client_ignores_environment_proxies(
+    base_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"):
+        monkeypatch.setenv(name, "http://proxy.example.invalid:8899")
+    for name in ("NO_PROXY", "no_proxy"):
+        monkeypatch.delenv(name, raising=False)
+
+    provider = local_module().LocalLLMProvider(
+        make_settings(llm_base_url=base_url)
+    )
+    transport = provider._transport
+
+    assert transport._client is None
+    sdk_client = transport._get_client()
+    http_client = sdk_client._client
+
+    try:
+        assert isinstance(http_client, httpx.Client)
+        assert http_client._trust_env is False
+    finally:
+        provider.close()
+
+
+def test_cached_local_http_client_is_reused_and_closed_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = provider_module()
+    monkeypatch.setattr(module, "get_settings", make_settings)
+
+    provider = module.get_llm_provider()
+    transport = provider._transport
+    assert transport._client is None
+
+    first_sdk_client = transport._get_client()
+    second_sdk_client = transport._get_client()
+    http_client = first_sdk_client._client
+    close_calls = 0
+    original_close = first_sdk_client.close
+
+    def tracked_close() -> None:
+        nonlocal close_calls
+        close_calls += 1
+        original_close()
+
+    first_sdk_client.close = tracked_close
+
+    assert second_sdk_client is first_sdk_client
+    assert http_client._trust_env is False
+    assert http_client.is_closed is False
+
+    module.clear_llm_provider_cache()
+    module.clear_llm_provider_cache()
+
+    assert close_calls == 1
+    assert http_client.is_closed is True
+    assert module._provider_cache is None
+
+
+def test_local_http_client_is_closed_if_sdk_construction_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.llm.openai_chat_transport as transport_module
+
+    http_client = httpx.Client(trust_env=False)
+
+    def make_http_client(**kwargs: object) -> httpx.Client:
+        assert kwargs == {"trust_env": False}
+        return http_client
+
+    def fail_sdk_construction(**_kwargs: object) -> object:
+        raise RuntimeError("sdk construction failed")
+
+    fake_openai_module = SimpleNamespace(
+        DefaultHttpxClient=make_http_client,
+        OpenAI=fail_sdk_construction,
+    )
+    monkeypatch.setattr(
+        transport_module,
+        "import_module",
+        lambda _name: fake_openai_module,
+    )
+
+    with pytest.raises(RuntimeError, match="sdk construction failed"):
+        transport_module._default_openai_client_factory(
+            base_url="http://127.0.0.1:11434/v1",
+            api_key="ollama",
+            timeout=120,
+            max_retries=0,
+            http_client_trust_env=False,
+        )
+
+    assert http_client.is_closed is True
+
+
 def test_local_provider_uses_nonsecret_placeholder_and_disables_sdk_retries() -> None:
     created: list[dict[str, object]] = []
 

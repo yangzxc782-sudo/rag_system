@@ -47,6 +47,7 @@ class OpenAIChatTransport:
         api_key: str | SecretStr,
         timeout_seconds: float,
         send_think: bool = True,
+        http_client_trust_env: bool | None = None,
         client: Any | None = None,
         client_factory: Callable[..., Any] | None = None,
     ) -> None:
@@ -54,6 +55,7 @@ class OpenAIChatTransport:
         self._api_key = api_key if isinstance(api_key, SecretStr) else SecretStr(api_key)
         self.timeout_seconds = timeout_seconds
         self.send_think = send_think
+        self._http_client_trust_env = http_client_trust_env
         self._client = client
         self._client_factory = client_factory
         self._client_lock = Lock()
@@ -156,11 +158,21 @@ class OpenAIChatTransport:
                 )
             if self._client is None:
                 factory = self._client_factory or _default_openai_client_factory
+                factory_kwargs: dict[str, Any] = {
+                    "base_url": self.base_url,
+                    "api_key": self._api_key.get_secret_value(),
+                    "timeout": self.timeout_seconds,
+                    "max_retries": 0,
+                }
+                if (
+                    self._client_factory is None
+                    and self._http_client_trust_env is not None
+                ):
+                    factory_kwargs["http_client_trust_env"] = (
+                        self._http_client_trust_env
+                    )
                 self._client = factory(
-                    base_url=self.base_url,
-                    api_key=self._api_key.get_secret_value(),
-                    timeout=self.timeout_seconds,
-                    max_retries=0,
+                    **factory_kwargs,
                 )
             return self._client
 
@@ -264,6 +276,7 @@ def _default_openai_client_factory(
     api_key: str,
     timeout: float,
     max_retries: int,
+    http_client_trust_env: bool | None = None,
 ) -> Any:
     import_error_type: str | None = None
     openai_client: Any = None
@@ -280,12 +293,25 @@ def _default_openai_client_factory(
             detail={"dependency": "openai", "error_type": import_error_type},
             status_code=500,
         )
-    return openai_client(
-        base_url=base_url,
-        api_key=api_key,
-        timeout=timeout,
-        max_retries=max_retries,
-    )
+    http_client: Any | None = None
+    try:
+        client_kwargs: dict[str, Any] = {
+            "base_url": base_url,
+            "api_key": api_key,
+            "timeout": timeout,
+            "max_retries": max_retries,
+        }
+        if http_client_trust_env is not None:
+            default_http_client = getattr(openai_module, "DefaultHttpxClient")
+            http_client = default_http_client(
+                trust_env=http_client_trust_env
+            )
+            client_kwargs["http_client"] = http_client
+        return openai_client(**client_kwargs)
+    except Exception:
+        if http_client is not None:
+            http_client.close()
+        raise
 
 
 def _raise_response_invalid(

@@ -49,6 +49,7 @@ class LocalLLMProvider:
             base_url=str(getattr(settings, "llm_base_url")).strip(),
             api_key=api_key,
             timeout_seconds=float(getattr(settings, "llm_timeout_seconds")),
+            http_client_trust_env=False,
             client=client,
             client_factory=client_factory,
         )
