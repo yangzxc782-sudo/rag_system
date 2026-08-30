@@ -39,6 +39,7 @@ from app.schemas.knowledge_item import (
     KnowledgeItemUpdate,
     confidence_to_float,
 )
+from app.services.knowledge_sources import ensure_source_relation, ordered_sources, projection_source
 
 
 _WHITESPACE_PATTERN = re.compile(r"\s+")
@@ -168,6 +169,12 @@ def create_knowledge_item(db: Session, payload: KnowledgeItemCreate) -> Knowledg
         db.add(item)
         db.flush()
         item.chunks = _build_item_chunks(item.id, source_context.chunks)
+        ensure_source_relation(
+            db,
+            item,
+            document_id=source_context.document_id,
+            source_filename=source_context.source_filename,
+        )
         create_version_snapshot(db, item, change_reason="created", created_by=payload.created_by)
         db.commit()
         db.refresh(item)
@@ -197,6 +204,7 @@ def update_knowledge_item(db: Session, item_id: UUID, payload: KnowledgeItemUpda
 
     try:
         updated_fields = payload.model_fields_set
+        current_source = projection_source(item)
         if "title" in updated_fields:
             item.title = _normalize_required_text(payload.title, field="title")
         if "content" in updated_fields:
@@ -216,13 +224,24 @@ def update_knowledge_item(db: Session, item_id: UUID, payload: KnowledgeItemUpda
         if "source_chunk_ids" in updated_fields:
             source_context = _resolve_source_context(
                 db,
-                source_document_id=item.source_document_id,
+                source_document_id=current_source.document_id if current_source is not None else None,
                 source_chunk_ids=payload.source_chunk_ids,
                 source_filename=item.source_filename,
             )
             item.source_document_id = source_context.document_id
             item.source_filename = source_context.source_filename
             item.chunks = _build_item_chunks(item.id, source_context.chunks)
+
+        if {"source_chunk_ids", "source_filename"} & updated_fields:
+            source_identity = source_context.document_id if "source_chunk_ids" in updated_fields else (
+                current_source.document_id if current_source is not None else None
+            )
+            ensure_source_relation(
+                db,
+                item,
+                document_id=source_identity,
+                source_filename=item.source_filename,
+            )
 
         item.content_hash = compute_content_hash(item.item_type, item.source_document_id, item.title, item.content)
         _ensure_not_duplicate(
@@ -369,13 +388,19 @@ def revise_knowledge_item(
         )
 
     try:
+        original_sources = ordered_sources(original)
+        original_projection = original_sources[0] if original_sources else None
+        source_document_id = original_projection.document_id if original_projection is not None else None
+        source_filename = (
+            original_projection.source_filename if original_projection is not None else original.source_filename
+        )
         revision = KnowledgeItem(
             item_type=original.item_type,
             title=original.title,
             content=original.content,
             content_hash=compute_content_hash(
                 original.item_type,
-                original.source_document_id,
+                source_document_id,
                 original.title,
                 original.content,
             ),
@@ -385,8 +410,8 @@ def revise_knowledge_item(
             conditions=original.conditions,
             confidence=original.confidence,
             status="draft",
-            source_document_id=original.source_document_id,
-            source_filename=original.source_filename,
+            source_document_id=source_document_id,
+            source_filename=source_filename,
             created_by=created_by,
             version=1,
             revises_item_id=original.id,
@@ -403,6 +428,21 @@ def revise_knowledge_item(
             )
             for chunk in list(getattr(original, "chunks", []) or [])
         ]
+        if original_sources:
+            for source in original_sources:
+                ensure_source_relation(
+                    db,
+                    revision,
+                    document_id=source.document_id,
+                    source_filename=source.source_filename,
+                )
+        else:
+            ensure_source_relation(
+                db,
+                revision,
+                document_id=None,
+                source_filename=source_filename,
+            )
         create_version_snapshot(
             db,
             revision,

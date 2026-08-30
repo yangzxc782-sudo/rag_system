@@ -23,6 +23,7 @@ from app.llm.provider import LLMGenerateResult, build_llm_provider
 from app.models.document import Document
 from app.models.document_chunk import DocumentChunk
 from app.models.knowledge_item import KnowledgeItem
+from app.models.knowledge_item_source import KnowledgeItemSource
 from app.schemas.knowledge_item import KnowledgeExtractionRequest
 from app.services import knowledge_extraction
 
@@ -536,6 +537,10 @@ def test_extract_creates_draft_and_auto_submit_creates_pending_review() -> None:
         assert result.created == 1
         assert result.llm_provider == "fake"
         assert result.llm_model == "fake-model"
+        sources = [entry for entry in db.added if isinstance(entry, KnowledgeItemSource)]
+        assert len(sources) == 1
+        assert sources[0].knowledge_item_id == result.items[0].id
+        assert sources[0].document_id == DOCUMENT_ID
         assert llm.calls[0].json_mode is True
         assert getattr(llm.calls[0], "think") is False
 

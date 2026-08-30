@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from app.models.document import Document
     from app.models.knowledge_item_chunk import KnowledgeItemChunk
     from app.models.knowledge_item_review import KnowledgeItemReview
+    from app.models.knowledge_item_source import KnowledgeItemSource
     from app.models.knowledge_item_version import KnowledgeItemVersion
 
 
@@ -71,6 +72,13 @@ class KnowledgeItem(Base):
         "KnowledgeItemVersion",
         back_populates="knowledge_item",
         cascade="all, delete-orphan",
+    )
+    sources: Mapped[list[KnowledgeItemSource]] = relationship(
+        "KnowledgeItemSource",
+        back_populates="knowledge_item",
+        cascade="save-update, merge",
+        order_by="(KnowledgeItemSource.created_at, KnowledgeItemSource.document_id)",
+        passive_deletes="all",
     )
     revises_item: Mapped[KnowledgeItem | None] = relationship(
         "KnowledgeItem",

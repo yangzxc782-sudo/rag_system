@@ -20,6 +20,7 @@ from app.models.document import Document
 from app.models.document_chunk import DocumentChunk
 from app.models.knowledge_item import KnowledgeItem
 from app.models.knowledge_item_chunk import KnowledgeItemChunk
+from app.models.knowledge_item_source import KnowledgeItemSource
 from app.schemas.knowledge_item import KnowledgeItemCreate, KnowledgeItemUpdate
 from app.services import knowledge_items
 
@@ -135,6 +136,13 @@ def make_item(status: str = "draft") -> KnowledgeItem:
         confidence=Decimal("0.8000"),
     )
     item.chunks = []
+    item.sources = [
+        KnowledgeItemSource(
+            knowledge_item_id=item.id,
+            document_id=DOCUMENT_ID,
+            source_filename="casting.md",
+        )
+    ]
     item.versions = []
     return item
 
@@ -173,6 +181,10 @@ def test_create_knowledge_item_defaults_to_draft_and_writes_source_snapshot_and_
 
     assert item.status == "draft"
     assert item.source_filename == "casting.md"
+    sources = [entry for entry in db.added if isinstance(entry, KnowledgeItemSource)]
+    assert len(sources) == 1
+    assert sources[0].document_id == DOCUMENT_ID
+    assert sources[0].source_filename == "casting.md"
     assert item.confidence == Decimal("0.8000")
     assert len(item.chunks) == 1
     assert item.chunks[0].source_text == "Riser source text snapshot."
@@ -445,6 +457,9 @@ def test_revise_knowledge_item_creates_new_draft_without_modifying_original(sour
     assert revision.revises_item_id == original.id
     assert revision.content_hash == original.content_hash
     assert revision.version == 1
+    sources = [entry for entry in db.added if isinstance(entry, KnowledgeItemSource)]
+    assert len(sources) == 1
+    assert sources[0].knowledge_item_id == revision.id
     assert len(revision.chunks) == 1
     assert revision.chunks[0].chunk_id == CHUNK_ID
     assert revision.chunks[0].source_text == "Original source text snapshot."
