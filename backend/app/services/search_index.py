@@ -513,9 +513,10 @@ def _delete_document_from_index(
     try:
         response = client.delete_by_query(
             index=index_name,
-            body={"query": {"term": {"document_id": str(document_id)}}},
+            body=build_document_delete_query(document_id),
             refresh=True,
             conflicts="proceed",
+            wait_for_completion=True,
         )
     except Exception as exc:
         raise BusinessError(
@@ -524,7 +525,18 @@ def _delete_document_from_index(
             detail=_error_detail(exc),
             status_code=500,
         ) from exc
+    if response.get("timed_out") or response.get("failures"):
+        raise BusinessError(
+            SEARCH_INDEX_REBUILD_FAILED,
+            "Failed to delete old document chunks from search index.",
+            detail={"error_type": "DeleteByQueryIncomplete"},
+            status_code=500,
+        )
     return int(response.get("deleted", 0))
+
+
+def build_document_delete_query(document_id: UUID) -> dict[str, Any]:
+    return {"query": {"term": {"document_id": str(document_id)}}}
 
 
 def _ensure_alias(client: SearchEngineClientProtocol, *, index_name: str, alias: str) -> bool:

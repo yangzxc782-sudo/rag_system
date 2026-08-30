@@ -221,6 +221,7 @@ def test_rebuild_document_deletes_old_chunks_before_bulk(monkeypatch: pytest.Mon
 
     assert client.calls == ["delete_by_query", "bulk"]
     assert client.delete_by_query_calls[0]["body"]["query"]["term"]["document_id"] == str(document_id)
+    assert client.delete_by_query_calls[0]["wait_for_completion"] is True
     assert client.bulk_calls[0]["body"][0]["index"]["_id"] == str(chunk.id)
     assert result.deleted == 4
     assert result.indexed == 1

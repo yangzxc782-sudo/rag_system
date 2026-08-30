@@ -41,6 +41,7 @@ class Settings(BaseSettings):
     minio_root_password: str = "rag_minio_password"
     minio_bucket: str = "rag-documents"
     minio_secure: bool = False
+    document_deletion_storage_timeout_seconds: int = 30
 
     upload_max_file_size_bytes: int = 52_428_800
     upload_allowed_extensions: str = ".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg,.bmp,.tif,.tiff,.webp,.txt,.md,.csv"
@@ -153,6 +154,10 @@ class Settings(BaseSettings):
         self.knowledge_extraction_default_status = self.knowledge_extraction_default_status.strip().lower()
         if self.knowledge_extraction_default_status != "draft":
             raise ValueError("knowledge_extraction_default_status must be draft")
+        if self.document_deletion_storage_timeout_seconds <= 0:
+            raise ValueError(
+                "document_deletion_storage_timeout_seconds must be greater than 0"
+            )
         if self.reranker_top_k <= 0:
             raise ValueError("reranker_top_k must be greater than 0")
         return self

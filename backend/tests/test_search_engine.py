@@ -9,6 +9,7 @@ import pytest
 
 from app.core.errors import SEARCH_ENGINE_CONFIG_INVALID, BusinessError
 from app.search_engine import client as search_client
+from app.search_engine.client import SearchEngineClientProtocol
 from app.search_engine.index_schema import (
     build_casting_chunks_index_body,
     build_casting_chunks_index_mapping,
@@ -95,6 +96,10 @@ def test_create_opensearch_client_supports_http_auth_and_ssl(monkeypatch: pytest
     assert kwargs["verify_certs"] is True
     assert kwargs["timeout"] == 15
     assert kwargs["max_retries"] == 2
+
+
+def test_search_engine_protocol_exposes_count_for_deletion_verification() -> None:
+    assert hasattr(SearchEngineClientProtocol, "count")
 
 
 def test_unsupported_provider_raises_config_error() -> None:

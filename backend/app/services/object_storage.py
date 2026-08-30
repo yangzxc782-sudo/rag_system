@@ -1,9 +1,16 @@
 from __future__ import annotations
 
+from collections.abc import Iterable, Iterator
+from dataclasses import dataclass
 from io import BytesIO
+from typing import Any
 
+import certifi
 from minio import Minio
+from minio.deleteobjects import DeleteError, DeleteObject
 from minio.error import S3Error
+from urllib3 import PoolManager, Timeout
+from urllib3.util.retry import Retry
 
 from app.core.config import get_settings
 from app.core.errors import (
@@ -22,6 +29,70 @@ def get_minio_client() -> Minio:
         access_key=settings.minio_root_user,
         secret_key=settings.minio_root_password,
         secure=settings.minio_secure,
+    )
+
+
+def get_document_deletion_minio_client(*, settings: Any | None = None) -> Minio:
+    """Create a bounded, zero-SDK-retry client for deletion primitives."""
+
+    settings = settings or get_settings()
+    timeout_seconds = int(settings.document_deletion_storage_timeout_seconds)
+    http_client = PoolManager(
+        timeout=Timeout(connect=timeout_seconds, read=timeout_seconds),
+        maxsize=10,
+        cert_reqs="CERT_REQUIRED" if settings.minio_secure else "CERT_NONE",
+        ca_certs=certifi.where(),
+        retries=Retry(total=0, connect=0, read=0, redirect=0, status=0),
+    )
+    return Minio(
+        endpoint=settings.minio_endpoint,
+        access_key=settings.minio_root_user,
+        secret_key=settings.minio_root_password,
+        secure=settings.minio_secure,
+        http_client=http_client,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class MinioObjectVersion:
+    object_key: str
+    version_id: str | None
+    is_delete_marker: bool
+
+
+def list_minio_object_versions(
+    *,
+    client: Minio,
+    bucket_name: str,
+    prefix: str,
+) -> Iterator[MinioObjectVersion]:
+    for item in client.list_objects(
+        bucket_name,
+        prefix=prefix,
+        recursive=True,
+        include_version=True,
+    ):
+        if item.object_name is None:
+            continue
+        yield MinioObjectVersion(
+            object_key=item.object_name,
+            version_id=item.version_id,
+            is_delete_marker=bool(item.is_delete_marker),
+        )
+
+
+def remove_minio_object_versions(
+    *,
+    client: Minio,
+    bucket_name: str,
+    versions: Iterable[MinioObjectVersion],
+) -> Iterator[DeleteError]:
+    return client.remove_objects(
+        bucket_name,
+        (
+            DeleteObject(version.object_key, version.version_id)
+            for version in versions
+        ),
     )
 
 

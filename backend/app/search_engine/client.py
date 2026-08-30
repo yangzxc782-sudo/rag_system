@@ -17,6 +17,14 @@ class SearchEngineClientProtocol(Protocol):
 
     def delete_by_query(self, *, index: str, body: dict[str, Any], **kwargs: Any) -> Any: ...
 
+    def count(
+        self,
+        *,
+        body: dict[str, Any] | None = None,
+        index: str | None = None,
+        **kwargs: Any,
+    ) -> Any: ...
+
 
 def validate_search_engine_settings(settings: Any) -> None:
     provider = _get_required_str(settings, "search_engine_provider").lower()
@@ -66,7 +74,13 @@ def validate_search_engine_settings(settings: Any) -> None:
         )
 
 
-def create_search_engine_client(settings: Any) -> SearchEngineClientProtocol:
+def create_search_engine_client(
+    settings: Any,
+    *,
+    timeout_seconds: int | None = None,
+    max_retries: int | None = None,
+    retry_on_timeout: bool = True,
+) -> SearchEngineClientProtocol:
     """Create an OpenSearch client without pinging or creating indexes."""
 
     validate_search_engine_settings(settings)
@@ -87,14 +101,42 @@ def create_search_engine_client(settings: Any) -> SearchEngineClientProtocol:
     password = str(getattr(settings, "search_engine_password", "") or "").strip()
     http_auth = (username, password) if username and password else None
 
+    resolved_timeout = (
+        int(timeout_seconds)
+        if timeout_seconds is not None
+        else int(settings.search_engine_timeout_seconds)
+    )
+    resolved_retries = (
+        int(max_retries)
+        if max_retries is not None
+        else int(settings.search_engine_max_retries)
+    )
+    if resolved_timeout <= 0 or resolved_retries < 0:
+        raise BusinessError(
+            SEARCH_ENGINE_CONFIG_INVALID,
+            "Search engine client retry/timeout overrides are invalid.",
+            status_code=400,
+        )
+
     return OpenSearch(
         hosts=[{"host": parsed.hostname, "port": port}],
         http_auth=http_auth,
         use_ssl=scheme == "https",
         verify_certs=bool(settings.search_engine_verify_ssl),
-        timeout=int(settings.search_engine_timeout_seconds),
-        max_retries=int(settings.search_engine_max_retries),
-        retry_on_timeout=True,
+        timeout=resolved_timeout,
+        max_retries=resolved_retries,
+        retry_on_timeout=retry_on_timeout,
+    )
+
+
+def create_document_deletion_search_engine_client(
+    settings: Any,
+) -> SearchEngineClientProtocol:
+    return create_search_engine_client(
+        settings,
+        timeout_seconds=int(settings.document_deletion_storage_timeout_seconds),
+        max_retries=0,
+        retry_on_timeout=False,
     )
 
 
