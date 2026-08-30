@@ -680,4 +680,4 @@ LLM_REMOTE_ALLOW_INSECURE_HTTP=false
 - `docs/superpowers/specs/2026-07-20-phase-9-local-api-llm-provider-design.md`
 - `docs/superpowers/plans/2026-07-20-phase-9-local-api-llm-provider-implementation-plan.md`
 - `docs/manual-acceptance.md`
-- `docs/phase-9-final-handoff.md`
+- `docs/phase-9-finished.md`

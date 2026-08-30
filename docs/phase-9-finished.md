@@ -1,9 +1,9 @@
-# Phase 9 最终交接：Local/API 双通道 LLM Provider
+# Phase 9 完成基线：Local/API 双通道 LLM Provider
 
 **日期：** 2026-07-21
 **阶段：** Phase 9 / M5
-**状态：** M0—M4 已验收，M5 自动回归与文档完成，等待项目负责人最终审查
-**最终审查状态：** `AWAITING_PROJECT_OWNER_M5_FINAL_REVIEW`
+**状态：** Phase 9 / M0—M5 已完成并通过项目负责人验收
+**最终审查状态：** `PHASE9_FINISHED`
 
 ## 1. 交接目的
 
@@ -37,7 +37,7 @@ Phase 9 独立提交：
 | M3 | `74bbf5c` | 业务兼容迁移和正式 Provider 接线 |
 | M4 | `a337ce6` | 错误、安全和能力可观测性 |
 
-M5 当前仅形成文档 diff，未 commit。
+M5 文档与自动化证据已由提交 `d1263bc` 形成 Phase 9 完成基线；本文后续统一命名为 `docs/phase-9-finished.md`。
 
 ## 3. Phase 9 完整验收清单
 
@@ -344,9 +344,9 @@ LLM_MAX_TOKENS=2048
 - 运行时 Provider 热切换；
 - API embedding。
 
-## 13. 仍需负责人授权的人工步骤
+## 13. 保留的人工验证边界（不阻塞 Phase 9 完成）
 
-自动化与只读数据验收已完成，以下真实端到端步骤尚未执行：
+Phase 9 已基于自动化与只读数据证据通过验收。以下真实端到端步骤仅供后续在负责人另行授权时补充验证，不构成 Phase 9 待审状态：
 
 1. 启动真实 Local Ollama，验证普通 RAG、knowledge extraction、no-context、JSON mode 和 `think=false`；
 2. 提供临时 Remote test key 并明确授权后，验证普通 RAG；
@@ -362,7 +362,7 @@ LLM_MAX_TOKENS=2048
 - `README.md`
 - `docs/local-development.md`
 - `docs/manual-acceptance.md`
-- `docs/phase-9-final-handoff.md`（新增）
+- `docs/phase-9-finished.md`（Phase 9 唯一完成基线）
 - `docs/superpowers/specs/2026-07-20-phase-9-local-api-llm-provider-design.md`
 - `docs/superpowers/plans/2026-07-20-phase-9-local-api-llm-provider-implementation-plan.md`
 
@@ -370,6 +370,6 @@ LLM_MAX_TOKENS=2048
 
 ## 15. 最终停止点
 
-M5 文档和自动化证据提交给项目负责人审查。本轮不 commit、不 push，不开始后续阶段。
+Phase 9 / M0—M5 已完成并通过项目负责人验收。后续阶段统一以本文作为 Phase 9 完成基线；本文不授权扩大 Phase 9 范围。
 
-`AWAITING_PROJECT_OWNER_M5_FINAL_REVIEW`
+`PHASE9_FINISHED`
