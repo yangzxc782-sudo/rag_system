@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, Text, UniqueConstraint, func
+from sqlalchemy import DateTime, ForeignKey, ForeignKeyConstraint, Index, Integer, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -23,6 +23,11 @@ class KnowledgeItemChunk(Base):
         Index("ix_knowledge_item_chunks_chunk_id", "chunk_id"),
         Index("ix_knowledge_item_chunks_document_id", "document_id"),
         UniqueConstraint("knowledge_item_id", "chunk_id", name="uq_knowledge_item_chunks_item_chunk"),
+        ForeignKeyConstraint(
+            ["knowledge_item_id", "document_id"],
+            ["knowledge_item_sources.knowledge_item_id", "knowledge_item_sources.document_id"],
+            name="fk_knowledge_item_chunks_item_document_source",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)

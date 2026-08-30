@@ -74,7 +74,7 @@ def test_document_deletion_job_columns_constraints_and_no_document_fk() -> None:
     assert {index.name for index in table.indexes} >= {"ix_document_deletion_jobs_claimable"}
 
 
-def test_knowledge_item_sources_identity_unique_and_no_reverse_or_composite_fk() -> None:
+def test_knowledge_item_sources_identity_unique_no_reverse_and_enforced_chunk_source() -> None:
     source_table = Base.metadata.tables["knowledge_item_sources"]
     item_table = Base.metadata.tables["knowledge_items"]
     chunk_table = Base.metadata.tables["knowledge_item_chunks"]
@@ -94,10 +94,17 @@ def test_knowledge_item_sources_identity_unique_and_no_reverse_or_composite_fk()
         foreign_key.referred_table is source_table
         for foreign_key in item_table.foreign_key_constraints
     )
-    assert not any(
-        foreign_key.referred_table is source_table
+    chunk_source_foreign_keys = [
+        foreign_key
         for foreign_key in chunk_table.foreign_key_constraints
+        if foreign_key.referred_table is source_table
+    ]
+    assert len(chunk_source_foreign_keys) == 1
+    assert tuple(chunk_source_foreign_keys[0].columns.keys()) == (
+        "knowledge_item_id",
+        "document_id",
     )
+    assert chunk_source_foreign_keys[0].ondelete != "CASCADE"
 
 
 def test_source_parent_relationships_never_hide_restrict_with_orm_delete_cascade() -> None:
