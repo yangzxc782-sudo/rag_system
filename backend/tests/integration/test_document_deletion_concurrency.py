@@ -94,7 +94,6 @@ def test_expiry_fencing_heartbeat_and_exhaustion_are_mutually_exclusive(
             target,
             knowledge=None,
             settings=phase10_runtime_settings,
-            current_step="delete_opensearch",
         )
         session.commit()
         session.execute(
@@ -159,6 +158,9 @@ def test_expiry_fencing_heartbeat_and_exhaustion_are_mutually_exclusive(
         session.commit()
 
 
+@pytest.mark.phase10_knowledge_deferred(
+    reason="Deferred by project owner pending Knowledge Item Library refactor."
+)
 def test_simultaneous_a_b_finalization_deletes_last_shared_source_without_deadlock(
     phase10_session_factory,
     phase10_document_factory,
@@ -215,6 +217,9 @@ def test_simultaneous_a_b_finalization_deletes_last_shared_source_without_deadlo
         ) is None
 
 
+@pytest.mark.phase10_knowledge_deferred(
+    reason="Deferred by project owner pending Knowledge Item Library refactor."
+)
 def test_overlapping_revision_cycle_concurrent_finalization_terminates_without_deadlock(
     phase10_session_factory,
     phase10_document_factory,
@@ -266,6 +271,9 @@ def test_overlapping_revision_cycle_concurrent_finalization_terminates_without_d
         assert all(session.get(KnowledgeItem, item_id) is None for item_id in revision.all_item_ids)
 
 
+@pytest.mark.phase10_knowledge_deferred(
+    reason="Deferred by project owner pending Knowledge Item Library refactor."
+)
 def test_real_self_cycle_terminates_and_surviving_revision_detaches_from_orphan_parent(
     phase10_session_factory,
     phase10_document_factory,

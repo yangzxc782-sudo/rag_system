@@ -95,7 +95,30 @@ def test_integration_gate_fails_closed_when_enabled_configuration_is_incomplete(
         load_phase10_integration_settings(environment)
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("PHASE10_INTEGRATION_OPENSEARCH_INDEX", "casting_chunks_v1"),
+        ("PHASE10_INTEGRATION_OPENSEARCH_ALIAS", "casting_chunks_current"),
+    ],
+)
+def test_integration_gate_rejects_non_phase10_opensearch_names(
+    field: str,
+    value: str,
+) -> None:
+    environment = safe_environment()
+    environment[field] = value
+    environment["PHASE10_INTEGRATION_OPENSEARCH_TARGET_CONFIRM"] = (
+        f"{environment['PHASE10_INTEGRATION_OPENSEARCH_INDEX']}:"
+        f"{environment['PHASE10_INTEGRATION_OPENSEARCH_ALIAS']}"
+    )
+
+    with pytest.raises(Phase10IntegrationGateError, match="dedicated phase10"):
+        load_phase10_integration_settings(environment)
+
+
 def test_test_document_factory_generates_owned_unique_resource_identity() -> None:
+    assert PHASE10_FIXTURE_PREFIX == "phase10-hard-delete-r3-"
     factory = Phase10TestDocumentFactory()
 
     first = factory.create()

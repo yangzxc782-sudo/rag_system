@@ -41,4 +41,5 @@ testpaths = ["tests"]
 pythonpath = ["."]
 markers = [
   "integration: destructive Phase 10 tests gated by dedicated targets and rollout authorization",
+  "phase10_knowledge_deferred: Deferred by project owner pending Knowledge Item Library refactor.",
 ]

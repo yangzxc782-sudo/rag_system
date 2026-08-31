@@ -31,7 +31,7 @@ from app.models.knowledge_item_version import KnowledgeItemVersion
 from app.services.object_storage import list_minio_object_versions
 
 
-PHASE10_FIXTURE_PREFIX = "phase10-hard-delete-"
+PHASE10_FIXTURE_PREFIX = "phase10-hard-delete-r3-"
 PHASE10_INTEGRATION_ENVIRONMENT = "dedicated-local-test"
 
 
@@ -184,6 +184,10 @@ def _validate_database_target(url: str, confirmation: str, *, field: str) -> str
 def _validate_opensearch_name(value: str, *, field: str) -> str:
     if any(character in value for character in "*?,# \\/") or value in {"_all", "all"}:
         raise Phase10IntegrationGateError(f"Phase 10 OpenSearch {field} is unsafe.")
+    if not value.startswith("phase10-"):
+        raise Phase10IntegrationGateError(
+            f"Phase 10 OpenSearch {field} must be a dedicated phase10-* target."
+        )
     return value
 
 

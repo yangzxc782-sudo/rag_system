@@ -475,7 +475,7 @@ def assert_postgresql_target_absent(
     session: Session,
     identity: Phase10TestDocument,
     *,
-    knowledge: Phase10KnowledgeFixture,
+    knowledge: Phase10KnowledgeFixture | None,
 ) -> None:
     assert session.get(Document, identity.document_id) is None
     assert session.scalar(
@@ -495,6 +495,13 @@ def assert_postgresql_target_absent(
     assert not session.scalars(
         select(DocumentBlock.id).where(DocumentBlock.document_id == identity.document_id)
     ).all()
+    assert not session.scalars(
+        select(DocumentChunkBlock.id).where(
+            DocumentChunkBlock.id.in_(identity.chunk_block_ids)
+        )
+    ).all()
+    if knowledge is None:
+        return
     assert not session.scalars(
         select(KnowledgeItemSource.id).where(
             KnowledgeItemSource.document_id == identity.document_id

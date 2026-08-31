@@ -71,6 +71,9 @@ def test_real_0006_expand_enforce_and_enforce_only_downgrade(
             )
 
 
+@pytest.mark.phase10_knowledge_deferred(
+    reason="Deferred by project owner pending Knowledge Item Library refactor."
+)
 def test_postgresql_finalization_removes_target_and_preserves_shared_and_unrelated_rows(
     phase10_session_factory,
     phase10_document_factory,
@@ -145,6 +148,53 @@ def test_postgresql_finalization_removes_target_and_preserves_shared_and_unrelat
         )
 
 
+def test_core_postgresql_finalization_removes_target_and_preserves_unrelated_rows(
+    phase10_session_factory,
+    phase10_document_factory,
+    phase10_runtime_settings,
+) -> None:
+    """Knowledge is intentionally excluded pending the separate library refactor."""
+
+    target = phase10_document_factory.create()
+    control = phase10_document_factory.create()
+    with phase10_session_factory() as session:
+        persist_document_fixture(
+            session,
+            target,
+            bucket_name=phase10_runtime_settings.minio_bucket,
+        )
+        persist_document_fixture(
+            session,
+            control,
+            bucket_name=phase10_runtime_settings.minio_bucket,
+        )
+        claimed, manifest = build_finalization_claim(
+            session,
+            target,
+            knowledge=None,
+            settings=phase10_runtime_settings,
+        )
+        session.commit()
+        before = capture_postgresql_snapshot(session)
+
+        finalize_postgresql_deletion(session, claimed=claimed, manifest=manifest)
+        session.commit()
+
+        assert_postgresql_target_absent(session, target, knowledge=None)
+        after = capture_postgresql_snapshot(session)
+        assert_unrelated_resources_unchanged(
+            before,
+            after,
+            target_document_ids={target.document_id},
+            target_chunk_ids=set(target.chunk_ids),
+            target_parse_run_ids={target.parse_run_id},
+            target_asset_ids=set(target.asset_ids),
+            target_block_ids=set(target.block_ids),
+            target_chunk_block_ids=set(target.chunk_block_ids),
+            target_deletion_job_ids={claimed.job_id},
+        )
+
+
 def test_finalization_rollback_then_retry_and_ambiguous_response_duplicate_delete_is_204_semantics(
     phase10_session_factory,
     phase10_document_factory,
@@ -157,11 +207,10 @@ def test_finalization_rollback_then_retry_and_ambiguous_response_duplicate_delet
             target,
             bucket_name=phase10_runtime_settings.minio_bucket,
         )
-        knowledge = persist_shared_knowledge_fixture(session, target=target, control=None)
         claimed, manifest = build_finalization_claim(
             session,
             target,
-            knowledge=knowledge,
+            knowledge=None,
             settings=phase10_runtime_settings,
         )
         session.commit()
@@ -174,7 +223,7 @@ def test_finalization_rollback_then_retry_and_ambiguous_response_duplicate_delet
 
         finalize_postgresql_deletion(session, claimed=claimed, manifest=manifest)
         session.commit()
-        assert_postgresql_target_absent(session, target, knowledge=knowledge)
+        assert_postgresql_target_absent(session, target, knowledge=None)
 
         assert (
             request_document_deletion(
