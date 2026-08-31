@@ -39,3 +39,6 @@ include = ["app*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+markers = [
+  "integration: destructive Phase 10 tests gated by dedicated targets and rollout authorization",
+]

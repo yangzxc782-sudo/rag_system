@@ -681,3 +681,18 @@ LLM_REMOTE_ALLOW_INSECURE_HTTP=false
 - `docs/superpowers/plans/2026-07-20-phase-9-local-api-llm-provider-implementation-plan.md`
 - `docs/manual-acceptance.md`
 - `docs/phase-9-finished.md`
+
+# 第十阶段：Document Hard Delete
+
+第十阶段实现文档及其独占派生数据的持久化、可恢复彻底删除：PostgreSQL deletion job 是事实来源，进程内 Executor 通过 DB-time claim/lease、fencing、heartbeat 和 step-local retry 驱动 OpenSearch、MinIO 与 PostgreSQL Saga。共享 Knowledge Item 按 `knowledge_item_sources` 的剩余来源决定保留或清理；旧 singular source 字段仅是 REST 兼容投影。
+
+公开接口包括文档删除、删除状态和人工重试。删除中或删除失败的 Document 不能继续 parse、embedding、index sync 或 knowledge mutation；Hybrid/RAG 会在 RRF 与 context 构建前通过短 PostgreSQL session 过滤非 `normal` Document。前端只有在 status API 返回 204 后才认为删除完成。
+
+安全默认值保持 `DOCUMENT_DELETION_EXECUTOR_ENABLED=false`。真实 rollout 还需要 M7-B 单独授权；在收到 `PHASE10_M7_ROLLOUT_AUTHORIZED` 前，不得执行 0007/0008 真实迁移、真实 Document DELETE、MinIO 删除或 OpenSearch delete-by-query。当前完成状态见 `docs/phase-10-finished.md`，其状态在真实跨存储验收前必须保持 `REAL_ROLLOUT_PENDING`。
+
+设计与唯一实施计划：
+
+- `docs/superpowers/specs/2026-08-27-phase-10-document-hard-delete-design.md`
+- `docs/superpowers/plans/2026-08-27-phase-10-document-hard-delete-implementation-plan.md`
+- `docs/manual-acceptance.md`
+- `docs/phase-10-finished.md`

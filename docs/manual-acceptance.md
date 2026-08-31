@@ -320,3 +320,59 @@ LLM_REMOTE_SUPPORTS_JSON_MODE=true
 未提供远程 key或未实际启动 Local/Remote 服务时，只能记录“自动化与文档通过，真实端到端人工验收待授权”，不得把 MockTransport 结果写成真实供应商验收通过。
 
 Phase 9 内部已经支持文本多轮和 assistant 历史的 Provider wire contract，但当前 REST API 不接收 history，也没有会话持久化、多轮 RAG、LangChain、LangGraph、Agent、工具执行、多模态转发或 streaming。人工验收不得把这些预留边界写成已实现。
+
+## 第十阶段 Document Hard Delete 人工验收
+
+### 1. 授权与 abort gate
+
+- [ ] 项目负责人已明确给出 `PHASE10_M7_ROLLOUT_AUTHORIZED`；没有该授权时本节所有真实 migration/DELETE/MinIO/DBQ 步骤停止。
+- [ ] 后端已停止写流量，`DOCUMENT_DELETION_EXECUTOR_ENABLED=false`。
+- [ ] PostgreSQL backup 已完成，restore 过程与目标已验证并记录。
+- [ ] `alembic current`、`heads`、`history` 与 0007/0008 offline SQL 已人工核对。
+- [ ] integration 与 migration database 是两个不同的 `phase10_*` 专用数据库，不是 `rag_system`。
+- [ ] MinIO 是已启用 versioning 的 `phase10-*` 专用 bucket；OpenSearch index/alias 也是专用 target。
+- [ ] 任一确认值不一致、schema drift、mapping dimension 非 1024、alias 异常或 backup 不可恢复时立即 abort。
+
+### 2. 专用 fixture 与 pre-delete snapshot
+
+- [ ] filename/namespace 使用 `phase10-hard-delete-<UUID>`；Document ID 必须由当前 factory 创建，不能手填既有 ID。
+- [ ] PostgreSQL 记录全部其他 documents、chunks、parse runs、blocks、assets、chunk-blocks、Knowledge items/sources/chunks/versions/reviews 与 jobs ID 集合。
+- [ ] MinIO 记录测试 raw/derived keys 的所有 versions/delete markers，并记录其他 key/version set。
+- [ ] OpenSearch 记录测试 document/chunk IDs、其他 `_id` set、alias targets、concrete index、count 和 mapping SHA-256。
+
+### 3. PostgreSQL concurrency
+
+- [ ] A→K1、B→K1 两个真实 transaction 同时 finalization，无 deadlock。
+- [ ] A/B sources 都删除后 K1 最终 orphan，Item/versions/reviews/chunks/sources 全部删除，无 dangling FK。
+- [ ] overlapping revision closure、self-cycle、多 item cycle 有限终止，锁顺序 deterministic。
+- [ ] surviving revision 指向 orphan parent 时先 SET NULL；仍有来源的 revision 不被误删。
+- [ ] 两 executor 同时 claim 同一 job 只有一个 owner；expired lease 可 reclaim；stale token 不能 progress。
+- [ ] heartbeat 有效时第二 owner claim none；attempts=max 的 expired job 只进入 exhausted sweep，不出现 max+1 claim。
+
+### 4. Fault injection
+
+- [ ] OpenSearch DBQ 失败进入 retry，恢复后成功。
+- [ ] DBQ 已完成但响应丢失，retry 看到 0 hits 并成功。
+- [ ] MinIO object 1 删除、object 2 失败，retry 只收敛剩余 versions/delete markers。
+- [ ] raw 已不存在视为成功；NoSuchBucket、retention/object lock 仍是失败。
+- [ ] 慢 MinIO 超过初始 lease 时 heartbeat 延长 DB-time expiry，始终只有一个 owner 发起删除。
+- [ ] heartbeat/fencing lost 后旧 owner 不再 list/delete 下一对象或 batch，不推进 step、不记录普通 failure。
+- [ ] 外部已清理、final PostgreSQL commit 前失败时整体 rollback；retry 后成功。
+- [ ] final commit 成功但响应丢失时 Document/job 都 absent，重复 DELETE 返回 204，不重建数据。
+
+### 5. 最终 0 residual 与隔离
+
+- [ ] OpenSearch `document_id` 与每个原 chunk `_id/chunk_id` 均为 0 hits；未 rebuild 整个 index。
+- [ ] PostgreSQL Document、chunks/vector、chunk-blocks、parse runs、blocks、assets、document-specific knowledge relations、orphan items/versions/reviews 与 deletion job 均为 0。
+- [ ] MinIO raw exact key、所有 versions/delete markers、parsed output、images/assets/intermediate 全部不存在。
+- [ ] Shared Knowledge 按来源规则保留，projection 指向剩余来源，versions 不含已删 Document provenance。
+- [ ] PostgreSQL、MinIO、OpenSearch 的其他资源集合与 pre-delete snapshot 完全一致；alias 与 mapping checksum 不变。
+- [ ] PostgreSQL vector、Hybrid/RAG 和最终 context/citations 均不能召回已删 Document。
+
+### 6. UI 与最终记录
+
+- [ ] 202 只显示 deleting/retrying，不提前从列表消失。
+- [ ] delete_failed 显示重试；503 disabled 和 invariant error 显示安全文案且不自动重试。
+- [ ] status 204 后列表刷新、详情跳转，Document 真正消失。
+- [ ] 所有真实命令、fixture UUID、pre/post checksum、测试结果和 abort 事件写入 `docs/phase-10-finished.md`。
+- [ ] 只有上述真实验收全部通过后，才把 `REAL_ROLLOUT_PENDING` 改为最终完成状态。

@@ -651,3 +651,34 @@ parsed-assets/{document_id}/{parse_run_id}/...
 - 不破坏 `document_chunks.id`。
 - 不破坏 `knowledge_item_chunks.chunk_id` 依赖。
 - `document_chunks` 仍是 `/api/v1/search`、`/api/v1/rag/ask` 和 `/api/v1/knowledge-items` 的共同基础。
+
+# 第十阶段数据库结构：Document Hard Delete
+
+Phase 10 使用两个有序 migration：
+
+- `0007_phase10_expand`：增加 `documents.deletion_status`、`document_deletion_jobs`、`knowledge_item_sources`，安全回填既有 singular source，并让所有 Knowledge 写路径在同一事务 dual-write；
+- `0008_phase10_enforce`：先 fail-closed preflight，再为 `knowledge_item_chunks(knowledge_item_id, document_id)` 增加指向 `knowledge_item_sources(knowledge_item_id, document_id)` 的 composite FK。
+
+`0007` 本身不创建 composite FK；`0008` 不补猜数据、不修改 0007 backfill，且 FK 不使用 `ON DELETE CASCADE`。source-less/manual Knowledge Item 在没有 chunk relation 时合法。
+
+## documents.deletion_status
+
+允许值为 `normal`、`deleting`、`delete_failed`，默认并回填为 `normal`。非 normal Document 被写路径 guard 拒绝，也不会进入 PostgreSQL vector 或 Hybrid/RAG 的正常候选集合。
+
+## document_deletion_jobs
+
+核心字段：`id`、唯一 `document_id` snapshot（无 FK）、`status`、`current_step`、`step_attempts`、`max_attempts`、versioned JSONB `manifest`、`locked_by`、`lease_token`、`locked_at`、`lease_expires_at`、`next_retry_at`、`last_error_code`、`created_at`、`updated_at`。
+
+job 不通过 Document cascade 删除。Document 已不存在但 job 仍存在是合法 crash-recovery 状态；只有整个 Saga 的 final PostgreSQL transaction 成功时，Document 与 job 才按固定顺序一起消失。成功后不保留 succeeded job。
+
+所有 lease、due、expired 与 retry deadline 判定使用 PostgreSQL database time。`max_attempts` 是 job 创建时的每-step 自动尝试上限快照；进入下一 step 时 `step_attempts` 清零。
+
+## knowledge_item_sources
+
+`knowledge_item_sources` 以唯一 `(knowledge_item_id, document_id)` 表达来源身份，`document_id` 是唯一身份事实；`source_filename` 只是 relation 创建时不可变的 provenance snapshot。`knowledge_items.source_document_id/source_filename` 继续作为 Phase 7 REST compatibility projection，不参与 orphan 判定。
+
+Document Knowledge cleanup 在稳定 UUID 顺序锁定 cycle-safe revision closure 后删除该 Document 的 chunk/source relations，flush，再从 DB recount 剩余来源。仍有来源的 Item、versions、reviews 保留并切换 deterministic projection；无来源 Item 的 chunks、versions、reviews 与 Item 删除。surviving version snapshot 只按明确 provenance 字段/path 清理，不按正文 value 做全局扫描。
+
+## PostgreSQL finalization 顺序
+
+外部 OpenSearch 和 MinIO 已验证无残留后，单一事务完成：lease/fencing 复验、Knowledge cleanup、`document_chunk_blocks`、`knowledge_item_chunks` 防御性清理、`document_chunks`（含 inline 1024 维 vector）、`document_assets`、`document_blocks`、`document_parse_runs`、`documents`、最后 `document_deletion_jobs`。任何 commit 前失败都整体 rollback。

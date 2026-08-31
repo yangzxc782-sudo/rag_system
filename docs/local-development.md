@@ -1551,3 +1551,65 @@ npx.cmd eslint lib/rag.ts lib/knowledge-items.ts
 ```
 
 全量 build/ESLint 仍分别受既有 `KnowledgeItemsPanel.tsx` TypeScript 债务和 `DocumentParseResults.tsx` ESLint 债务影响；这两个文件不属于 Phase 9 diff，不应在 M5 顺带修复。
+
+# 第十阶段：Document Hard Delete 本地开发与 rollout preflight
+
+## 默认安全状态
+
+开发、测试和 CI 默认必须保持：
+
+```env
+DOCUMENT_DELETION_EXECUTOR_ENABLED=false
+```
+
+disabled 时 DELETE/retry 对合法 Document↔job invariant 返回 `DOCUMENT_DELETION_EXECUTOR_DISABLED` / HTTP 503，不创建或重置 job，不改变 Document；status API 仍可读取已有状态。不得为了测试前端而在共享开发环境启用 executor。
+
+## M7 真实集成双重门禁
+
+真实集成测试默认全部 skip。只有项目负责人已经单独给出 rollout 授权，并在当前 shell 同时设置下列开关与全部 explicit confirmation 时才可运行：
+
+```env
+PHASE10_INTEGRATION_ENABLED=1
+PHASE10_M7_ROLLOUT_AUTHORIZED=1
+PHASE10_INTEGRATION_ENVIRONMENT=dedicated-local-test
+```
+
+还必须显式提供两个不同的 `phase10_*` PostgreSQL database URL/name confirmation、一个名称以 `phase10-` 开头且已启用 versioning 的专用 MinIO bucket 及 confirmation、专用 OpenSearch URL/index/alias 及 `index:alias` confirmation。测试 harness 没有默认 URL、bucket 或 index，不会 fallback 到 `rag_system`、`rag-documents` 或 `casting_chunks_current`。真实值只放本机未跟踪环境，不得提交。
+
+所有 fixture 名称以 `phase10-hard-delete-<UUID>` 开头。测试 API 只能删除本次 factory 返回的 UUID，不能接收既有知识库 Document ID。
+
+## M7-A 非写 preflight
+
+以下命令只检查 Git、migration graph、offline SQL 与默认 skip，不执行 migration 或外部删除：
+
+```powershell
+cd D:\rag_system
+git status --short
+git diff --check
+
+cd backend
+.\.venv\Scripts\alembic.exe heads
+.\.venv\Scripts\alembic.exe history
+.\.venv\Scripts\alembic.exe upgrade 0006_add_document_parse:0008_phase10_enforce --sql
+.\.venv\Scripts\alembic.exe downgrade 0008_phase10_enforce:0007_phase10_expand --sql
+.\.venv\Scripts\pytest.exe -m integration tests\integration -q -p no:cacheprovider
+```
+
+最后一条在没有双重门禁时必须全部 skip。`alembic current` 会连接配置的数据库，只允许在已经确认目标为专用测试数据库或使用项目允许的只读开发核验时执行；不得把 `alembic current` 当成 upgrade 授权。
+
+## M7-B rollout gate（当前禁止执行）
+
+只有收到精确授权 `PHASE10_M7_ROLLOUT_AUTHORIZED` 后才按顺序执行：
+
+1. 停止后端写流量，确认 executor=false；
+2. 记录 PostgreSQL backup 与已验证 restore 命令/位置，不在测试中自动 drop/restore；
+3. 核验 `alembic current`、`heads`、migration chain 和 0007/0008 offline SQL；
+4. 核验专用 MinIO bucket、versioning、OpenSearch alias/concrete index/mapping 1024 dimension；
+5. 先在独立 migration database 验证 upgrade/downgrade，再对批准目标应用 migration；
+6. executor=false 启动，验证 guards/API；
+7. executor=true 后完整重启；
+8. 只创建并删除唯一 `phase10-hard-delete-<UUID>` fixture；
+9. 比较 PostgreSQL/MinIO/OpenSearch pre/post snapshot，验证目标 0 residual 与其他集合完全相同；
+10. 任一 invariant、mapping checksum、alias、backup、确认值或外部服务状态不符，立即 abort，不猜测修复。
+
+禁止清 bucket、删除 index、rebuild index、truncate、清 volume 或用字符串模糊匹配选择待删数据。
