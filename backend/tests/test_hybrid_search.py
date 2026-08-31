@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -69,6 +69,21 @@ class FakeSearchClient:
         if self.responses:
             return self.responses.pop(0)
         return {"hits": {"hits": []}}
+
+
+class TrackedFilterSession:
+    def __init__(self, *allowed: str, events: list[str] | None = None) -> None:
+        self.allowed = [UUID(value) for value in allowed]
+        self.events = events if events is not None else []
+        self.closed = False
+
+    def scalars(self, _statement: object) -> SimpleNamespace:
+        self.events.append("filter-select")
+        return SimpleNamespace(all=lambda: self.allowed)
+
+    def close(self) -> None:
+        self.closed = True
+        self.events.append("filter-close")
 
 
 def make_source(**overrides: object) -> dict[str, object]:
@@ -276,6 +291,7 @@ def test_opensearch_query_exception_raises_hybrid_search_failed() -> None:
 def test_hybrid_search_calls_alias_and_returns_ranked_items() -> None:
     source = make_source()
     client = FakeSearchClient([make_response(make_hit(source, 10.0)), make_response(make_hit(source, 0.9))])
+    filter_session = TrackedFilterSession(str(source["document_id"]))
 
     result = hybrid_search.hybrid_search_chunks(
         SimpleNamespace(),
@@ -283,11 +299,88 @@ def test_hybrid_search_calls_alias_and_returns_ranked_items() -> None:
         client=client,
         settings=make_settings(),
         embedding_provider=FakeEmbeddingProvider(),
+        deletion_filter_session_factory=lambda: filter_session,
     )
 
     assert [call["index"] for call in client.search_calls] == ["casting_chunks_current", "casting_chunks_current"]
     assert result.total == 1
     assert result.items[0].hybrid_score > 0
+    assert filter_session.closed is True
+
+
+def test_hybrid_filters_stale_deleting_document_before_rrf() -> None:
+    deleting_source = make_source()
+    normal_source = make_source()
+    client = FakeSearchClient(
+        [
+            make_response(
+                make_hit(deleting_source, 20.0),
+                make_hit(normal_source, 10.0),
+            ),
+            make_response(make_hit(deleting_source, 0.99)),
+        ]
+    )
+    filter_session = TrackedFilterSession(str(normal_source["document_id"]))
+
+    result = hybrid_search.hybrid_search_chunks(
+        SimpleNamespace(),
+        query="冒口",
+        client=client,
+        settings=make_settings(),
+        embedding_provider=FakeEmbeddingProvider(),
+        deletion_filter_session_factory=lambda: filter_session,
+    )
+
+    assert [item.document_id for item in result.items] == [
+        str(normal_source["document_id"])
+    ]
+
+
+def test_hybrid_filter_uses_short_session_closed_before_rrf(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = make_source()
+    events: list[str] = []
+    filter_session = TrackedFilterSession(
+        str(source["document_id"]),
+        events=events,
+    )
+    request_session = SimpleNamespace(
+        scalars=lambda _statement: pytest.fail(
+            "request-scoped Session must not filter deletion status"
+        )
+    )
+    client = FakeSearchClient(
+        [
+            make_response(make_hit(source, 10.0)),
+            make_response(make_hit(source, 0.9)),
+        ]
+    )
+    original_fuse = hybrid_search.fuse_hybrid_results
+
+    def tracked_fuse(*args: object, **kwargs: object):
+        assert filter_session.closed is True
+        events.append("rrf")
+        return original_fuse(*args, **kwargs)
+
+    monkeypatch.setattr(
+        hybrid_search,
+        "SessionLocal",
+        lambda: (events.append("filter-open"), filter_session)[1],
+        raising=False,
+    )
+    monkeypatch.setattr(hybrid_search, "fuse_hybrid_results", tracked_fuse)
+
+    result = hybrid_search.hybrid_search_chunks(
+        request_session,
+        query="冒口",
+        client=client,
+        settings=make_settings(),
+        embedding_provider=FakeEmbeddingProvider(),
+    )
+
+    assert result.total == 1
+    assert events == ["filter-open", "filter-select", "filter-close", "rrf"]
 
 
 def test_api_post_search_success(monkeypatch: pytest.MonkeyPatch) -> None:

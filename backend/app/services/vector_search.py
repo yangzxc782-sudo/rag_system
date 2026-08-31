@@ -165,6 +165,7 @@ def _query_vector_rows(
         )
         .join(Document, Document.id == DocumentChunk.document_id)
         .where(
+            Document.deletion_status == "normal",
             DocumentChunk.embedding_status == EMBEDDING_STATUS_EMBEDDED,
             DocumentChunk.embedding.is_not(None),
             DocumentChunk.embedding_model == embedding_model,

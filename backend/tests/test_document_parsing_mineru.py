@@ -13,6 +13,7 @@ from app.core.errors import (
     DOCUMENT_ALREADY_PARSED,
     DOCUMENT_PARSE_FAILED,
     DOCUMENT_PARSER_CONFIG_INVALID,
+    DOCUMENT_DELETION_IN_PROGRESS,
     BusinessError,
 )
 from app.ingestion.mineru.models import (
@@ -81,6 +82,8 @@ class FakeDb:
         return None
 
     def scalar(self, statement):
+        if "FROM documents" in str(statement):
+            return self.document
         return self.chunk_count
 
     def scalars(self, statement):
@@ -155,6 +158,7 @@ def fake_document() -> SimpleNamespace:
         file_type=".pdf",
         mime_type="application/pdf",
         process_status="uploaded",
+        deletion_status="normal",
         error_message=None,
     )
 
@@ -366,6 +370,27 @@ def test_mineru_success_writes_full_pipeline_before_marking_active(
         orders == list(range(len(orders)))
         for orders in orders_by_chunk.values()
     )
+
+
+def test_mineru_final_guard_blocks_upload_after_delete_commits(monkeypatch) -> None:
+    document = fake_document()
+
+    class DeleteAfterRemoteParse(FakeMinerUClient):
+        def parse_file(self, request):
+            result = super().parse_file(request)
+            document.deletion_status = "deleting"
+            return result
+
+    client = DeleteAfterRemoteParse(result=fake_parse_result())
+    db = FakeDb(document=document)
+    _client, uploads = _install_success_dependencies(monkeypatch, client=client)
+
+    with pytest.raises(BusinessError) as exc_info:
+        document_parsing.parse_document(db, DOCUMENT_ID)
+
+    assert exc_info.value.code == DOCUMENT_DELETION_IN_PROGRESS
+    assert uploads == []
+    assert not any(isinstance(item, DocumentAsset) for item in db.added_all)
 
 
 def test_inline_v4_zip_asset_is_uploaded_through_existing_orchestration(

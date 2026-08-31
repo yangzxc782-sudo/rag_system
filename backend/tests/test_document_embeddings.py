@@ -9,6 +9,7 @@ from app.core.errors import (
     DOCUMENT_EMBEDDINGS_ALREADY_GENERATED,
     DOCUMENT_NOT_FOUND,
     DOCUMENT_NOT_PARSED,
+    DOCUMENT_DELETE_FAILED,
     EMBEDDING_CONFIG_INVALID,
     EMBEDDING_DIMENSION_MISMATCH,
     EMBEDDING_GENERATION_FAILED,
@@ -42,6 +43,11 @@ class FakeDb:
 
     def scalars(self, statement):
         return FakeScalarResult(sorted(self.chunks, key=lambda chunk: chunk.chunk_index))
+
+    def scalar(self, statement):
+        if "FROM documents" in str(statement):
+            return self.document
+        return None
 
     def add(self, item):
         self.added.append(item)
@@ -84,7 +90,7 @@ class FakeProvider:
 
 
 def fake_document() -> SimpleNamespace:
-    return SimpleNamespace(id=DOCUMENT_ID)
+    return SimpleNamespace(id=DOCUMENT_ID, deletion_status="normal")
 
 
 def fake_chunk(
@@ -127,6 +133,41 @@ def patch_provider(monkeypatch, provider: FakeProvider, *, settings=None) -> Fak
     monkeypatch.setattr(embedding_service, "get_settings", lambda: settings or fake_settings())
     monkeypatch.setattr(embedding_service, "get_embedding_provider", lambda current_settings: provider)
     return provider
+
+
+def test_embedding_delete_failed_document_never_calls_provider(monkeypatch) -> None:
+    document = fake_document()
+    document.deletion_status = "delete_failed"
+    chunks = [fake_chunk(index=0)]
+    db = FakeDb(document=document, chunks=chunks)
+    provider = patch_provider(monkeypatch, FakeProvider())
+
+    with pytest.raises(BusinessError) as exc_info:
+        embedding_service.generate_document_embeddings(db, DOCUMENT_ID)
+
+    assert exc_info.value.code == DOCUMENT_DELETE_FAILED
+    assert provider.document_calls == []
+    assert chunks[0].embedding is None
+
+
+def test_embedding_final_guard_blocks_vectors_after_delete_commits(monkeypatch) -> None:
+    document = fake_document()
+    chunks = [fake_chunk(index=0)]
+    db = FakeDb(document=document, chunks=chunks)
+
+    class DeleteDuringInference(FakeProvider):
+        def encode_documents(self, texts):
+            result = super().encode_documents(texts)
+            document.deletion_status = "deleting"
+            return result
+
+    patch_provider(monkeypatch, DeleteDuringInference())
+
+    with pytest.raises(BusinessError) as exc_info:
+        embedding_service.generate_document_embeddings(db, DOCUMENT_ID)
+
+    assert exc_info.value.code == "DOCUMENT_DELETION_IN_PROGRESS"
+    assert chunks[0].embedding is None
 
 
 def test_generate_document_embeddings_document_not_found() -> None:

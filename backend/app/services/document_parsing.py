@@ -12,6 +12,9 @@ from sqlalchemy.orm import Session
 from app.core.config import get_settings
 from app.core.errors import (
     DOCUMENT_ALREADY_PARSED,
+    DOCUMENT_DELETION_IN_PROGRESS,
+    DOCUMENT_DELETION_STATE_INCONSISTENT,
+    DOCUMENT_DELETE_FAILED,
     DOCUMENT_NOT_FOUND,
     DOCUMENT_PARSE_FAILED,
     DOCUMENT_PARSER_CONFIG_INVALID,
@@ -52,6 +55,7 @@ from app.services.document_parse_runs import (
     mark_running,
     mark_succeeded,
 )
+from app.services.document_operation_guard import DocumentOperationGuard
 from app.services.object_storage import (
     get_object_bytes_from_minio,
     upload_bytes_to_minio,
@@ -115,6 +119,7 @@ def _parse_document_with_basic(
     db: Session,
     document: Document,
 ) -> DocumentParseResult:
+    document = DocumentOperationGuard(db).lock_normal(document.id)
     document.process_status = "parsing"
     document.error_message = None
     db.add(document)
@@ -139,6 +144,7 @@ def _parse_document_with_basic(
             chunk_overlap_chars=get_settings().chunk_overlap_chars,
         )
 
+        document = DocumentOperationGuard(db).lock_normal(document.id)
         db.add_all(_build_document_chunks(document_id=document.id, parsed_chunks=parsed_chunks))
         document.process_status = "parsed"
         document.error_message = None
@@ -147,6 +153,8 @@ def _parse_document_with_basic(
         db.refresh(document)
     except BusinessError as exc:
         db.rollback()
+        if _is_document_deletion_guard_error(exc):
+            raise
         _mark_document_parse_failed(db, document.id, exc.message)
         raise
     except SQLAlchemyError as exc:
@@ -191,6 +199,7 @@ def _parse_document_with_mineru(
     stage = "create_parse_run"
 
     try:
+        document = DocumentOperationGuard(db).lock_normal(document.id)
         parse_run = create_parse_run(
             db,
             document_id=document.id,
@@ -233,6 +242,7 @@ def _parse_document_with_mineru(
         )
 
         stage = "parsed_assets_storage"
+        document = DocumentOperationGuard(db).lock_normal(document.id)
         storage_metadata = _save_mineru_outputs(
             bucket_name=document.bucket_name,
             parse_result=parse_result,
@@ -300,6 +310,8 @@ def _parse_document_with_mineru(
         db.refresh(parse_run)
     except Exception as exc:
         db.rollback()
+        if isinstance(exc, BusinessError) and _is_document_deletion_guard_error(exc):
+            raise
         if parse_run is not None:
             _record_mineru_failure(
                 db,
@@ -838,7 +850,7 @@ def _record_mineru_failure(
     error: Exception,
     settings: Any,
 ) -> None:
-    stored_document = db.get(Document, document.id) or document
+    stored_document = DocumentOperationGuard(db).lock_normal(document.id)
     stored_parse_run = db.get(DocumentParseRun, parse_run.id) or parse_run
     summary = (
         f"MinerU 文档解析失败（阶段：{stage}，"
@@ -943,7 +955,7 @@ def _build_document_chunks(*, document_id: UUID, parsed_chunks: list[ParsedChunk
 
 
 def _mark_document_parse_failed(db: Session, document_id: UUID, error_message: str) -> None:
-    document = db.get(Document, document_id)
+    document = DocumentOperationGuard(db).lock_if_normal(document_id)
     if document is None:
         return
 
@@ -951,6 +963,14 @@ def _mark_document_parse_failed(db: Session, document_id: UUID, error_message: s
     document.error_message = error_message
     db.add(document)
     db.commit()
+
+
+def _is_document_deletion_guard_error(error: BusinessError) -> bool:
+    return error.code in {
+        DOCUMENT_DELETION_IN_PROGRESS,
+        DOCUMENT_DELETE_FAILED,
+        DOCUMENT_DELETION_STATE_INCONSISTENT,
+    }
 
 
 def _build_chunk_stats(chunks: list[DocumentChunk]) -> dict[str, int | float]:

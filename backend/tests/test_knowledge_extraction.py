@@ -14,6 +14,7 @@ from app.core.errors import (
     KNOWLEDGE_ITEM_SOURCE_CHUNK_NOT_FOUND,
     KNOWLEDGE_ITEM_SOURCE_DOCUMENT_NOT_FOUND,
     LLM_PARAMETER_UNSUPPORTED,
+    DOCUMENT_DELETION_IN_PROGRESS,
     BusinessError,
 )
 from app.extraction.knowledge_parser import parse_extraction_json, strip_json_code_fence
@@ -99,6 +100,11 @@ class FakeDb:
             return FakeScalarResult(list(self.chunks.values()))
         return FakeScalarResult([])
 
+    def scalar(self, statement: object) -> object | None:
+        if "FROM documents" in str(statement):
+            return self.documents.get(DOCUMENT_ID)
+        return None
+
 
 class FakeLLMProvider:
     provider_name = "fake"
@@ -178,7 +184,11 @@ def make_settings(**overrides: object) -> SimpleNamespace:
 
 
 def make_document(document_id: UUID = DOCUMENT_ID) -> SimpleNamespace:
-    return SimpleNamespace(id=document_id, original_filename="casting.md")
+    return SimpleNamespace(
+        id=document_id,
+        original_filename="casting.md",
+        deletion_status="normal",
+    )
 
 
 def make_chunk(
@@ -543,6 +553,35 @@ def test_extract_creates_draft_and_auto_submit_creates_pending_review() -> None:
         assert sources[0].document_id == DOCUMENT_ID
         assert llm.calls[0].json_mode is True
         assert getattr(llm.calls[0], "think") is False
+
+
+def test_extraction_final_guard_rolls_back_after_delete_commits() -> None:
+    document = make_document()
+    db = FakeDb(
+        documents={DOCUMENT_ID: document},
+        chunks={CHUNK_ID: make_chunk()},
+    )
+
+    class DeleteAfterLlm(FakeLLMProvider):
+        def generate(self, request):
+            result = super().generate(request)
+            document.deletion_status = "deleting"
+            return result
+
+    with pytest.raises(BusinessError) as exc_info:
+        knowledge_extraction.extract_knowledge_items(
+            db,
+            KnowledgeExtractionRequest(
+                mode="chunks",
+                chunk_ids=[CHUNK_ID],
+                auto_submit=False,
+            ),
+            settings=make_settings(),
+            llm_provider=DeleteAfterLlm(extraction_json()),
+        )
+
+    assert exc_info.value.code == DOCUMENT_DELETION_IN_PROGRESS
+    assert not any(isinstance(item, KnowledgeItem) for item in db.added)
 
 
 def test_extract_skips_duplicates_without_failing() -> None:

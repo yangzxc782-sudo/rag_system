@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -18,6 +20,8 @@ from app.core.errors import (
     SEARCH_QUERY_EMPTY,
     BusinessError,
 )
+from app.models.document import Document
+from app.db.session import SessionLocal
 from app.retrieval.embeddings import EmbeddingResult, EmbeddingProvider, get_embedding_provider
 from app.search_engine.client import SearchEngineClientProtocol, get_search_engine_client
 from app.search_engine.index_schema import get_index_alias
@@ -72,8 +76,8 @@ def hybrid_search_chunks(
     client: SearchEngineClientProtocol | None = None,
     settings: Any | None = None,
     embedding_provider: EmbeddingProvider | None = None,
+    deletion_filter_session_factory: Callable[[], Session] | None = None,
 ) -> HybridSearchResult:
-    del db
     settings = settings or get_settings()
     normalized_query = query.strip()
     if not normalized_query:
@@ -101,8 +105,52 @@ def hybrid_search_chunks(
 
     keyword_hits = _parse_search_hits(keyword_response)
     vector_hits = _parse_search_hits(vector_response)
+    keyword_hits, vector_hits = _filter_normal_document_hits(
+        keyword_hits,
+        vector_hits,
+        session_factory=deletion_filter_session_factory or SessionLocal,
+    )
     items = fuse_hybrid_results(keyword_hits, vector_hits, settings, limit=normalized_limit, query=normalized_query)
     return HybridSearchResult(query=normalized_query, limit=normalized_limit, total=len(items), items=items)
+
+
+def _filter_normal_document_hits(
+    keyword_hits: list[SearchEngineHit],
+    vector_hits: list[SearchEngineHit],
+    *,
+    session_factory: Callable[[], Session],
+) -> tuple[list[SearchEngineHit], list[SearchEngineHit]]:
+    document_ids: set[UUID] = set()
+    for hit in (*keyword_hits, *vector_hits):
+        try:
+            document_ids.add(UUID(str(hit.source.get("document_id") or "")))
+        except (TypeError, ValueError):
+            continue
+    if not document_ids:
+        return [], []
+    filter_db = session_factory()
+    try:
+        allowed = set(
+            filter_db.scalars(
+                select(Document.id).where(
+                    Document.id.in_(document_ids),
+                    Document.deletion_status == "normal",
+                )
+            ).all()
+        )
+    finally:
+        filter_db.close()
+
+    def keep(hit: SearchEngineHit) -> bool:
+        try:
+            return UUID(str(hit.source.get("document_id") or "")) in allowed
+        except (TypeError, ValueError):
+            return False
+
+    return (
+        [hit for hit in keyword_hits if keep(hit)],
+        [hit for hit in vector_hits if keep(hit)],
+    )
 
 
 def build_keyword_search_body(query: str, settings: Any, document_id: UUID | None = None) -> dict[str, Any]:

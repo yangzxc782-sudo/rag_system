@@ -11,6 +11,8 @@ from app.core.errors import (
     DOCUMENT_PARSE_FAILED,
     DOCUMENT_PARSER_CONFIG_INVALID,
     DOCUMENT_SOURCE_FILE_NOT_FOUND,
+    DOCUMENT_DELETION_IN_PROGRESS,
+    DOCUMENT_DELETION_IN_PROGRESS,
     BusinessError,
 )
 from app.services import document_parsing
@@ -51,6 +53,8 @@ class FakeDb:
         return self.document
 
     def scalar(self, statement):
+        if "FROM documents" in str(statement):
+            return self.document
         if self.chunks:
             return len(self.chunks)
         return self.chunk_count
@@ -86,6 +90,7 @@ def fake_document(process_status: str = "uploaded") -> SimpleNamespace:
         file_type=".txt",
         mime_type="text/plain",
         process_status=process_status,
+        deletion_status="normal",
         error_message=None,
     )
 
@@ -133,6 +138,28 @@ def test_parse_document_success(monkeypatch) -> None:
     assert first_chunk.embedding_model is None
     assert first_chunk.embedding_dim is None
     assert first_chunk.source_metadata["character_count"] == 1000
+
+
+def test_parse_deleting_document_never_reads_or_persists_source(monkeypatch) -> None:
+    document = fake_document()
+    document.deletion_status = "deleting"
+    db = FakeDb(document=document)
+    monkeypatch.setattr(document_parsing, "get_settings", lambda: fake_settings())
+
+    def unexpected_read(**kwargs):
+        raise AssertionError("deleting document must not start storage reads")
+
+    monkeypatch.setattr(
+        document_parsing,
+        "get_object_bytes_from_minio",
+        unexpected_read,
+    )
+
+    with pytest.raises(BusinessError) as exc_info:
+        document_parsing.parse_document(db, DOCUMENT_ID)
+
+    assert exc_info.value.code == DOCUMENT_DELETION_IN_PROGRESS
+    assert db.added_all == []
 
 
 def test_parse_document_not_found() -> None:

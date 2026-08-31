@@ -8,6 +8,7 @@ import pytest
 
 from app.api.v1 import search as search_api
 from app.core.errors import (
+    DOCUMENT_DELETION_IN_PROGRESS,
     SEARCH_ENGINE_CONFIG_INVALID,
     SEARCH_ENGINE_UNAVAILABLE,
     SEARCH_INDEX_MAPPING_MISMATCH,
@@ -111,11 +112,29 @@ class FakeClient:
 
 
 class FakeDb:
-    def __init__(self, document: object | None = None) -> None:
-        self.document = document
+    def __init__(self, document: object | None = None, documents: list[object] | None = None) -> None:
+        items = list(documents or ([] if document is None else [document]))
+        self.documents = {item.id: item for item in items}
+        self.commits = 0
+        self.rollbacks = 0
 
     def get(self, model: object, document_id: UUID | None) -> object | None:
-        return self.document
+        return self.documents.get(document_id)
+
+    def scalar(self, statement: object) -> object | None:
+        for value in statement.compile().params.values():
+            if isinstance(value, UUID) and value in self.documents:
+                return self.documents[value]
+        return None
+
+    def scalars(self, _statement: object) -> SimpleNamespace:
+        return SimpleNamespace(all=lambda: sorted(self.documents, key=str))
+
+    def commit(self) -> None:
+        self.commits += 1
+
+    def rollback(self) -> None:
+        self.rollbacks += 1
 
 
 def make_document(**overrides: object) -> SimpleNamespace:
@@ -123,6 +142,7 @@ def make_document(**overrides: object) -> SimpleNamespace:
         "id": uuid4(),
         "original_filename": "casting.md",
         "process_status": "parsed",
+        "deletion_status": "normal",
     }
     values.update(overrides)
     return SimpleNamespace(**values)
@@ -227,6 +247,28 @@ def test_rebuild_document_deletes_old_chunks_before_bulk(monkeypatch: pytest.Mon
     assert result.indexed == 1
 
 
+def test_rebuild_document_rejects_deleting_before_opensearch_write() -> None:
+    document_id = uuid4()
+    document = make_document(
+        id=document_id,
+        deletion_status="deleting",
+    )
+    client = FakeClient()
+
+    with pytest.raises(BusinessError) as exc_info:
+        search_index.rebuild_search_index(
+            FakeDb(document=document),
+            scope="document",
+            document_id=document_id,
+            client=client,
+            settings=make_settings(),
+        )
+
+    assert exc_info.value.code == DOCUMENT_DELETION_IN_PROGRESS
+    assert client.delete_by_query_calls == []
+    assert client.bulk_calls == []
+
+
 def test_rebuild_all_bulk_indexes_all_loaded_syncable_chunks(monkeypatch: pytest.MonkeyPatch) -> None:
     document = make_document()
     chunks = [make_chunk(chunk_index=0), make_chunk(chunk_index=1)]
@@ -235,12 +277,48 @@ def test_rebuild_all_bulk_indexes_all_loaded_syncable_chunks(monkeypatch: pytest
     client.bulk_response = {"errors": False, "items": [{"index": {"status": 201}}, {"index": {"status": 201}}]}
     monkeypatch.setattr(search_index, "_load_syncable_chunks", lambda *args, **kwargs: rows)
 
-    result = search_index.rebuild_search_index(FakeDb(), scope="all", client=client, settings=make_settings())
+    result = search_index.rebuild_search_index(FakeDb(document=document), scope="all", client=client, settings=make_settings())
 
     assert result.syncable_chunks == 2
     assert result.indexed == 2
     assert client.delete_by_query_calls == []
     assert len(client.bulk_calls[0]["body"]) == 4
+
+
+def test_rebuild_all_locks_and_commits_each_document_independently(monkeypatch) -> None:
+    first = make_document(id=uuid4())
+    deleting = make_document(id=uuid4(), deletion_status="deleting")
+    second = make_document(id=uuid4())
+    documents = sorted([first, deleting, second], key=lambda item: str(item.id))
+    db = FakeDb(documents=documents)
+    client = FakeClient()
+    client.bulk_response = {
+        "errors": False,
+        "items": [{"index": {"status": 201}}],
+    }
+
+    def load_one(_db, *, settings, document_id):
+        document = db.documents[document_id]
+        return [
+            SyncableChunkRow(
+                document,
+                make_chunk(document_id=document_id),
+            )
+        ]
+
+    monkeypatch.setattr(search_index, "_load_syncable_chunks", load_one)
+
+    result = search_index.rebuild_search_index(
+        db,
+        scope="all",
+        client=client,
+        settings=make_settings(),
+    )
+
+    assert result.indexed == 2
+    assert len(client.bulk_calls) == 2
+    assert db.commits == 2
+    assert db.rollbacks == 1
 
 
 def test_is_syncable_chunk_filters_embedding_status_dim_model_and_embedding() -> None:
@@ -306,7 +384,7 @@ def test_rebuild_bulk_exception_raises_rebuild_failed(monkeypatch: pytest.Monkey
     monkeypatch.setattr(search_index, "_load_syncable_chunks", lambda *args, **kwargs: [SyncableChunkRow(document, chunk)])
 
     with pytest.raises(BusinessError) as exc_info:
-        search_index.rebuild_search_index(FakeDb(), scope="all", client=client, settings=make_settings())
+        search_index.rebuild_search_index(FakeDb(document=document), scope="all", client=client, settings=make_settings())
 
     assert exc_info.value.code == SEARCH_INDEX_REBUILD_FAILED
     assert chunk.embedding_status == "embedded"
@@ -343,7 +421,7 @@ def test_rebuild_bulk_partial_failure_raises_with_failed_chunk_details(
 
     with pytest.raises(BusinessError) as exc_info:
         search_index.rebuild_search_index(
-            FakeDb(),
+            FakeDb(document=document),
             scope="all",
             client=client,
             settings=make_settings(),

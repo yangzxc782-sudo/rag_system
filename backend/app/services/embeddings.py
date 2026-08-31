@@ -22,6 +22,7 @@ from app.core.errors import (
 from app.models.document import Document
 from app.models.document_chunk import DocumentChunk
 from app.retrieval.embeddings import EmbeddingResult, get_embedding_provider
+from app.services.document_operation_guard import DocumentOperationGuard
 
 
 EMBEDDING_STATUS_NOT_STARTED = "not_started"
@@ -101,7 +102,10 @@ def generate_document_embeddings(db: Session, document_id: UUID) -> DocumentEmbe
     provider = get_embedding_provider(settings)
 
     try:
-        _mark_chunks_embedding(db, target_chunks)
+        _mark_chunks_embedding(db, document_id, target_chunks)
+    except BusinessError:
+        db.rollback()
+        raise
     except Exception as exc:
         db.rollback()
         raise BusinessError(
@@ -113,34 +117,37 @@ def generate_document_embeddings(db: Session, document_id: UUID) -> DocumentEmbe
 
     embedded_count = 0
     last_result: EmbeddingResult | None = None
+    pending_updates: list[tuple[DocumentChunk, list[float], EmbeddingResult]] = []
 
     try:
         for batch in _batched(target_chunks, batch_size):
             result = provider.encode_documents([chunk.content for chunk in batch])
             _validate_embedding_result(result, batch_size=len(batch), expected_dim=expected_dim)
-            now = datetime.now(UTC)
-
             for chunk, embedding in zip(batch, result.embeddings, strict=True):
-                chunk.embedding = embedding
-                chunk.embedding_model = result.embedding_model
-                chunk.embedding_dim = result.embedding_dim
-                chunk.embedding_status = EMBEDDING_STATUS_EMBEDDED
-                chunk.embedding_error_message = None
-                chunk.embedding_updated_at = now
-                db.add(chunk)
+                pending_updates.append((chunk, embedding, result))
 
             embedded_count += len(batch)
             last_result = result
 
+        DocumentOperationGuard(db).lock_normal(document_id)
+        now = datetime.now(UTC)
+        for chunk, embedding, result in pending_updates:
+            chunk.embedding = embedding
+            chunk.embedding_model = result.embedding_model
+            chunk.embedding_dim = result.embedding_dim
+            chunk.embedding_status = EMBEDDING_STATUS_EMBEDDED
+            chunk.embedding_error_message = None
+            chunk.embedding_updated_at = now
+            db.add(chunk)
         db.commit()
     except BusinessError as error:
         db.rollback()
-        _mark_chunks_failed(db, target_chunks, error.message)
+        _mark_chunks_failed(db, document_id, target_chunks, error.message)
         raise
     except SQLAlchemyError as exc:
         db.rollback()
         message = "Failed to persist chunk embeddings."
-        _mark_chunks_failed(db, target_chunks, message)
+        _mark_chunks_failed(db, document_id, target_chunks, message)
         raise BusinessError(
             EMBEDDING_GENERATION_FAILED,
             message,
@@ -150,7 +157,7 @@ def generate_document_embeddings(db: Session, document_id: UUID) -> DocumentEmbe
     except Exception as exc:
         db.rollback()
         message = "Embedding generation failed."
-        _mark_chunks_failed(db, target_chunks, message)
+        _mark_chunks_failed(db, document_id, target_chunks, message)
         raise BusinessError(
             EMBEDDING_GENERATION_FAILED,
             message,
@@ -224,7 +231,12 @@ def _validated_positive_int(value: int, *, field_name: str) -> int:
     return normalized
 
 
-def _mark_chunks_embedding(db: Session, chunks: Iterable[DocumentChunk]) -> None:
+def _mark_chunks_embedding(
+    db: Session,
+    document_id: UUID,
+    chunks: Iterable[DocumentChunk],
+) -> None:
+    DocumentOperationGuard(db).lock_normal(document_id)
     for chunk in chunks:
         chunk.embedding_status = EMBEDDING_STATUS_EMBEDDING
         chunk.embedding_error_message = None
@@ -232,9 +244,17 @@ def _mark_chunks_embedding(db: Session, chunks: Iterable[DocumentChunk]) -> None
     db.commit()
 
 
-def _mark_chunks_failed(db: Session, chunks: Iterable[DocumentChunk], message: str) -> None:
+def _mark_chunks_failed(
+    db: Session,
+    document_id: UUID,
+    chunks: Iterable[DocumentChunk],
+    message: str,
+) -> None:
     now = datetime.now(UTC)
     try:
+        if DocumentOperationGuard(db).lock_if_normal(document_id) is None:
+            db.rollback()
+            return
         for chunk in chunks:
             chunk.embedding_status = EMBEDDING_STATUS_FAILED
             chunk.embedding_error_message = message

@@ -9,6 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import app.services.rag as rag_service
+from app.retrieval.embeddings import EmbeddingResult
 from app.core.errors import (
     LLM_GENERATION_FAILED,
     LLM_TIMEOUT,
@@ -283,6 +284,118 @@ def test_answer_question_with_context_calls_llm_and_returns_citations(monkeypatc
     assert "你是铸型工艺知识库问答助手" in request.messages[0].content[0].text
     assert "question" in request.messages[1].content[0].text
     assert "chunk-b" in request.messages[1].content[0].text
+
+
+def test_rag_llm_runs_after_deletion_filter_session_is_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hybrid_module = rag_service.hybrid_search_service
+    document_id = uuid4()
+    chunk_id = uuid4()
+    events: list[str] = []
+
+    class QueryEmbeddingProvider:
+        def encode_query(self, _query: str) -> EmbeddingResult:
+            return EmbeddingResult(
+                embeddings=[[0.1] * 1024],
+                embedding_model="Qwen3-Embedding-0.6B",
+                embedding_dim=1024,
+                device="cpu",
+                provider="fake",
+            )
+
+    class SearchClient:
+        def search(self, **_kwargs: object) -> dict[str, object]:
+            return {
+                "hits": {
+                    "hits": [
+                        {
+                            "_id": str(chunk_id),
+                            "_score": 1.0,
+                            "_source": {
+                                "chunk_id": str(chunk_id),
+                                "document_id": str(document_id),
+                                "original_filename": "casting.md",
+                                "chunk_index": 0,
+                                "content": "Riser feeding path.",
+                                "source_metadata": {},
+                                "exact_terms": ["riser"],
+                                "embedding_model": "Qwen3-Embedding-0.6B",
+                                "embedding_dim": 1024,
+                            },
+                        }
+                    ]
+                }
+            }
+
+    class FilterSession:
+        closed = False
+
+        def scalars(self, _statement: object) -> SimpleNamespace:
+            events.append("filter-select")
+            return SimpleNamespace(all=lambda: [document_id])
+
+        def close(self) -> None:
+            self.closed = True
+            events.append("filter-close")
+
+    filter_session = FilterSession()
+
+    class AssertClosedLLM(FakeLLMProvider):
+        def generate(self, request: object) -> LLMGenerateResult | SimpleNamespace:
+            assert filter_session.closed is True
+            events.append("llm")
+            return super().generate(request)
+
+    original_fuse = hybrid_module.fuse_hybrid_results
+
+    def tracked_fuse(*args: object, **kwargs: object):
+        assert filter_session.closed is True
+        events.append("rrf")
+        return original_fuse(*args, **kwargs)
+
+    monkeypatch.setattr(
+        hybrid_module,
+        "SessionLocal",
+        lambda: (events.append("filter-open"), filter_session)[1],
+        raising=False,
+    )
+    monkeypatch.setattr(
+        hybrid_module,
+        "get_embedding_provider",
+        lambda _settings: QueryEmbeddingProvider(),
+    )
+    monkeypatch.setattr(
+        hybrid_module,
+        "get_search_engine_client",
+        lambda _settings: SearchClient(),
+    )
+    monkeypatch.setattr(hybrid_module, "fuse_hybrid_results", tracked_fuse)
+    settings = make_settings(
+        search_index_alias="casting_chunks_current",
+        search_query_analyzer="ik_smart",
+        embedding_model="Qwen3-Embedding-0.6B",
+        embedding_dim=1024,
+        hybrid_keyword_weight=0.5,
+        hybrid_vector_weight=0.5,
+        hybrid_rrf_k=60,
+        hybrid_keyword_top_k=50,
+        hybrid_vector_top_k=50,
+    )
+
+    answer = rag_service.answer_question(
+        SimpleNamespace(
+            scalars=lambda _statement: pytest.fail(
+                "request-scoped Session must not filter deletion status"
+            )
+        ),
+        "How should the riser feed the hot spot?",
+        settings=settings,
+        llm_provider=AssertClosedLLM(),
+    )
+
+    assert answer.context_status == "ok"
+    assert events == ["filter-open", "filter-select", "filter-close", "rrf", "llm"]
 
 
 def test_generate_answer_uses_from_prompt_as_the_only_request_bridge(

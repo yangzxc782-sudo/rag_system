@@ -17,6 +17,7 @@ class DocumentRead(BaseModel):
     file_size: int | None = None
     file_hash: str | None = None
     process_status: str
+    deletion_status: str = "normal"
     created_at: datetime
     updated_at: datetime
 
@@ -33,6 +34,7 @@ class DocumentDetail(BaseModel):
     file_size: int | None = None
     file_hash: str | None = None
     process_status: str
+    deletion_status: str = "normal"
     error_message: str | None = None
     created_at: datetime
     updated_at: datetime

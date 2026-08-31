@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import logging
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Query, UploadFile, status
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, Depends, File, Query, Request, UploadFile, status
+from fastapi.responses import JSONResponse, Response
 from sqlalchemy.orm import Session
 
 from app.core.errors import (
@@ -18,6 +19,11 @@ from app.core.errors import (
     DOCUMENT_PARSER_UNAVAILABLE,
     DOCUMENT_SOURCE_FILE_NOT_FOUND,
     DOCUMENT_UPLOAD_FAILED,
+    DOCUMENT_DELETION_EXECUTOR_DISABLED,
+    DOCUMENT_DELETION_IN_PROGRESS,
+    DOCUMENT_DELETION_NOT_FAILED,
+    DOCUMENT_DELETION_RETRY_REQUIRED,
+    DOCUMENT_DELETE_FAILED,
     EMBEDDING_CONFIG_INVALID,
     EMBEDDING_DEPENDENCY_MISSING,
     EMBEDDING_DIMENSION_MISMATCH,
@@ -53,6 +59,12 @@ from app.schemas.document_chunk import (
     DocumentEmbeddingStatusData,
     DocumentParseData,
 )
+from app.schemas.document_deletion import DocumentDeletionStatusData
+from app.services.document_deletion import (
+    get_document_deletion_status,
+    request_document_deletion,
+    retry_document_deletion,
+)
 from app.services.document_parsing import list_document_chunks, parse_document
 from app.services.document_assets import list_assets as list_document_assets
 from app.services.document_blocks import list_blocks as list_document_blocks
@@ -64,6 +76,7 @@ from app.services.documents import create_document_from_upload, get_document_by_
 from app.services.embeddings import generate_document_embeddings, get_document_embedding_status
 
 router = APIRouter(prefix="/documents", tags=["documents"])
+logger = logging.getLogger(__name__)
 
 DbSession = Annotated[Session, Depends(get_db)]
 UploadFileField = Annotated[UploadFile, File(...)]
@@ -89,6 +102,11 @@ ERROR_STATUS_CODES = {
     MINIO_BUCKET_NOT_FOUND: status.HTTP_503_SERVICE_UNAVAILABLE,
     MINIO_SERVICE_UNAVAILABLE: status.HTTP_503_SERVICE_UNAVAILABLE,
     DOCUMENT_UPLOAD_FAILED: status.HTTP_500_INTERNAL_SERVER_ERROR,
+    DOCUMENT_DELETION_EXECUTOR_DISABLED: status.HTTP_503_SERVICE_UNAVAILABLE,
+    DOCUMENT_DELETION_IN_PROGRESS: status.HTTP_409_CONFLICT,
+    DOCUMENT_DELETE_FAILED: status.HTTP_409_CONFLICT,
+    DOCUMENT_DELETION_RETRY_REQUIRED: status.HTTP_409_CONFLICT,
+    DOCUMENT_DELETION_NOT_FAILED: status.HTTP_409_CONFLICT,
 }
 
 
@@ -98,6 +116,18 @@ def business_error_response(error: BusinessError) -> JSONResponse:
         status_code=ERROR_STATUS_CODES.get(error.code, error.status_code),
         content=payload.model_dump(mode="json"),
     )
+
+
+def _wake_document_deletion_executor(request: Request) -> None:
+    executor = getattr(request.app.state, "document_deletion_executor", None)
+    if executor is not None:
+        try:
+            executor.wake()
+        except Exception as exc:
+            logger.warning(
+                "Document deletion executor wake failed; durable job remains recoverable.",
+                extra={"error_type": exc.__class__.__name__},
+            )
 
 
 @router.post(
@@ -136,6 +166,77 @@ def read_documents(
             offset=offset,
         )
         return ApiResponse[DocumentListData].ok(data)
+    except BusinessError as error:
+        return business_error_response(error)
+
+
+@router.delete(
+    "/{document_id}",
+    response_model=ApiResponse[DocumentDeletionStatusData],
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def delete_document_endpoint(
+    request: Request,
+    db: DbSession,
+    document_id: UUID,
+) -> ApiResponse[DocumentDeletionStatusData] | JSONResponse | Response:
+    try:
+        result = request_document_deletion(
+            db,
+            document_id,
+            settings=request.app.state.settings,
+        )
+        if result is None:
+            return Response(status_code=status.HTTP_204_NO_CONTENT)
+        _wake_document_deletion_executor(request)
+        return ApiResponse[DocumentDeletionStatusData].ok(
+            DocumentDeletionStatusData.model_validate(result)
+        )
+    except BusinessError as error:
+        return business_error_response(error)
+
+
+@router.get(
+    "/{document_id}/deletion-status",
+    response_model=ApiResponse[DocumentDeletionStatusData],
+)
+def read_document_deletion_status(
+    db: DbSession,
+    document_id: UUID,
+) -> ApiResponse[DocumentDeletionStatusData] | JSONResponse | Response:
+    try:
+        result = get_document_deletion_status(db, document_id)
+        if result is None:
+            return Response(status_code=status.HTTP_204_NO_CONTENT)
+        return ApiResponse[DocumentDeletionStatusData].ok(
+            DocumentDeletionStatusData.model_validate(result)
+        )
+    except BusinessError as error:
+        return business_error_response(error)
+
+
+@router.post(
+    "/{document_id}/deletion/retry",
+    response_model=ApiResponse[DocumentDeletionStatusData],
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def retry_document_deletion_endpoint(
+    request: Request,
+    db: DbSession,
+    document_id: UUID,
+) -> ApiResponse[DocumentDeletionStatusData] | JSONResponse | Response:
+    try:
+        result = retry_document_deletion(
+            db,
+            document_id,
+            settings=request.app.state.settings,
+        )
+        if result is None:
+            return Response(status_code=status.HTTP_204_NO_CONTENT)
+        _wake_document_deletion_executor(request)
+        return ApiResponse[DocumentDeletionStatusData].ok(
+            DocumentDeletionStatusData.model_validate(result)
+        )
     except BusinessError as error:
         return business_error_response(error)
 

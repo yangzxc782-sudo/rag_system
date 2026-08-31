@@ -3,13 +3,20 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from copy import deepcopy
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Protocol
 from uuid import UUID
 
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session
 
-from app.core.errors import BusinessError
+from app.core.errors import (
+    DOCUMENT_DELETION_EXECUTOR_DISABLED,
+    DOCUMENT_DELETION_NOT_FAILED,
+    DOCUMENT_DELETION_RETRY_REQUIRED,
+    DOCUMENT_DELETION_STATE_INCONSISTENT,
+    BusinessError,
+)
 from app.models.document import Document
 from app.models.document_asset import DocumentAsset
 from app.models.document_block import DocumentBlock
@@ -22,6 +29,7 @@ from app.search_engine.client import SearchEngineClientProtocol
 from app.services.document_deletion_manifest import (
     DocumentDeletionManifest,
     DocumentDeletionManifestError,
+    build_document_deletion_manifest,
 )
 from app.services.document_deletion_minio import (
     delete_minio_derived_targets,
@@ -33,6 +41,7 @@ from app.services.document_deletion_repository import (
     claim_next_job,
     record_step_failure,
     renew_lease,
+    manual_retry_job,
 )
 from app.services.document_deletion_state import validate_document_job_invariant
 from app.services.document_deletion_storage import (
@@ -84,6 +93,207 @@ class ClaimedDocumentDeletion:
             manifest=deepcopy(job.manifest),
             lease_token=job.lease_token,
         )
+
+
+@dataclass(frozen=True, slots=True)
+class DocumentDeletionStatus:
+    document_id: UUID
+    status: str
+    step_attempts: int
+    next_retry_at: datetime | None
+    last_error_code: str | None
+    updated_at: datetime
+
+
+def request_document_deletion(
+    db: Session,
+    document_id: UUID,
+    *,
+    settings: Any,
+) -> DocumentDeletionStatus | None:
+    """Atomically schedule or return one idempotent deletion job."""
+
+    try:
+        document, job = _load_locked_pair_by_document_id(db, document_id)
+        validate_document_job_invariant(document, job)
+        _require_executor_enabled(settings)
+        if document is None:
+            if job is None:
+                db.commit()
+                return None
+            if job.status == "delete_failed":
+                _raise_retry_required(document_id)
+            result = _public_status(document_id, document, job)
+            db.commit()
+            return result
+
+        if document.deletion_status == "delete_failed":
+            _raise_retry_required(document_id)
+        if job is not None:
+            result = _public_status(document_id, document, job)
+            db.commit()
+            return result
+
+        manifest = build_document_deletion_manifest(
+            db,
+            document=document,
+            settings=settings,
+        )
+        document.deletion_status = "deleting"
+        document.updated_at = func.now()
+        job = DocumentDeletionJob(
+            document_id=document_id,
+            status="pending",
+            current_step="delete_opensearch",
+            step_attempts=0,
+            max_attempts=int(settings.document_deletion_max_step_attempts),
+            manifest=manifest.to_payload(),
+        )
+        db.add(job)
+        db.flush()
+        result = _public_status(document_id, document, job)
+        db.commit()
+        return result
+    except Exception:
+        db.rollback()
+        raise
+
+
+def get_document_deletion_status(
+    db: Session,
+    document_id: UUID,
+) -> DocumentDeletionStatus | None:
+    document = db.get(Document, document_id)
+    job = db.scalar(
+        select(DocumentDeletionJob).where(
+            DocumentDeletionJob.document_id == document_id
+        )
+    )
+    try:
+        validate_document_job_invariant(document, job)
+    except BusinessError as exc:
+        raise BusinessError(
+            exc.code,
+            exc.message,
+            detail=exc.detail,
+            status_code=500,
+        ) from exc
+    if document is None and job is None:
+        return None
+    return _public_status(document_id, document, job)
+
+
+def retry_document_deletion(
+    db: Session,
+    document_id: UUID,
+    *,
+    settings: Any,
+) -> DocumentDeletionStatus | None:
+    try:
+        document, job = _load_locked_pair_by_document_id(db, document_id)
+        validate_document_job_invariant(document, job)
+        _require_executor_enabled(settings)
+        if document is None and job is None:
+            db.commit()
+            return None
+        if job is None:
+            raise BusinessError(
+                DOCUMENT_DELETION_NOT_FAILED,
+                "Document deletion has not failed.",
+                detail={"document_id": str(document_id)},
+                status_code=409,
+            )
+        if job.status in {"pending", "processing", "retry_wait"}:
+            result = _public_status(document_id, document, job)
+            db.commit()
+            return result
+        if not manual_retry_job(db, job.id):
+            raise BusinessError(
+                DOCUMENT_DELETION_STATE_INCONSISTENT,
+                "Document deletion state is inconsistent.",
+                detail={"document_id": str(document_id)},
+                status_code=500,
+            )
+        db.flush()
+        db.refresh(job)
+        if document is not None:
+            db.refresh(document)
+        result = _public_status(document_id, document, job)
+        db.commit()
+        return result
+    except Exception:
+        db.rollback()
+        raise
+
+
+def _load_locked_pair_by_document_id(
+    db: Session,
+    document_id: UUID,
+) -> tuple[Document | None, DocumentDeletionJob | None]:
+    document = db.scalar(
+        select(Document)
+        .where(Document.id == document_id)
+        .execution_options(populate_existing=True)
+        .with_for_update()
+    )
+    job = db.scalar(
+        select(DocumentDeletionJob)
+        .where(DocumentDeletionJob.document_id == document_id)
+        .execution_options(populate_existing=True)
+        .with_for_update()
+    )
+    return document, job
+
+
+def _public_status(
+    document_id: UUID,
+    document: Document | None,
+    job: DocumentDeletionJob | None,
+) -> DocumentDeletionStatus:
+    if job is None:
+        if document is None:
+            raise AssertionError("completed deletion has no public status")
+        return DocumentDeletionStatus(
+            document_id=document_id,
+            status="normal",
+            step_attempts=0,
+            next_retry_at=None,
+            last_error_code=None,
+            updated_at=document.updated_at,
+        )
+    public_status = {
+        "pending": "deleting",
+        "processing": "deleting",
+        "retry_wait": "retrying",
+        "delete_failed": "delete_failed",
+    }[job.status]
+    return DocumentDeletionStatus(
+        document_id=document_id,
+        status=public_status,
+        step_attempts=job.step_attempts,
+        next_retry_at=job.next_retry_at,
+        last_error_code=job.last_error_code,
+        updated_at=job.updated_at,
+    )
+
+
+def _raise_retry_required(document_id: UUID) -> None:
+    raise BusinessError(
+        DOCUMENT_DELETION_RETRY_REQUIRED,
+        "Document deletion failed; use the retry endpoint.",
+        detail={"document_id": str(document_id)},
+        status_code=409,
+    )
+
+
+def _require_executor_enabled(settings: Any) -> None:
+    if bool(settings.document_deletion_executor_enabled):
+        return
+    raise BusinessError(
+        DOCUMENT_DELETION_EXECUTOR_DISABLED,
+        "Document deletion executor is disabled.",
+        status_code=503,
+    )
 
 
 class DeletionSagaProtocol(Protocol):

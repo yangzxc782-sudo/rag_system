@@ -14,6 +14,7 @@ from app.core.errors import (
     KNOWLEDGE_ITEM_SOURCE_CHUNK_NOT_FOUND,
     KNOWLEDGE_ITEM_SOURCE_DOCUMENT_NOT_FOUND,
     KNOWLEDGE_ITEM_VALIDATION_FAILED,
+    DOCUMENT_DELETION_IN_PROGRESS,
     BusinessError,
 )
 from app.models.document import Document
@@ -99,12 +100,18 @@ class FakeDb:
             return FakeScalarResult(self.review_items)
         return FakeScalarResult(self.duplicate_items)
 
-    def scalar(self, _statement: object) -> int:
+    def scalar(self, statement: object) -> object:
+        if "FROM documents" in str(statement):
+            return self.documents.get(DOCUMENT_ID) or fake_document()
         return len(self.duplicate_items)
 
 
 def fake_document() -> SimpleNamespace:
-    return SimpleNamespace(id=DOCUMENT_ID, original_filename="casting.md")
+    return SimpleNamespace(
+        id=DOCUMENT_ID,
+        original_filename="casting.md",
+        deletion_status="normal",
+    )
 
 
 def fake_chunk(chunk_id: UUID = CHUNK_ID, document_id: UUID = DOCUMENT_ID, chunk_index: int = 3) -> SimpleNamespace:
@@ -114,6 +121,31 @@ def fake_chunk(chunk_id: UUID = CHUNK_ID, document_id: UUID = DOCUMENT_ID, chunk
         chunk_index=chunk_index,
         content="Riser source text snapshot.",
     )
+
+
+def test_create_with_deleting_document_rolls_back_before_item_write() -> None:
+    document = fake_document()
+    document.deletion_status = "deleting"
+    db = FakeDb(
+        documents={DOCUMENT_ID: document},
+        chunks={CHUNK_ID: fake_chunk()},
+    )
+
+    with pytest.raises(BusinessError) as exc_info:
+        knowledge_items.create_knowledge_item(
+            db,
+            KnowledgeItemCreate(
+                item_type="process_rule",
+                title="Riser rule",
+                content="Place risers near hot spots.",
+                source_document_id=DOCUMENT_ID,
+                source_chunk_ids=[CHUNK_ID],
+            ),
+        )
+
+    assert exc_info.value.code == DOCUMENT_DELETION_IN_PROGRESS
+    assert not any(isinstance(value, KnowledgeItem) for value in db.added)
+    assert db.rollbacks == 1
 
 
 def make_item(status: str = "draft") -> KnowledgeItem:

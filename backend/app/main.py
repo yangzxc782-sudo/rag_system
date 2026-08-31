@@ -8,14 +8,30 @@ from app.core.config import Settings, get_settings
 from app.core.logging import configure_logging
 from app.llm.configuration import validate_active_llm_configuration
 from app.llm.provider import clear_llm_provider_cache
+from app.tasks.document_deletion_executor import DocumentDeletionExecutor
 
 
-@asynccontextmanager
-async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
-    try:
-        yield
-    finally:
-        clear_llm_provider_cache()
+def _lifespan(settings: Settings):
+    @asynccontextmanager
+    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        executor: DocumentDeletionExecutor | None = None
+        if bool(getattr(settings, "document_deletion_executor_enabled", False)):
+            executor = DocumentDeletionExecutor(settings=settings)
+            app.state.document_deletion_executor = executor
+            executor.start()
+        try:
+            yield
+        finally:
+            if executor is not None:
+                executor.stop()
+                executor.join(
+                    timeout=float(
+                        settings.document_deletion_shutdown_grace_seconds
+                    )
+                )
+            clear_llm_provider_cache()
+
+    return lifespan
 
 
 def create_app(*, settings: Settings | None = None) -> FastAPI:
@@ -25,7 +41,8 @@ def create_app(*, settings: Settings | None = None) -> FastAPI:
 
     from app.api.v1.router import api_router
 
-    app = FastAPI(title=active_settings.app_name, lifespan=_lifespan)
+    app = FastAPI(title=active_settings.app_name, lifespan=_lifespan(active_settings))
+    app.state.settings = active_settings
     app.add_middleware(
         CORSMiddleware,
         allow_origins=active_settings.backend_cors_origin_list,

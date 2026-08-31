@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
+from sqlalchemy.dialects import postgresql
 from fastapi.testclient import TestClient
 
 from app.api.v1 import search as search_api
@@ -178,6 +179,41 @@ def test_vector_search_document_id_filter_is_passed(monkeypatch) -> None:
     assert captured["embedding_dim"] == 1024
     assert result.document_id == DOCUMENT_ID
     assert result.total == 1
+
+
+def test_vector_query_filters_document_deletion_status_normal() -> None:
+    class EmptyMappings:
+        def mappings(self):
+            return self
+
+        def all(self):
+            return []
+
+    class CaptureDb:
+        def __init__(self) -> None:
+            self.statement = None
+
+        def execute(self, statement):
+            self.statement = statement
+            return EmptyMappings()
+
+    db = CaptureDb()
+    vector_search_service._query_vector_rows(
+        db,
+        query_embedding=[0.1] * 1024,
+        embedding_model="Qwen3-Embedding-0.6B",
+        embedding_dim=1024,
+        limit=10,
+        document_id=None,
+    )
+
+    sql = str(
+        db.statement.compile(
+            dialect=postgresql.dialect(),
+            compile_kwargs={"literal_binds": True},
+        )
+    )
+    assert "documents.deletion_status = 'normal'" in sql
 
 
 def test_vector_search_document_id_not_found() -> None:

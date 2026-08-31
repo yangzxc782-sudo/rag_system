@@ -40,6 +40,7 @@ from app.schemas.knowledge_item import (
     confidence_to_float,
 )
 from app.services.knowledge_sources import ensure_source_relation, ordered_sources, projection_source
+from app.services.document_operation_guard import DocumentOperationGuard
 
 
 _WHITESPACE_PATTERN = re.compile(r"\s+")
@@ -149,6 +150,7 @@ def create_knowledge_item(db: Session, payload: KnowledgeItemCreate) -> Knowledg
             source_document_id=source_context.document_id,
             content_hash=content_hash,
         )
+        _guard_document_sources(db, {source_context.document_id})
 
         item = KnowledgeItem(
             item_type=payload.item_type.strip(),
@@ -242,6 +244,12 @@ def update_knowledge_item(db: Session, item_id: UUID, payload: KnowledgeItemUpda
                 document_id=source_identity,
                 source_filename=item.source_filename,
             )
+
+        source_ids = {
+            source.document_id for source in ordered_sources(item)
+        }
+        source_ids.add(item.source_document_id)
+        _guard_document_sources(db, source_ids)
 
         item.content_hash = compute_content_hash(item.item_type, item.source_document_id, item.title, item.content)
         _ensure_not_duplicate(
@@ -389,6 +397,10 @@ def revise_knowledge_item(
 
     try:
         original_sources = ordered_sources(original)
+        _guard_document_sources(
+            db,
+            {source.document_id for source in original_sources},
+        )
         original_projection = original_sources[0] if original_sources else None
         source_document_id = original_projection.document_id if original_projection is not None else None
         source_filename = (
@@ -523,6 +535,10 @@ def _transition_knowledge_item(
     review_comment: str | None,
 ) -> KnowledgeItem:
     item = get_knowledge_item(db, item_id)
+    _guard_document_sources(
+        db,
+        {source.document_id for source in ordered_sources(item)},
+    )
     from_status = item.status
     to_status = _assert_transition_allowed(from_status, action)
 
@@ -787,3 +803,12 @@ def _to_decimal_confidence(value: float | None) -> Decimal | None:
     if value is None:
         return None
     return Decimal(str(value)).quantize(Decimal("0.0001"))
+
+
+def _guard_document_sources(
+    db: Session,
+    document_ids: set[UUID | None],
+) -> None:
+    concrete_ids = {document_id for document_id in document_ids if document_id is not None}
+    if concrete_ids:
+        DocumentOperationGuard(db).lock_normal_many(concrete_ids)

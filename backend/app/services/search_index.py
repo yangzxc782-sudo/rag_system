@@ -11,7 +11,6 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.core.errors import (
-    DOCUMENT_NOT_FOUND,
     SEARCH_ENGINE_CONFIG_INVALID,
     SEARCH_ENGINE_UNAVAILABLE,
     SEARCH_INDEX_CREATE_FAILED,
@@ -29,6 +28,7 @@ from app.search_engine.index_schema import (
     get_index_alias,
     get_index_name,
 )
+from app.services.document_operation_guard import DocumentOperationGuard
 
 
 EMBEDDING_STATUS_EMBEDDED = "embedded"
@@ -202,14 +202,122 @@ def rebuild_search_index(
     batch_size = int(settings.search_index_batch_size)
 
     if normalized_scope == REBUILD_SCOPE_DOCUMENT:
-        if db.get(Document, document_id) is None:
-            raise BusinessError(
-                DOCUMENT_NOT_FOUND,
-                "Document not found.",
-                detail={"document_id": str(document_id)},
-                status_code=404,
+        deleted, syncable_chunks, indexed, failed, errors = (
+            _rebuild_one_document(
+                db,
+                document_id=document_id,
+                client=client,
+                index_name=index_name,
+                settings=settings,
+                batch_size=batch_size,
+                delete_existing=True,
+                check_index_exists=True,
             )
+        )
+    else:
+        _ensure_rebuild_index_exists(client, index_name=index_name)
+        deleted = 0
+        syncable_chunks = 0
+        indexed = 0
+        failed = 0
+        errors: list[str] = []
+        document_ids = list(
+            db.scalars(select(Document.id).order_by(Document.id)).all()
+        )
+        for current_document_id in document_ids:
+            result = _rebuild_one_document(
+                db,
+                document_id=current_document_id,
+                client=client,
+                index_name=index_name,
+                settings=settings,
+                batch_size=batch_size,
+                delete_existing=False,
+                skip_non_normal=True,
+            )
+            _deleted, current_syncable, current_indexed, current_failed, current_errors = result
+            syncable_chunks += current_syncable
+            indexed += current_indexed
+            failed += current_failed
+            errors.extend(current_errors)
 
+    return SearchIndexRebuildResult(
+        scope=normalized_scope,
+        document_id=document_id,
+        index_name=index_name,
+        alias=alias,
+        syncable_chunks=syncable_chunks,
+        indexed=indexed,
+        deleted=deleted,
+        failed=failed,
+        errors=errors,
+        batch_size=batch_size,
+    )
+
+
+def _rebuild_one_document(
+    db: Session,
+    *,
+    document_id: UUID | None,
+    client: SearchEngineClientProtocol,
+    index_name: str,
+    settings: Any,
+    batch_size: int,
+    delete_existing: bool,
+    skip_non_normal: bool = False,
+    check_index_exists: bool = False,
+) -> tuple[int, int, int, int, list[str]]:
+    if document_id is None:
+        raise BusinessError(
+            SEARCH_ENGINE_CONFIG_INVALID,
+            "document_id is required when rebuilding a single document.",
+            status_code=400,
+        )
+    try:
+        guard = DocumentOperationGuard(db)
+        document = (
+            guard.lock_if_normal(document_id)
+            if skip_non_normal
+            else guard.lock_normal(document_id)
+        )
+        if document is None:
+            db.rollback()
+            return 0, 0, 0, 0, []
+        if check_index_exists:
+            _ensure_rebuild_index_exists(client, index_name=index_name)
+        deleted = (
+            _delete_document_from_index(
+                client,
+                index_name=index_name,
+                document_id=document_id,
+            )
+            if delete_existing
+            else 0
+        )
+        rows = _load_syncable_chunks(
+            db,
+            settings=settings,
+            document_id=document_id,
+        )
+        indexed, failed, errors = _bulk_index_rows(
+            client,
+            index_name=index_name,
+            rows=rows,
+            settings=settings,
+            batch_size=batch_size,
+        )
+        db.commit()
+        return deleted, len(rows), indexed, failed, errors
+    except Exception:
+        db.rollback()
+        raise
+
+
+def _ensure_rebuild_index_exists(
+    client: SearchEngineClientProtocol,
+    *,
+    index_name: str,
+) -> None:
     try:
         if not bool(client.indices.exists(index=index_name)):
             raise BusinessError(
@@ -227,33 +335,6 @@ def rebuild_search_index(
             detail=_error_detail(exc),
             status_code=503,
         ) from exc
-
-    deleted = 0
-    if normalized_scope == REBUILD_SCOPE_DOCUMENT:
-        deleted = _delete_document_from_index(client, index_name=index_name, document_id=document_id)
-
-    rows = _load_syncable_chunks(db, settings=settings, document_id=document_id)
-    syncable_chunks = len(rows)
-    indexed, failed, errors = _bulk_index_rows(
-        client,
-        index_name=index_name,
-        rows=rows,
-        settings=settings,
-        batch_size=batch_size,
-    )
-
-    return SearchIndexRebuildResult(
-        scope=normalized_scope,
-        document_id=document_id,
-        index_name=index_name,
-        alias=alias,
-        syncable_chunks=syncable_chunks,
-        indexed=indexed,
-        deleted=deleted,
-        failed=failed,
-        errors=errors,
-        batch_size=batch_size,
-    )
 
 
 def get_search_index_status(
@@ -351,6 +432,7 @@ def get_syncable_chunks_query(
         select(Document, DocumentChunk)
         .join(DocumentChunk, DocumentChunk.document_id == Document.id)
         .where(
+            Document.deletion_status == "normal",
             DocumentChunk.embedding_status == EMBEDDING_STATUS_EMBEDDED,
             DocumentChunk.embedding.is_not(None),
             DocumentChunk.embedding_dim == embedding_dim,
@@ -376,6 +458,7 @@ def count_postgres_syncable_chunks(
         .select_from(DocumentChunk)
         .join(Document, Document.id == DocumentChunk.document_id)
         .where(
+            Document.deletion_status == "normal",
             DocumentChunk.embedding_status == EMBEDDING_STATUS_EMBEDDED,
             DocumentChunk.embedding.is_not(None),
             DocumentChunk.embedding_dim == embedding_dim,

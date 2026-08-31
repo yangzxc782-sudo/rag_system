@@ -10,6 +10,7 @@ import pytest
 from app.models.knowledge_item import KnowledgeItem
 from app.models.knowledge_item_chunk import KnowledgeItemChunk
 from app.models.knowledge_item_source import KnowledgeItemSource
+from app.models.document import Document
 from app.core.errors import KNOWLEDGE_ITEM_VALIDATION_FAILED, BusinessError
 from app.schemas.knowledge_item import KnowledgeItemCreate, KnowledgeItemData, KnowledgeItemUpdate
 from app.services import knowledge_items
@@ -38,7 +39,11 @@ class FakeDb:
         if model is KnowledgeItem:
             return self.item if self.item is not None and self.item.id == item_id else None
         if model is Document and item_id == DOCUMENT_ID:
-            return SimpleNamespace(id=DOCUMENT_ID, original_filename="casting.md")
+            return SimpleNamespace(
+                id=DOCUMENT_ID,
+                original_filename="casting.md",
+                deletion_status="normal",
+            )
         if model is DocumentChunk and item_id == CHUNK_ID:
             return SimpleNamespace(
                 id=CHUNK_ID,
@@ -70,6 +75,11 @@ class FakeDb:
 
     def scalars(self, _statement: object) -> FakeScalarResult:
         return FakeScalarResult()
+
+    def scalar(self, statement: object) -> object | None:
+        if "FROM documents" in str(statement):
+            return self.get(Document, DOCUMENT_ID)
+        return None
 
 
 def _make_item(status: str = "draft") -> KnowledgeItem:

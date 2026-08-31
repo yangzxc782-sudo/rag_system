@@ -182,3 +182,125 @@ def test_shutdown_clears_cached_provider_and_closes_once(
     assert fake_provider.close_calls == 1
     provider_module.clear_llm_provider_cache()
     assert fake_provider.close_calls == 1
+
+
+def test_deletion_executor_disabled_does_not_construct_thread(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.main as main_module
+
+    def unexpected_executor(*args: object, **kwargs: object) -> object:
+        raise AssertionError("disabled startup must not construct executor")
+
+    monkeypatch.setattr(main_module, "DocumentDeletionExecutor", unexpected_executor)
+    app = main_module.create_app(
+        settings=minimal_settings(document_deletion_executor_enabled=False)
+    )
+
+    with TestClient(app) as client:
+        assert client.get("/health").status_code == 200
+
+    assert not hasattr(app.state, "document_deletion_executor")
+
+
+def test_deletion_executor_enabled_starts_once_and_stops_before_llm_cleanup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.main as main_module
+
+    events: list[str] = []
+
+    class FakeExecutor:
+        def __init__(self, *, settings: Settings) -> None:
+            assert settings.document_deletion_executor_enabled is True
+            events.append("construct")
+
+        def start(self) -> None:
+            events.append("start")
+
+        def stop(self) -> None:
+            events.append("stop")
+
+        def join(self, timeout: float | None = None) -> None:
+            assert timeout == 10
+            events.append("join")
+
+    monkeypatch.setattr(main_module, "DocumentDeletionExecutor", FakeExecutor)
+    monkeypatch.setattr(
+        main_module,
+        "clear_llm_provider_cache",
+        lambda: events.append("llm-cleanup"),
+    )
+    app = main_module.create_app(
+        settings=minimal_settings(document_deletion_executor_enabled=True)
+    )
+
+    with TestClient(app) as client:
+        assert events == ["construct", "start"]
+        assert client.get("/health").status_code == 200
+
+    assert events == ["construct", "start", "stop", "join", "llm-cleanup"]
+
+
+def test_repeated_enabled_lifespans_stop_each_executor_without_worker_leak(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.main as main_module
+
+    events: list[tuple[int, str]] = []
+    executors: list[FakeExecutor] = []
+
+    class FakeExecutor:
+        def __init__(self, *, settings: Settings) -> None:
+            assert settings.document_deletion_executor_enabled is True
+            self.instance_id = len(executors) + 1
+            self.alive = False
+            self.joined = False
+            executors.append(self)
+            events.append((self.instance_id, "construct"))
+
+        def start(self) -> None:
+            self.alive = True
+            events.append((self.instance_id, "start"))
+
+        def stop(self) -> None:
+            self.alive = False
+            events.append((self.instance_id, "stop"))
+
+        def join(self, timeout: float | None = None) -> None:
+            assert timeout == 10
+            assert self.alive is False
+            self.joined = True
+            events.append((self.instance_id, "join"))
+
+    monkeypatch.setattr(main_module, "DocumentDeletionExecutor", FakeExecutor)
+    monkeypatch.setattr(
+        main_module,
+        "clear_llm_provider_cache",
+        lambda: events.append((len(executors), "llm-cleanup")),
+    )
+
+    for expected_instance_id in (1, 2):
+        app = main_module.create_app(
+            settings=minimal_settings(document_deletion_executor_enabled=True)
+        )
+        with TestClient(app) as client:
+            assert client.get("/health").status_code == 200
+            assert executors[-1].instance_id == expected_instance_id
+            assert executors[-1].alive is True
+        assert executors[-1].alive is False
+        assert executors[-1].joined is True
+
+    assert executors[0] is not executors[1]
+    assert events == [
+        (1, "construct"),
+        (1, "start"),
+        (1, "stop"),
+        (1, "join"),
+        (1, "llm-cleanup"),
+        (2, "construct"),
+        (2, "start"),
+        (2, "stop"),
+        (2, "join"),
+        (2, "llm-cleanup"),
+    ]
