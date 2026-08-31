@@ -20,6 +20,7 @@ export type DocumentSummary = {
   file_size: number | null;
   file_hash: string | null;
   process_status: string;
+  deletion_status: DocumentDeletionState;
   created_at: string;
   updated_at: string;
 };
@@ -35,6 +36,23 @@ export type DocumentListData = {
   total: number;
   limit: number;
   offset: number;
+};
+
+export type DocumentDeletionState = "normal" | "deleting" | "delete_failed";
+
+export type DocumentDeletionPublicStatus = "normal" | "deleting" | "retrying" | "delete_failed";
+
+export type DocumentDeletionStatusData = {
+  document_id: string;
+  status: DocumentDeletionPublicStatus;
+  step_attempts: number;
+  next_retry_at: string | null;
+  last_error_code: string | null;
+  updated_at: string;
+};
+
+export type DocumentDeletionApiResult = ApiEnvelope<DocumentDeletionStatusData> & {
+  httpStatus: number | null;
 };
 
 export type DocumentParseData = {
@@ -220,6 +238,31 @@ async function parseEnvelope<T>(response: Response): Promise<ApiEnvelope<T>> {
   }
 }
 
+async function parseDocumentDeletionResponse(response: Response): Promise<DocumentDeletionApiResult> {
+  if (response.status === 204) {
+    return {
+      success: true,
+      data: null,
+      error: null,
+      httpStatus: response.status,
+    };
+  }
+
+  return {
+    ...(await parseEnvelope<DocumentDeletionStatusData>(response)),
+    httpStatus: response.status,
+  };
+}
+
+function documentDeletionRequestFailure(message: string, error: unknown): DocumentDeletionApiResult {
+  return {
+    ...fallbackError<DocumentDeletionStatusData>(message, {
+      error_type: error instanceof Error ? error.name : typeof error,
+    }),
+    httpStatus: null,
+  };
+}
+
 export async function getDocuments(
   params: { limit?: number; offset?: number } = {},
 ): Promise<ApiEnvelope<DocumentListData>> {
@@ -260,6 +303,51 @@ export async function getDocument(id: string): Promise<ApiEnvelope<DocumentDetai
     return fallbackError<DocumentDetail>("文档详情请求失败。", {
       error_type: error instanceof Error ? error.name : typeof error,
     });
+  }
+}
+
+export async function deleteDocument(id: string): Promise<DocumentDeletionApiResult> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/v1/documents/${id}`, {
+      method: "DELETE",
+      headers: {
+        Accept: "application/json",
+      },
+    });
+
+    return parseDocumentDeletionResponse(response);
+  } catch (error) {
+    return documentDeletionRequestFailure("文档删除请求失败。", error);
+  }
+}
+
+export async function getDocumentDeletionStatus(id: string): Promise<DocumentDeletionApiResult> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/v1/documents/${id}/deletion-status`, {
+      cache: "no-store",
+      headers: {
+        Accept: "application/json",
+      },
+    });
+
+    return parseDocumentDeletionResponse(response);
+  } catch (error) {
+    return documentDeletionRequestFailure("文档删除状态请求失败。", error);
+  }
+}
+
+export async function retryDocumentDeletion(id: string): Promise<DocumentDeletionApiResult> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/v1/documents/${id}/deletion/retry`, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+      },
+    });
+
+    return parseDocumentDeletionResponse(response);
+  } catch (error) {
+    return documentDeletionRequestFailure("文档删除重试请求失败。", error);
   }
 }
 

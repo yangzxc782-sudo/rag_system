@@ -54,6 +54,7 @@ export default function DocumentDetailView({ document }: DocumentDetailProps) {
         <DetailRow label="文件大小" value={formatFileSize(document.file_size)} />
         <DetailRow label="SHA-256 哈希" value={document.file_hash ?? "未记录"} />
         <DetailRow label="处理状态" value={document.process_status} />
+        <DetailRow label="删除状态" value={document.deletion_status} />
         <DetailRow label="上传时间" value={formatDate(document.created_at)} />
         <DetailRow label="更新时间" value={formatDate(document.updated_at)} />
         <DetailRow label="错误信息" value={document.error_message ?? "无"} />

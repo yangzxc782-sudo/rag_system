@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import DocumentDeletionControls from "@/components/DocumentDeletionControls";
 import type { DocumentSummary } from "@/lib/documents";
 
 type DocumentTableProps = {
@@ -35,6 +36,30 @@ function formatDate(value: string): string {
   }).format(date);
 }
 
+function documentStatusLabel(document: DocumentSummary): string {
+  if (document.deletion_status === "deleting") {
+    return "正在删除";
+  }
+
+  if (document.deletion_status === "delete_failed") {
+    return "删除失败";
+  }
+
+  return document.process_status;
+}
+
+function documentStatusClass(document: DocumentSummary): string {
+  if (document.deletion_status === "deleting") {
+    return "border-amber-200 bg-amber-50 text-amber-800";
+  }
+
+  if (document.deletion_status === "delete_failed") {
+    return "border-red-200 bg-red-50 text-red-800";
+  }
+
+  return "border-emerald-200 bg-emerald-50 text-emerald-800";
+}
+
 export default function DocumentTable({ documents }: DocumentTableProps) {
   if (documents.length === 0) {
     return (
@@ -68,15 +93,21 @@ export default function DocumentTable({ documents }: DocumentTableProps) {
               <td className="px-5 py-4 text-slate-600">{document.file_type ?? "未知"}</td>
               <td className="px-5 py-4 text-slate-600">{formatFileSize(document.file_size)}</td>
               <td className="px-5 py-4">
-                <span className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-800">
-                  {document.process_status}
+                <span className={`rounded-md border px-2 py-1 text-xs font-medium ${documentStatusClass(document)}`}>
+                  {documentStatusLabel(document)}
                 </span>
               </td>
               <td className="px-5 py-4 text-slate-600">{formatDate(document.created_at)}</td>
               <td className="px-5 py-4">
-                <Link className="font-medium text-slate-950 underline-offset-4 hover:underline" href={`/documents/${document.id}`}>
-                  详情
-                </Link>
+                <div className="flex flex-col items-start gap-3">
+                  <Link className="font-medium text-slate-950 underline-offset-4 hover:underline" href={`/documents/${document.id}`}>
+                    详情
+                  </Link>
+                  <DocumentDeletionControls
+                    documentId={document.id}
+                    initialStatus={document.deletion_status}
+                  />
+                </div>
               </td>
             </tr>
           ))}

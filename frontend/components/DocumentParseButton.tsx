@@ -7,15 +7,20 @@ import { parseDocument } from "@/lib/documents";
 
 type DocumentParseButtonProps = {
   documentId: string;
+  disabled?: boolean;
 };
 
-export default function DocumentParseButton({ documentId }: DocumentParseButtonProps) {
+export default function DocumentParseButton({ documentId, disabled = false }: DocumentParseButtonProps) {
   const router = useRouter();
   const [isParsing, setIsParsing] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   async function handleParse() {
+    if (disabled) {
+      return;
+    }
+
     setIsParsing(true);
     setMessage(null);
     setError(null);
@@ -47,10 +52,10 @@ export default function DocumentParseButton({ documentId }: DocumentParseButtonP
       <button
         type="button"
         onClick={handleParse}
-        disabled={isParsing}
+        disabled={disabled || isParsing}
         className="w-fit rounded-md bg-slate-950 px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:bg-slate-400"
       >
-        {isParsing ? "解析中..." : "解析文档"}
+        {isParsing ? "解析中..." : disabled ? "删除状态下不可解析" : "解析文档"}
       </button>
 
       {message ? (

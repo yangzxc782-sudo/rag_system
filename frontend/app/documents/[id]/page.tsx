@@ -2,6 +2,7 @@ import Link from "next/link";
 
 import AppShell from "@/components/AppShell";
 import DocumentChunkList from "@/components/DocumentChunkList";
+import DocumentDeletionControls from "@/components/DocumentDeletionControls";
 import DocumentDetailView from "@/components/DocumentDetail";
 import DocumentEmbeddingPanel from "@/components/DocumentEmbeddingPanel";
 import DocumentParseButton from "@/components/DocumentParseButton";
@@ -26,33 +27,34 @@ export default async function DocumentDetailPage({ params }: DocumentDetailPageP
   const { id } = await params;
   const documentResult = await getDocument(id);
   const document = documentResult.success ? documentResult.data : null;
+  const canLoadDerivedData = document?.deletion_status === "normal";
 
-  const chunksResult = document ? await getDocumentChunks(id, { limit: 50, offset: 0 }) : null;
+  const chunksResult = canLoadDerivedData ? await getDocumentChunks(id, { limit: 50, offset: 0 }) : null;
   const chunks = chunksResult?.success ? chunksResult.data : null;
   const chunksErrorMessage =
     chunksResult && !chunksResult.success ? (chunksResult.error?.message ?? "文档切片暂时不可用。") : null;
 
-  const embeddingStatusResult = document ? await getDocumentEmbeddingStatus(id) : null;
+  const embeddingStatusResult = canLoadDerivedData ? await getDocumentEmbeddingStatus(id) : null;
   const embeddingStatus = embeddingStatusResult?.success ? embeddingStatusResult.data : null;
   const embeddingStatusErrorMessage =
     embeddingStatusResult && !embeddingStatusResult.success
       ? (embeddingStatusResult.error?.message ?? "embedding 状态暂时不可用。")
       : null;
 
-  const parseStatusResult = document ? await getDocumentParseStatus(id) : null;
+  const parseStatusResult = canLoadDerivedData ? await getDocumentParseStatus(id) : null;
   const parseStatus = parseStatusResult?.success ? parseStatusResult.data : null;
-  const parseRunsResult = document ? await getDocumentParseRuns(id, { limit: 50, offset: 0 }) : null;
+  const parseRunsResult = canLoadDerivedData ? await getDocumentParseRuns(id, { limit: 50, offset: 0 }) : null;
   const parseRuns = parseRunsResult?.success ? parseRunsResult.data : null;
   const selectedParseRun =
     parseStatus?.active_parse_run ?? parseStatus?.latest_parse_run ?? parseRuns?.items[0] ?? null;
 
   const blocksResult =
-    document && selectedParseRun
+    canLoadDerivedData && selectedParseRun
       ? await getDocumentBlocks(id, { parseRunId: selectedParseRun.id, limit: 50, offset: 0 })
       : null;
   const blocks = blocksResult?.success ? blocksResult.data : null;
   const assetsResult =
-    document && selectedParseRun
+    canLoadDerivedData && selectedParseRun
       ? await getDocumentAssets(id, { parseRunId: selectedParseRun.id, limit: 50, offset: 0 })
       : null;
   const assets = assetsResult?.success ? assetsResult.data : null;
@@ -84,15 +86,24 @@ export default async function DocumentDetailPage({ params }: DocumentDetailPageP
           ) : null}
 
           {document ? (
-            <DocumentDetailView document={document} />
+            <div>
+              <DocumentDetailView document={document} />
+              <div className="border-t border-slate-200 px-5 py-4">
+                <DocumentDeletionControls
+                  completionMode="redirect"
+                  documentId={document.id}
+                  initialStatus={document.deletion_status}
+                />
+              </div>
+            </div>
           ) : documentResult.success ? (
             <div className="px-5 py-10 text-center text-sm text-slate-500">未找到文档详情。</div>
           ) : null}
         </section>
 
-        {document ? (
+        {document?.deletion_status === "normal" ? (
           <section className="grid gap-5">
-            <DocumentParseButton documentId={document.id} />
+            <DocumentParseButton documentId={document.id} disabled={false} />
             <DocumentParseResults
               documentId={document.id}
               status={parseStatus}
@@ -105,6 +116,7 @@ export default async function DocumentDetailPage({ params }: DocumentDetailPageP
               documentId={document.id}
               status={embeddingStatus}
               errorMessage={embeddingStatusErrorMessage}
+              disabled={false}
             />
 
             <div className="grid gap-3">
@@ -116,6 +128,10 @@ export default async function DocumentDetailPage({ params }: DocumentDetailPageP
               </div>
               <DocumentChunkList data={chunks} errorMessage={chunksErrorMessage} />
             </div>
+          </section>
+        ) : document ? (
+          <section className="rounded-md border border-amber-200 bg-amber-50 px-5 py-4 text-sm leading-6 text-amber-900">
+            该文档处于删除流程中，解析、Embedding、索引同步及派生数据浏览已停用。
           </section>
         ) : null}
       </div>

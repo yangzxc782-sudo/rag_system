@@ -17,6 +17,7 @@ type DocumentEmbeddingPanelProps = {
   documentId: string;
   status: DocumentEmbeddingStatusData | null;
   errorMessage?: string | null;
+  disabled?: boolean;
 };
 
 function formatList(values: Array<string | number>): string {
@@ -39,6 +40,7 @@ export default function DocumentEmbeddingPanel({
   documentId,
   status,
   errorMessage,
+  disabled = false,
 }: DocumentEmbeddingPanelProps) {
   const router = useRouter();
   const [isGenerating, setIsGenerating] = useState(false);
@@ -49,6 +51,10 @@ export default function DocumentEmbeddingPanel({
   const [indexError, setIndexError] = useState<string | null>(null);
 
   async function handleGenerate() {
+    if (disabled) {
+      return;
+    }
+
     setIsGenerating(true);
     setMessage(null);
     setError(null);
@@ -81,6 +87,10 @@ export default function DocumentEmbeddingPanel({
   }
 
   async function handleSyncIndex() {
+    if (disabled) {
+      return;
+    }
+
     setIsSyncingIndex(true);
     setIndexMessage(null);
     setIndexError(null);
@@ -109,10 +119,10 @@ export default function DocumentEmbeddingPanel({
         <button
           type="button"
           onClick={handleGenerate}
-          disabled={isGenerating || isSyncingIndex}
+          disabled={disabled || isGenerating || isSyncingIndex}
           className="w-fit rounded-md bg-slate-950 px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:bg-slate-400"
         >
-          {isGenerating ? "生成中..." : "生成 embedding"}
+          {isGenerating ? "生成中..." : disabled ? "删除状态下不可生成" : "生成 embedding"}
         </button>
       </div>
 
@@ -176,10 +186,10 @@ export default function DocumentEmbeddingPanel({
           <button
             type="button"
             onClick={handleSyncIndex}
-            disabled={isSyncingIndex || isGenerating || !status || status.embedded === 0}
+            disabled={disabled || isSyncingIndex || isGenerating || !status || status.embedded === 0}
             className="w-fit rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-950 hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
           >
-            {isSyncingIndex ? "同步中..." : "同步搜索索引"}
+            {isSyncingIndex ? "同步中..." : disabled ? "删除状态下不可同步" : "同步搜索索引"}
           </button>
         </div>
 
