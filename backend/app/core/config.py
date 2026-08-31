@@ -41,7 +41,15 @@ class Settings(BaseSettings):
     minio_root_password: str = "rag_minio_password"
     minio_bucket: str = "rag-documents"
     minio_secure: bool = False
+    document_deletion_executor_enabled: bool = False
+    document_deletion_max_step_attempts: int = 5
+    document_deletion_retry_base_seconds: int = 5
+    document_deletion_retry_max_seconds: int = 300
+    document_deletion_lease_seconds: int = 120
+    document_deletion_poll_interval_seconds: float = 5
+    document_deletion_shutdown_grace_seconds: float = 10
     document_deletion_storage_timeout_seconds: int = 30
+    document_deletion_heartbeat_object_interval: int = 25
 
     upload_max_file_size_bytes: int = 52_428_800
     upload_allowed_extensions: str = ".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg,.bmp,.tif,.tiff,.webp,.txt,.md,.csv"
@@ -157,6 +165,44 @@ class Settings(BaseSettings):
         if self.document_deletion_storage_timeout_seconds <= 0:
             raise ValueError(
                 "document_deletion_storage_timeout_seconds must be greater than 0"
+            )
+        if self.document_deletion_max_step_attempts <= 0:
+            raise ValueError(
+                "document_deletion_max_step_attempts must be greater than 0"
+            )
+        if self.document_deletion_retry_base_seconds <= 0:
+            raise ValueError(
+                "document_deletion_retry_base_seconds must be greater than 0"
+            )
+        if (
+            self.document_deletion_retry_max_seconds
+            < self.document_deletion_retry_base_seconds
+        ):
+            raise ValueError(
+                "document_deletion_retry_max_seconds must be greater than or equal "
+                "to document_deletion_retry_base_seconds"
+            )
+        if self.document_deletion_lease_seconds <= 0:
+            raise ValueError("document_deletion_lease_seconds must be greater than 0")
+        if (
+            self.document_deletion_lease_seconds
+            < 3 * self.document_deletion_storage_timeout_seconds
+        ):
+            raise ValueError(
+                "document_deletion_lease_seconds must be at least three times "
+                "document_deletion_storage_timeout_seconds"
+            )
+        if self.document_deletion_poll_interval_seconds <= 0:
+            raise ValueError(
+                "document_deletion_poll_interval_seconds must be greater than 0"
+            )
+        if self.document_deletion_shutdown_grace_seconds < 0:
+            raise ValueError(
+                "document_deletion_shutdown_grace_seconds must be greater than or equal to 0"
+            )
+        if self.document_deletion_heartbeat_object_interval <= 0:
+            raise ValueError(
+                "document_deletion_heartbeat_object_interval must be greater than 0"
             )
         if self.reranker_top_k <= 0:
             raise ValueError("reranker_top_k must be greater than 0")
