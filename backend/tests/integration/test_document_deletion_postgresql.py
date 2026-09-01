@@ -12,13 +12,13 @@ from app.models.knowledge_item_source import KnowledgeItemSource
 from app.models.knowledge_item_version import KnowledgeItemVersion
 from app.services.document_deletion import (
     finalize_postgresql_deletion,
-    request_document_deletion,
 )
 from integration.phase10_fixtures import (
     assert_postgresql_target_absent,
     build_finalization_claim,
     persist_document_fixture,
     persist_shared_knowledge_fixture,
+    request_owned_document_deletion,
 )
 from integration.phase10_support import (
     assert_unrelated_resources_unchanged,
@@ -39,15 +39,15 @@ def test_real_0006_expand_enforce_and_enforce_only_downgrade(
     require_clean_migration_database(phase10_migration_engine)
     migration_started = False
     try:
-        run_alembic(phase10_settings.migration_database_url, "upgrade", "0006_add_document_parse")
+        run_alembic(phase10_settings, "upgrade", "0006_add_document_parse")
         migration_started = True
         assert current_alembic_revision(phase10_migration_engine) == "0006_add_document_parse"
 
-        run_alembic(phase10_settings.migration_database_url, "upgrade", "0007_phase10_expand")
+        run_alembic(phase10_settings, "upgrade", "0007_phase10_expand")
         assert current_alembic_revision(phase10_migration_engine) == "0007_phase10_expand"
         assert "knowledge_item_sources" in inspect(phase10_migration_engine).get_table_names()
 
-        run_alembic(phase10_settings.migration_database_url, "upgrade", "0008_phase10_enforce")
+        run_alembic(phase10_settings, "upgrade", "0008_phase10_enforce")
         assert current_alembic_revision(phase10_migration_engine) == "0008_phase10_enforce"
         foreign_keys = inspect(phase10_migration_engine).get_foreign_keys("knowledge_item_chunks")
         assert any(
@@ -55,7 +55,7 @@ def test_real_0006_expand_enforce_and_enforce_only_downgrade(
             for foreign_key in foreign_keys
         )
 
-        run_alembic(phase10_settings.migration_database_url, "downgrade", "0007_phase10_expand")
+        run_alembic(phase10_settings, "downgrade", "0007_phase10_expand")
         assert current_alembic_revision(phase10_migration_engine) == "0007_phase10_expand"
         foreign_keys = inspect(phase10_migration_engine).get_foreign_keys("knowledge_item_chunks")
         assert all(
@@ -64,11 +64,7 @@ def test_real_0006_expand_enforce_and_enforce_only_downgrade(
         )
     finally:
         if migration_started:
-            run_alembic(
-                phase10_settings.migration_database_url,
-                "upgrade",
-                "0008_phase10_enforce",
-            )
+            run_alembic(phase10_settings, "upgrade", "0008_phase10_enforce")
 
 
 @pytest.mark.phase10_knowledge_deferred(
@@ -86,16 +82,19 @@ def test_postgresql_finalization_removes_target_and_preserves_shared_and_unrelat
             session,
             target,
             bucket_name=phase10_runtime_settings.minio_bucket,
+            document_factory=phase10_document_factory,
         )
         persist_document_fixture(
             session,
             control,
             bucket_name=phase10_runtime_settings.minio_bucket,
+            document_factory=phase10_document_factory,
         )
         knowledge = persist_shared_knowledge_fixture(session, target=target, control=control)
         claimed, manifest = build_finalization_claim(
             session,
             target,
+            document_factory=phase10_document_factory,
             knowledge=knowledge,
             settings=phase10_runtime_settings,
         )
@@ -162,15 +161,18 @@ def test_core_postgresql_finalization_removes_target_and_preserves_unrelated_row
             session,
             target,
             bucket_name=phase10_runtime_settings.minio_bucket,
+            document_factory=phase10_document_factory,
         )
         persist_document_fixture(
             session,
             control,
             bucket_name=phase10_runtime_settings.minio_bucket,
+            document_factory=phase10_document_factory,
         )
         claimed, manifest = build_finalization_claim(
             session,
             target,
+            document_factory=phase10_document_factory,
             knowledge=None,
             settings=phase10_runtime_settings,
         )
@@ -206,10 +208,12 @@ def test_finalization_rollback_then_retry_and_ambiguous_response_duplicate_delet
             session,
             target,
             bucket_name=phase10_runtime_settings.minio_bucket,
+            document_factory=phase10_document_factory,
         )
         claimed, manifest = build_finalization_claim(
             session,
             target,
+            document_factory=phase10_document_factory,
             knowledge=None,
             settings=phase10_runtime_settings,
         )
@@ -226,9 +230,10 @@ def test_finalization_rollback_then_retry_and_ambiguous_response_duplicate_delet
         assert_postgresql_target_absent(session, target, knowledge=None)
 
         assert (
-            request_document_deletion(
+            request_owned_document_deletion(
                 session,
-                target.document_id,
+                target,
+                document_factory=phase10_document_factory,
                 settings=phase10_runtime_settings,
             )
             is None

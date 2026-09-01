@@ -7,14 +7,20 @@ import pytest
 from minio.deleteobjects import DeleteObject
 
 from integration import phase10_fixtures
+from integration.phase10_run_context import Phase10IntegrationRunContext
 from app.models.document import Document
 from app.models.knowledge_item import KnowledgeItem
 from integration.phase10_fixtures import (
     Phase10KnowledgeFixture,
     assert_postgresql_target_absent,
+    build_storage_manifest,
     index_opensearch_fixture,
+    persist_document_fixture,
 )
-from integration.phase10_support import Phase10TestDocumentFactory
+from integration.phase10_support import (
+    Phase10IntegrationGateError,
+    Phase10TestDocumentFactory,
+)
 from integration.test_document_deletion_storage import SlowFakeMinio
 
 
@@ -64,6 +70,17 @@ class _RollbackSession:
         self.rollback_calls += 1
 
 
+class _ForbiddenSession:
+    def __getattr__(self, name: str) -> object:
+        raise AssertionError(f"session must not be touched before ownership validation: {name}")
+
+
+def _document_factory(run_token: str = "abcdef12") -> Phase10TestDocumentFactory:
+    return Phase10TestDocumentFactory(
+        run_context=Phase10IntegrationRunContext(run_token=run_token)
+    )
+
+
 def _knowledge_expectation(target_document_id: UUID) -> Phase10KnowledgeFixture:
     shared_item_id = uuid4()
     orphan_item_id = uuid4()
@@ -104,7 +121,7 @@ def _knowledge_expectation(target_document_id: UUID) -> Phase10KnowledgeFixture:
 
 
 def test_core_absence_helper_skips_all_knowledge_specific_assertions() -> None:
-    identity = Phase10TestDocumentFactory().create()
+    identity = _document_factory().create()
     session = _RecordingSession()
 
     assert_postgresql_target_absent(session, identity, knowledge=None)  # type: ignore[arg-type]
@@ -117,7 +134,7 @@ def test_core_absence_helper_skips_all_knowledge_specific_assertions() -> None:
 
 
 def test_knowledge_aware_absence_helper_preserves_existing_assertions() -> None:
-    identity = Phase10TestDocumentFactory().create()
+    identity = _document_factory().create()
     knowledge = _knowledge_expectation(identity.document_id)
     session = _RecordingSession()
 
@@ -130,7 +147,7 @@ def test_knowledge_aware_absence_helper_preserves_existing_assertions() -> None:
 
 
 def test_core_absence_helper_still_fails_when_document_remains() -> None:
-    identity = Phase10TestDocumentFactory().create()
+    identity = _document_factory().create()
     session = _RecordingSession()
     session.get_results[(Document, identity.document_id)] = object()
 
@@ -139,10 +156,16 @@ def test_core_absence_helper_still_fails_when_document_remains() -> None:
 
 
 def test_opensearch_fixture_uses_deterministic_non_zero_1024_dimension_vectors() -> None:
-    identity = Phase10TestDocumentFactory().create()
+    factory = _document_factory()
+    identity = factory.create()
     client = _BulkClient({"errors": False})
 
-    index_opensearch_fixture(client, identity, "phase10-test-v1")
+    index_opensearch_fixture(
+        client,
+        identity,
+        "phase10-test-v1",
+        document_factory=factory,
+    )
 
     assert client.body is not None
     sources = client.body[1::2]
@@ -156,7 +179,8 @@ def test_opensearch_fixture_uses_deterministic_non_zero_1024_dimension_vectors()
 
 
 def test_opensearch_fixture_bulk_failure_reports_safe_item_detail() -> None:
-    identity = Phase10TestDocumentFactory().create()
+    factory = _document_factory()
+    identity = factory.create()
     client = _BulkClient(
         {
             "errors": True,
@@ -176,7 +200,12 @@ def test_opensearch_fixture_bulk_failure_reports_safe_item_detail() -> None:
     )
 
     with pytest.raises(AssertionError) as captured:
-        index_opensearch_fixture(client, identity, "phase10-test-v1")
+        index_opensearch_fixture(
+            client,
+            identity,
+            "phase10-test-v1",
+            document_factory=factory,
+        )
 
     message = str(captured.value)
     assert "index status=400" in message
@@ -273,3 +302,52 @@ def test_slow_fake_minio_consumes_real_delete_object_name_and_version_id() -> No
 
     assert errors == []
     assert client.objects == {}
+
+
+def test_postgresql_fixture_rejects_cross_context_identity_before_session_use() -> None:
+    identity = _document_factory("aaaabbbb").create()
+    wrong_factory = _document_factory("ccccdddd")
+
+    with pytest.raises(Phase10IntegrationGateError, match="not created"):
+        persist_document_fixture(
+            _ForbiddenSession(),  # type: ignore[arg-type]
+            identity,
+            bucket_name="phase10-m7b-ccccdddd",
+            document_factory=wrong_factory,
+        )
+
+
+def test_storage_manifest_rejects_cross_context_identity() -> None:
+    identity = _document_factory("aaaabbbb").create()
+    wrong_factory = _document_factory("ccccdddd")
+    settings = SimpleNamespace(
+        minio_bucket="phase10-m7b-ccccdddd",
+        search_index_name="phase10-m7b-ccccdddd-v1",
+        search_index_alias="phase10-m7b-ccccdddd-current",
+    )
+
+    with pytest.raises(Phase10IntegrationGateError, match="not created"):
+        build_storage_manifest(
+            identity,
+            settings,
+            document_factory=wrong_factory,
+        )
+
+
+def test_owned_deletion_wrapper_rejects_external_id_before_service_call() -> None:
+    identity = _document_factory("aaaabbbb").create()
+    wrong_factory = _document_factory("ccccdddd")
+    request_owned = getattr(
+        phase10_fixtures,
+        "request_owned_document_deletion",
+        None,
+    )
+
+    assert callable(request_owned)
+    with pytest.raises(Phase10IntegrationGateError, match="not created"):
+        request_owned(
+            _ForbiddenSession(),
+            identity,
+            document_factory=wrong_factory,
+            settings=object(),
+        )

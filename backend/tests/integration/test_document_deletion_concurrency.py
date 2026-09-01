@@ -53,12 +53,14 @@ def test_two_real_transactions_claim_one_job_once(
             session,
             target,
             bucket_name=phase10_runtime_settings.minio_bucket,
+            document_factory=phase10_document_factory,
         )
         schedule_pending_job(
             session,
             target,
             phase10_runtime_settings,
             current_step="delete_opensearch",
+            document_factory=phase10_document_factory,
         )
         session.commit()
 
@@ -88,10 +90,12 @@ def test_expiry_fencing_heartbeat_and_exhaustion_are_mutually_exclusive(
             session,
             target,
             bucket_name=phase10_runtime_settings.minio_bucket,
+            document_factory=phase10_document_factory,
         )
         old_claim, _manifest = build_finalization_claim(
             session,
             target,
+            document_factory=phase10_document_factory,
             knowledge=None,
             settings=phase10_runtime_settings,
         )
@@ -173,11 +177,13 @@ def test_simultaneous_a_b_finalization_deletes_last_shared_source_without_deadlo
             session,
             document_a,
             bucket_name=phase10_runtime_settings.minio_bucket,
+            document_factory=phase10_document_factory,
         )
         persist_document_fixture(
             session,
             document_b,
             bucket_name=phase10_runtime_settings.minio_bucket,
+            document_factory=phase10_document_factory,
         )
         knowledge = persist_shared_knowledge_fixture(
             session,
@@ -187,12 +193,14 @@ def test_simultaneous_a_b_finalization_deletes_last_shared_source_without_deadlo
         claim_a, manifest_a = build_finalization_claim(
             session,
             document_a,
+            document_factory=phase10_document_factory,
             knowledge=knowledge,
             settings=phase10_runtime_settings,
         )
         claim_b, manifest_b = build_finalization_claim(
             session,
             document_b,
+            document_factory=phase10_document_factory,
             knowledge=knowledge,
             settings=phase10_runtime_settings,
         )
@@ -232,11 +240,13 @@ def test_overlapping_revision_cycle_concurrent_finalization_terminates_without_d
             session,
             document_a,
             bucket_name=phase10_runtime_settings.minio_bucket,
+            document_factory=phase10_document_factory,
         )
         persist_document_fixture(
             session,
             document_b,
             bucket_name=phase10_runtime_settings.minio_bucket,
+            document_factory=phase10_document_factory,
         )
         revision = persist_revision_cycle_fixture(
             session,
@@ -246,12 +256,14 @@ def test_overlapping_revision_cycle_concurrent_finalization_terminates_without_d
         claim_a, manifest_a = build_finalization_claim(
             session,
             document_a,
+            document_factory=phase10_document_factory,
             knowledge=revision,
             settings=phase10_runtime_settings,
         )
         claim_b, manifest_b = build_finalization_claim(
             session,
             document_b,
+            document_factory=phase10_document_factory,
             knowledge=revision,
             settings=phase10_runtime_settings,
         )
@@ -286,11 +298,13 @@ def test_real_self_cycle_terminates_and_surviving_revision_detaches_from_orphan_
             session,
             document_a,
             bucket_name=phase10_runtime_settings.minio_bucket,
+            document_factory=phase10_document_factory,
         )
         persist_document_fixture(
             session,
             document_b,
             bucket_name=phase10_runtime_settings.minio_bucket,
+            document_factory=phase10_document_factory,
         )
         boundary = persist_revision_boundary_fixture(
             session,
@@ -300,6 +314,7 @@ def test_real_self_cycle_terminates_and_surviving_revision_detaches_from_orphan_
         claimed, manifest = build_finalization_claim(
             session,
             document_a,
+            document_factory=phase10_document_factory,
             knowledge=None,
             settings=phase10_runtime_settings,
         )

@@ -117,6 +117,7 @@ def _persist_processing_heartbeat_target(
     identity,
     settings,
     *,
+    document_factory,
     locked_by: str,
     lease_seconds: int,
 ) -> ClaimedDocumentDeletion:
@@ -125,6 +126,7 @@ def _persist_processing_heartbeat_target(
         identity,
         settings,
         current_step="delete_minio_derived",
+        document_factory=document_factory,
     )
     job.status = "processing"
     job.step_attempts = 1
@@ -158,6 +160,7 @@ def test_fixture_setup_opensearch_accepts_non_zero_1024_dimension_vectors(
         phase10_opensearch_client,
         identity,
         phase10_settings.opensearch_index,
+        document_factory=phase10_document_factory,
     )
 
     document_hits = phase10_opensearch_client.count(
@@ -178,11 +181,16 @@ def test_opensearch_36_accepts_production_document_deletion_query_parameters(
     phase10_document_factory,
 ) -> None:
     identity = phase10_document_factory.create()
-    manifest = build_storage_manifest(identity, phase10_settings)
+    manifest = build_storage_manifest(
+        identity,
+        phase10_settings,
+        document_factory=phase10_document_factory,
+    )
     index_opensearch_fixture(
         phase10_opensearch_client,
         identity,
         phase10_settings.opensearch_index,
+        document_factory=phase10_document_factory,
     )
 
     delete_opensearch_targets(
@@ -210,6 +218,7 @@ def test_fixture_setup_minio_lists_versions_and_delete_markers(
         phase10_minio_client,
         identity,
         phase10_settings.minio_bucket,
+        document_factory=phase10_document_factory,
     )
 
     snapshot = capture_minio_snapshot(
@@ -238,11 +247,13 @@ def test_fixture_setup_heartbeat_contender_drain_rolls_back_unrelated_jobs(
                 session,
                 identity,
                 bucket_name=phase10_settings.minio_bucket,
+                document_factory=phase10_document_factory,
             )
         claimed = _persist_processing_heartbeat_target(
             session,
             target,
             phase10_settings,
+            document_factory=phase10_document_factory,
             locked_by="fixture-heartbeat-owner",
             lease_seconds=30,
         )
@@ -251,12 +262,14 @@ def test_fixture_setup_heartbeat_contender_drain_rolls_back_unrelated_jobs(
             other_pending,
             phase10_settings,
             current_step="delete_minio_derived",
+            document_factory=phase10_document_factory,
         )
         retry_job = schedule_pending_job(
             session,
             other_retry,
             phase10_settings,
             current_step="delete_minio_derived",
+            document_factory=phase10_document_factory,
         )
         retry_job.status = "retry_wait"
         retry_job.next_retry_at = func.now() - text("INTERVAL '1 second'")
@@ -301,12 +314,40 @@ def test_real_storage_deleters_remove_target_versions_markers_and_hits_only(
 ) -> None:
     target = phase10_document_factory.create()
     control = phase10_document_factory.create()
-    target_manifest = build_storage_manifest(target, phase10_settings)
-    control_manifest = build_storage_manifest(control, phase10_settings)
-    upload_minio_fixture_versions(phase10_minio_client, target, phase10_settings.minio_bucket)
-    upload_minio_fixture_versions(phase10_minio_client, control, phase10_settings.minio_bucket)
-    index_opensearch_fixture(phase10_opensearch_client, target, phase10_settings.opensearch_index)
-    index_opensearch_fixture(phase10_opensearch_client, control, phase10_settings.opensearch_index)
+    target_manifest = build_storage_manifest(
+        target,
+        phase10_settings,
+        document_factory=phase10_document_factory,
+    )
+    control_manifest = build_storage_manifest(
+        control,
+        phase10_settings,
+        document_factory=phase10_document_factory,
+    )
+    upload_minio_fixture_versions(
+        phase10_minio_client,
+        target,
+        phase10_settings.minio_bucket,
+        document_factory=phase10_document_factory,
+    )
+    upload_minio_fixture_versions(
+        phase10_minio_client,
+        control,
+        phase10_settings.minio_bucket,
+        document_factory=phase10_document_factory,
+    )
+    index_opensearch_fixture(
+        phase10_opensearch_client,
+        target,
+        phase10_settings.opensearch_index,
+        document_factory=phase10_document_factory,
+    )
+    index_opensearch_fixture(
+        phase10_opensearch_client,
+        control,
+        phase10_settings.opensearch_index,
+        document_factory=phase10_document_factory,
+    )
 
     try:
         before_minio = capture_minio_snapshot(
@@ -405,11 +446,16 @@ def test_opensearch_transport_failure_then_retry_converges_even_if_first_dbq_com
     lose_response_after_delete: bool,
 ) -> None:
     target = phase10_document_factory.create()
-    manifest = build_storage_manifest(target, phase10_settings)
+    manifest = build_storage_manifest(
+        target,
+        phase10_settings,
+        document_factory=phase10_document_factory,
+    )
     index_opensearch_fixture(
         phase10_opensearch_client,
         target,
         phase10_settings.opensearch_index,
+        document_factory=phase10_document_factory,
     )
     faulting = OneShotOpenSearchFault(
         phase10_opensearch_client,
@@ -449,7 +495,11 @@ def test_long_minio_operation_heartbeats_beyond_initial_lease_and_blocks_second_
     target = phase10_document_factory.create()
     other_pending = phase10_document_factory.create()
     other_retry = phase10_document_factory.create()
-    manifest = build_storage_manifest(target, phase10_settings)
+    manifest = build_storage_manifest(
+        target,
+        phase10_settings,
+        document_factory=phase10_document_factory,
+    )
     slow_keys = [
         f"{manifest.derived_prefixes[0]}images/slow-{index}.png"
         for index in range(12)
@@ -461,11 +511,13 @@ def test_long_minio_operation_heartbeats_beyond_initial_lease_and_blocks_second_
                 session,
                 identity,
                 bucket_name=phase10_settings.minio_bucket,
+                document_factory=phase10_document_factory,
             )
         claimed = _persist_processing_heartbeat_target(
             session,
             target,
             phase10_settings,
+            document_factory=phase10_document_factory,
             locked_by="heartbeat-owner",
             lease_seconds=3,
         )
@@ -474,12 +526,14 @@ def test_long_minio_operation_heartbeats_beyond_initial_lease_and_blocks_second_
             other_pending,
             phase10_settings,
             current_step="delete_minio_derived",
+            document_factory=phase10_document_factory,
         )
         retry_job = schedule_pending_job(
             session,
             other_retry,
             phase10_settings,
             current_step="delete_minio_derived",
+            document_factory=phase10_document_factory,
         )
         retry_job.status = "retry_wait"
         retry_job.next_retry_at = func.now() - text("INTERVAL '1 second'")
@@ -553,7 +607,11 @@ def test_lease_lost_checkpoint_stops_slow_minio_before_new_external_operation(
     phase10_document_factory,
 ) -> None:
     target = phase10_document_factory.create()
-    manifest = build_storage_manifest(target, phase10_settings)
+    manifest = build_storage_manifest(
+        target,
+        phase10_settings,
+        document_factory=phase10_document_factory,
+    )
     minio = SlowFakeMinio(
         [f"{manifest.derived_prefixes[0]}images/not-started.png"],
         delay_seconds=0,
@@ -563,12 +621,14 @@ def test_lease_lost_checkpoint_stops_slow_minio_before_new_external_operation(
             session,
             target,
             bucket_name=phase10_settings.minio_bucket,
+            document_factory=phase10_document_factory,
         )
         schedule_pending_job(
             session,
             target,
             phase10_settings,
             current_step="delete_minio_derived",
+            document_factory=phase10_document_factory,
         )
         session.commit()
         old_claim = claim_document_deletion(
@@ -626,8 +686,15 @@ def test_stale_heartbeat_cannot_resurrect_old_owner(
             session,
             target,
             bucket_name=phase10_settings.minio_bucket,
+            document_factory=phase10_document_factory,
         )
-        schedule_pending_job(session, target, phase10_settings, current_step="delete_minio_derived")
+        schedule_pending_job(
+            session,
+            target,
+            phase10_settings,
+            current_step="delete_minio_derived",
+            document_factory=phase10_document_factory,
+        )
         session.commit()
         old_claim = claim_document_deletion(
             session,

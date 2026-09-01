@@ -26,12 +26,13 @@ from app.models.knowledge_item_version import KnowledgeItemVersion
 from app.services.document_deletion import (
     ClaimedDocumentDeletion,
     claim_document_deletion,
+    request_document_deletion,
 )
 from app.services.document_deletion_manifest import (
     DOCUMENT_DELETION_MANIFEST_SCHEMA_VERSION,
     DocumentDeletionManifest,
 )
-from integration.phase10_support import Phase10TestDocument
+from integration.phase10_support import Phase10TestDocument, Phase10TestDocumentFactory
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,7 +106,9 @@ def persist_document_fixture(
     identity: Phase10TestDocument,
     *,
     bucket_name: str,
+    document_factory: Phase10TestDocumentFactory,
 ) -> Document:
+    document_factory.assert_owned_document(identity)
     document = Document(
         id=identity.document_id,
         original_filename=identity.filename,
@@ -397,8 +400,10 @@ def build_storage_manifest(
     identity: Phase10TestDocument,
     settings: Any,
     *,
+    document_factory: Phase10TestDocumentFactory,
     knowledge: Phase10KnowledgeFixture | None = None,
 ) -> DocumentDeletionManifest:
+    document_factory.assert_owned_document(identity)
     source_ids = knowledge.source_ids_for(identity.document_id) if knowledge else ()
     item_ids = knowledge.all_item_ids if knowledge else ()
     return DocumentDeletionManifest(
@@ -419,14 +424,31 @@ def build_storage_manifest(
     )
 
 
+def request_owned_document_deletion(
+    session: Session,
+    identity: Phase10TestDocument,
+    *,
+    document_factory: Phase10TestDocumentFactory,
+    settings: Any,
+):
+    document_factory.assert_owned_document(identity)
+    return request_document_deletion(
+        session,
+        identity.document_id,
+        settings=settings,
+    )
+
+
 def schedule_pending_job(
     session: Session,
     identity: Phase10TestDocument,
     settings: Any,
     *,
     current_step: str,
+    document_factory: Phase10TestDocumentFactory,
     knowledge: Phase10KnowledgeFixture | None = None,
 ) -> DocumentDeletionJob:
+    document_factory.assert_owned_document(identity)
     document = session.get(Document, identity.document_id)
     if document is None:
         raise AssertionError("Phase 10 fixture Document was not persisted.")
@@ -437,7 +459,12 @@ def schedule_pending_job(
         current_step=current_step,
         step_attempts=0,
         max_attempts=int(getattr(settings, "document_deletion_max_step_attempts", 5)),
-        manifest=build_storage_manifest(identity, settings, knowledge=knowledge).to_payload(),
+        manifest=build_storage_manifest(
+            identity,
+            settings,
+            document_factory=document_factory,
+            knowledge=knowledge,
+        ).to_payload(),
     )
     session.add(job)
     session.flush()
@@ -448,10 +475,16 @@ def build_finalization_claim(
     session: Session,
     identity: Phase10TestDocument,
     *,
+    document_factory: Phase10TestDocumentFactory,
     knowledge: Phase10KnowledgeFixture | None,
     settings: Any,
 ) -> tuple[ClaimedDocumentDeletion, DocumentDeletionManifest]:
-    manifest = build_storage_manifest(identity, settings, knowledge=knowledge)
+    manifest = build_storage_manifest(
+        identity,
+        settings,
+        document_factory=document_factory,
+        knowledge=knowledge,
+    )
     document = session.get(Document, identity.document_id)
     if document is None:
         raise AssertionError("Phase 10 fixture Document was not persisted.")
@@ -524,7 +557,10 @@ def upload_minio_fixture_versions(
     client: Any,
     identity: Phase10TestDocument,
     bucket_name: str,
+    *,
+    document_factory: Phase10TestDocumentFactory,
 ) -> None:
+    document_factory.assert_owned_document(identity)
     for key in sorted(identity.all_minio_keys):
         for revision in (b"phase10-v1", b"phase10-v2"):
             client.put_object(
@@ -550,7 +586,10 @@ def index_opensearch_fixture(
     client: Any,
     identity: Phase10TestDocument,
     index_name: str,
+    *,
+    document_factory: Phase10TestDocumentFactory,
 ) -> None:
+    document_factory.assert_owned_document(identity)
     body: list[dict[str, Any]] = []
     for index, chunk_id in enumerate(identity.chunk_ids):
         body.append({"index": {"_index": index_name, "_id": str(chunk_id)}})

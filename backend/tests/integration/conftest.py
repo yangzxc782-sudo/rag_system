@@ -18,6 +18,7 @@ from integration.phase10_support import (
     Phase10TestDocumentFactory,
     load_phase10_integration_settings,
 )
+from integration.phase10_run_context import Phase10IntegrationRunContext
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -35,6 +36,13 @@ def phase10_settings(
     _phase10_integration_gate: Phase10IntegrationSettings,
 ) -> Phase10IntegrationSettings:
     return _phase10_integration_gate
+
+
+@pytest.fixture(scope="session")
+def phase10_run_context(
+    phase10_settings: Phase10IntegrationSettings,
+) -> Phase10IntegrationRunContext:
+    return phase10_settings.run_context
 
 
 @pytest.fixture(scope="session")
@@ -147,5 +155,7 @@ def phase10_opensearch_client(
 
 
 @pytest.fixture
-def phase10_document_factory() -> Phase10TestDocumentFactory:
-    return Phase10TestDocumentFactory()
+def phase10_document_factory(
+    phase10_run_context: Phase10IntegrationRunContext,
+) -> Phase10TestDocumentFactory:
+    return Phase10TestDocumentFactory(run_context=phase10_run_context)

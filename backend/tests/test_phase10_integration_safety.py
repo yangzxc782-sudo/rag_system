@@ -1,16 +1,21 @@
 from __future__ import annotations
 
+import re
+from dataclasses import replace
 from uuid import UUID
+from uuid import uuid4
 
 import pytest
 
+from integration import phase10_support
+from integration.phase10_run_context import Phase10IntegrationRunContext
 from integration.phase10_support import (
-    PHASE10_FIXTURE_PREFIX,
     Phase10IntegrationGateError,
     Phase10ResourceSnapshot,
     Phase10TestDocumentFactory,
     assert_unrelated_resources_unchanged,
     load_phase10_integration_settings,
+    run_alembic,
 )
 
 
@@ -19,25 +24,37 @@ def safe_environment() -> dict[str, str]:
         "PHASE10_INTEGRATION_ENABLED": "1",
         "PHASE10_M7_ROLLOUT_AUTHORIZED": "1",
         "PHASE10_INTEGRATION_ENVIRONMENT": "dedicated-local-test",
+        "PHASE10_RUN_TOKEN": "abcdef12",
         "PHASE10_INTEGRATION_DATABASE_URL": (
-            "postgresql+psycopg://phase10_user:secret@127.0.0.1:55432/phase10_integration"
+            "postgresql+psycopg://phase10_user:secret@127.0.0.1:55432/"
+            "phase10_m7b_abcdef12"
         ),
-        "PHASE10_INTEGRATION_DATABASE_NAME_CONFIRM": "phase10_integration",
+        "PHASE10_INTEGRATION_DATABASE_NAME_CONFIRM": "phase10_m7b_abcdef12",
         "PHASE10_INTEGRATION_MIGRATION_DATABASE_URL": (
-            "postgresql+psycopg://phase10_user:secret@127.0.0.1:55432/phase10_migration"
+            "postgresql+psycopg://phase10_user:secret@127.0.0.1:55432/"
+            "phase10_m7b_migration_abcdef12"
         ),
-        "PHASE10_INTEGRATION_MIGRATION_DATABASE_NAME_CONFIRM": "phase10_migration",
+        "PHASE10_INTEGRATION_MIGRATION_DATABASE_NAME_CONFIRM": (
+            "phase10_m7b_migration_abcdef12"
+        ),
+        "PHASE10_INTEGRATION_RESTORE_DATABASE_URL": (
+            "postgresql+psycopg://phase10_user:secret@127.0.0.1:55432/"
+            "phase10_m7b_restore_abcdef12"
+        ),
+        "PHASE10_INTEGRATION_RESTORE_DATABASE_NAME_CONFIRM": (
+            "phase10_m7b_restore_abcdef12"
+        ),
         "PHASE10_INTEGRATION_MINIO_ENDPOINT": "127.0.0.1:59000",
         "PHASE10_INTEGRATION_MINIO_ACCESS_KEY": "phase10-access",
         "PHASE10_INTEGRATION_MINIO_SECRET_KEY": "phase10-secret",
-        "PHASE10_INTEGRATION_MINIO_BUCKET": "phase10-hard-delete-tests",
-        "PHASE10_INTEGRATION_MINIO_BUCKET_CONFIRM": "phase10-hard-delete-tests",
+        "PHASE10_INTEGRATION_MINIO_BUCKET": "phase10-m7b-abcdef12",
+        "PHASE10_INTEGRATION_MINIO_BUCKET_CONFIRM": "phase10-m7b-abcdef12",
         "PHASE10_INTEGRATION_MINIO_SECURE": "false",
         "PHASE10_INTEGRATION_OPENSEARCH_URL": "http://127.0.0.1:59200",
-        "PHASE10_INTEGRATION_OPENSEARCH_INDEX": "phase10-casting-chunks-v1",
-        "PHASE10_INTEGRATION_OPENSEARCH_ALIAS": "phase10-casting-chunks-current",
+        "PHASE10_INTEGRATION_OPENSEARCH_INDEX": "phase10-m7b-abcdef12-v1",
+        "PHASE10_INTEGRATION_OPENSEARCH_ALIAS": "phase10-m7b-abcdef12-current",
         "PHASE10_INTEGRATION_OPENSEARCH_TARGET_CONFIRM": (
-            "phase10-casting-chunks-v1:phase10-casting-chunks-current"
+            "phase10-m7b-abcdef12-v1:phase10-m7b-abcdef12-current"
         ),
     }
 
@@ -59,10 +76,127 @@ def test_integration_gate_accepts_only_complete_dedicated_configuration() -> Non
     settings = load_phase10_integration_settings(safe_environment())
 
     assert settings is not None
-    assert settings.database_name == "phase10_integration"
-    assert settings.migration_database_name == "phase10_migration"
-    assert settings.minio_bucket == "phase10-hard-delete-tests"
-    assert settings.opensearch_index == "phase10-casting-chunks-v1"
+    assert settings.run_context.run_token == "abcdef12"
+    assert settings.database_name == "phase10_m7b_abcdef12"
+    assert settings.migration_database_name == "phase10_m7b_migration_abcdef12"
+    assert settings.restore_database_name == "phase10_m7b_restore_abcdef12"
+    assert settings.minio_bucket == "phase10-m7b-abcdef12"
+    assert settings.opensearch_index == "phase10-m7b-abcdef12-v1"
+
+
+def test_integration_gate_requires_run_token_when_rollout_is_enabled() -> None:
+    environment = safe_environment()
+    environment.pop("PHASE10_RUN_TOKEN")
+
+    with pytest.raises(Phase10IntegrationGateError, match="PHASE10_RUN_TOKEN"):
+        load_phase10_integration_settings(environment)
+
+
+@pytest.mark.parametrize(
+    "run_token",
+    ["R5TOKEN12", "abc-def1", "../abc123", " abcdef12 "],
+)
+def test_integration_gate_rejects_invalid_run_token(run_token: str) -> None:
+    environment = safe_environment()
+    environment["PHASE10_RUN_TOKEN"] = run_token
+
+    with pytest.raises(Phase10IntegrationGateError, match="run token"):
+        load_phase10_integration_settings(environment)
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {
+            "PHASE10_INTEGRATION_DATABASE_URL": (
+                "postgresql+psycopg://u:p@localhost/phase10_m7b_deadbeef"
+            ),
+            "PHASE10_INTEGRATION_DATABASE_NAME_CONFIRM": "phase10_m7b_deadbeef",
+        },
+        {
+            "PHASE10_INTEGRATION_MIGRATION_DATABASE_URL": (
+                "postgresql+psycopg://u:p@localhost/phase10_m7b_migration_deadbeef"
+            ),
+            "PHASE10_INTEGRATION_MIGRATION_DATABASE_NAME_CONFIRM": (
+                "phase10_m7b_migration_deadbeef"
+            ),
+        },
+        {
+            "PHASE10_INTEGRATION_RESTORE_DATABASE_URL": (
+                "postgresql+psycopg://u:p@localhost/phase10_m7b_restore_deadbeef"
+            ),
+            "PHASE10_INTEGRATION_RESTORE_DATABASE_NAME_CONFIRM": (
+                "phase10_m7b_restore_deadbeef"
+            ),
+        },
+        {
+            "PHASE10_INTEGRATION_MINIO_BUCKET": "phase10-m7b-deadbeef",
+            "PHASE10_INTEGRATION_MINIO_BUCKET_CONFIRM": "phase10-m7b-deadbeef",
+        },
+        {
+            "PHASE10_INTEGRATION_OPENSEARCH_INDEX": "phase10-m7b-deadbeef-v1",
+            "PHASE10_INTEGRATION_OPENSEARCH_TARGET_CONFIRM": (
+                "phase10-m7b-deadbeef-v1:phase10-m7b-abcdef12-current"
+            ),
+        },
+        {
+            "PHASE10_INTEGRATION_OPENSEARCH_ALIAS": "phase10-m7b-deadbeef-current",
+            "PHASE10_INTEGRATION_OPENSEARCH_TARGET_CONFIRM": (
+                "phase10-m7b-abcdef12-v1:phase10-m7b-deadbeef-current"
+            ),
+        },
+    ],
+)
+def test_integration_gate_rejects_cross_run_resource_mismatch(
+    overrides: dict[str, str],
+) -> None:
+    environment = safe_environment()
+    environment.update(overrides)
+
+    with pytest.raises(Phase10IntegrationGateError, match="run context"):
+        load_phase10_integration_settings(environment)
+
+
+def test_integration_gate_requires_three_distinct_postgresql_databases() -> None:
+    environment = safe_environment()
+    environment["PHASE10_INTEGRATION_RESTORE_DATABASE_URL"] = environment[
+        "PHASE10_INTEGRATION_DATABASE_URL"
+    ]
+    environment["PHASE10_INTEGRATION_RESTORE_DATABASE_NAME_CONFIRM"] = environment[
+        "PHASE10_INTEGRATION_DATABASE_NAME_CONFIRM"
+    ]
+
+    with pytest.raises(Phase10IntegrationGateError, match="must be different"):
+        load_phase10_integration_settings(environment)
+
+
+def test_alembic_helper_uses_only_validated_context_migration_database(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = load_phase10_integration_settings(safe_environment())
+    assert settings is not None
+    captured: dict[str, object] = {}
+
+    def fake_run(command, *, cwd, env, check, capture_output, text):
+        captured.update(
+            command=command,
+            cwd=cwd,
+            env=env,
+            check=check,
+            capture_output=capture_output,
+            text=text,
+        )
+        return object()
+
+    monkeypatch.setattr(phase10_support.subprocess, "run", fake_run)
+
+    result = run_alembic(settings, "current")
+
+    assert result is not None
+    environment = captured["env"]
+    assert isinstance(environment, dict)
+    assert environment["DATABASE_URL"] == settings.migration_database_url
+    assert environment["DOCUMENT_DELETION_EXECUTOR_ENABLED"] == "false"
 
 
 @pytest.mark.parametrize(
@@ -118,13 +252,14 @@ def test_integration_gate_rejects_non_phase10_opensearch_names(
 
 
 def test_test_document_factory_generates_owned_unique_resource_identity() -> None:
-    assert PHASE10_FIXTURE_PREFIX == "phase10-hard-delete-r4-"
-    factory = Phase10TestDocumentFactory()
+    context = Phase10IntegrationRunContext(run_token="abcdef12")
+    factory = Phase10TestDocumentFactory(run_context=context)
 
     first = factory.create()
     second = factory.create()
 
-    assert first.namespace.startswith(PHASE10_FIXTURE_PREFIX)
+    assert first.namespace.startswith("phase10-hard-delete-abcdef12-")
+    assert not re.match(r"phase10-hard-delete-r[0-9]+-", first.namespace)
     assert first.namespace != second.namespace
     assert first.document_id != second.document_id
     assert first.filename == f"{first.namespace}.pdf"
@@ -133,6 +268,89 @@ def test_test_document_factory_generates_owned_unique_resource_identity() -> Non
     assert all(isinstance(value, UUID) for value in first.chunk_ids)
     assert first.owns_document_id(first.document_id)
     assert not first.owns_document_id(UUID("00000000-0000-0000-0000-000000000001"))
+
+
+@pytest.mark.parametrize(
+    ("document_type", "expected_prefix"),
+    [
+        ("core", "phase10-hard-delete-abcdef12-"),
+        ("recovery", "phase10-hard-delete-abcdef12-recovery-"),
+        ("other", "phase10-hard-delete-abcdef12-other-"),
+        ("frontend", "phase10-hard-delete-abcdef12-frontend-"),
+    ],
+)
+def test_factory_derives_each_document_subtype_from_run_context(
+    document_type: str,
+    expected_prefix: str,
+) -> None:
+    factory = Phase10TestDocumentFactory(
+        run_context=Phase10IntegrationRunContext(run_token="abcdef12")
+    )
+
+    identity = factory.create(document_type=document_type)
+
+    assert identity.namespace.startswith(expected_prefix)
+
+
+def test_factory_registers_only_document_ids_it_created() -> None:
+    factory = Phase10TestDocumentFactory(
+        run_context=Phase10IntegrationRunContext(run_token="abcdef12")
+    )
+    first = factory.create()
+    second = factory.create(document_type="other")
+
+    assert factory.created_document_ids == frozenset(
+        {first.document_id, second.document_id}
+    )
+    factory.assert_owned_document_id(first.document_id)
+    factory.assert_owned_document_id(second.document_id)
+
+    with pytest.raises(Phase10IntegrationGateError, match="not created"):
+        factory.assert_owned_document_id(uuid4())
+
+
+def test_factory_rejects_spoofed_namespace_without_registry_ownership() -> None:
+    context = Phase10IntegrationRunContext(run_token="abcdef12")
+    factory = Phase10TestDocumentFactory(run_context=context)
+    owned = factory.create()
+    external_id = uuid4()
+    spoofed = replace(
+        owned,
+        document_id=external_id,
+        namespace=context.build_document_namespace(external_id),
+    )
+
+    with pytest.raises(Phase10IntegrationGateError, match="not created"):
+        factory.assert_owned_document(spoofed)
+
+
+def test_factory_rejects_owned_id_with_wrong_run_namespace() -> None:
+    current = Phase10IntegrationRunContext(run_token="aaaabbbb")
+    other = Phase10IntegrationRunContext(run_token="ccccdddd")
+    factory = Phase10TestDocumentFactory(run_context=current)
+    owned = factory.create()
+    wrong_namespace = replace(
+        owned,
+        namespace=other.build_document_namespace(owned.document_id),
+    )
+
+    with pytest.raises(Phase10IntegrationGateError, match="namespace"):
+        factory.assert_owned_document(wrong_namespace)
+
+
+def test_factory_registry_is_isolated_between_run_contexts() -> None:
+    factory_a = Phase10TestDocumentFactory(
+        run_context=Phase10IntegrationRunContext(run_token="aaaabbbb")
+    )
+    factory_b = Phase10TestDocumentFactory(
+        run_context=Phase10IntegrationRunContext(run_token="ccccdddd")
+    )
+    document_a = factory_a.create()
+
+    factory_a.assert_owned_document(document_a)
+    with pytest.raises(Phase10IntegrationGateError, match="not created"):
+        factory_b.assert_owned_document(document_a)
+    assert factory_a.run_context.document_prefix != factory_b.run_context.document_prefix
 
 
 def test_unrelated_snapshot_comparison_ignores_only_explicit_target_resources() -> None:

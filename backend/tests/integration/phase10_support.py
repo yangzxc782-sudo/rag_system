@@ -29,9 +29,12 @@ from app.models.knowledge_item_review import KnowledgeItemReview
 from app.models.knowledge_item_source import KnowledgeItemSource
 from app.models.knowledge_item_version import KnowledgeItemVersion
 from app.services.object_storage import list_minio_object_versions
+from integration.phase10_run_context import (
+    Phase10IntegrationRunContext,
+    Phase10IntegrationRunContextError,
+)
 
 
-PHASE10_FIXTURE_PREFIX = "phase10-hard-delete-r4-"
 PHASE10_INTEGRATION_ENVIRONMENT = "dedicated-local-test"
 
 
@@ -41,10 +44,13 @@ class Phase10IntegrationGateError(RuntimeError):
 
 @dataclass(frozen=True, slots=True)
 class Phase10IntegrationSettings:
+    run_context: Phase10IntegrationRunContext
     database_url: str = field(repr=False)
     database_name: str
     migration_database_url: str = field(repr=False)
     migration_database_name: str
+    restore_database_url: str = field(repr=False)
+    restore_database_name: str
     minio_endpoint: str
     minio_access_key: str = field(repr=False)
     minio_secret_key: str = field(repr=False)
@@ -72,6 +78,16 @@ def load_phase10_integration_settings(
             "Phase 10 integration environment is not the dedicated local test environment."
         )
 
+    if "PHASE10_RUN_TOKEN" not in environ or environ["PHASE10_RUN_TOKEN"] == "":
+        raise Phase10IntegrationGateError(
+            "PHASE10_RUN_TOKEN is required for Phase 10 integration."
+        )
+    run_token = str(environ["PHASE10_RUN_TOKEN"])
+    try:
+        run_context = Phase10IntegrationRunContext(run_token=run_token)
+    except Phase10IntegrationRunContextError as exc:
+        raise Phase10IntegrationGateError(str(exc)) from exc
+
     required = {
         name: _required(environ, name)
         for name in (
@@ -79,6 +95,8 @@ def load_phase10_integration_settings(
             "PHASE10_INTEGRATION_DATABASE_NAME_CONFIRM",
             "PHASE10_INTEGRATION_MIGRATION_DATABASE_URL",
             "PHASE10_INTEGRATION_MIGRATION_DATABASE_NAME_CONFIRM",
+            "PHASE10_INTEGRATION_RESTORE_DATABASE_URL",
+            "PHASE10_INTEGRATION_RESTORE_DATABASE_NAME_CONFIRM",
             "PHASE10_INTEGRATION_MINIO_ENDPOINT",
             "PHASE10_INTEGRATION_MINIO_ACCESS_KEY",
             "PHASE10_INTEGRATION_MINIO_SECRET_KEY",
@@ -101,9 +119,14 @@ def load_phase10_integration_settings(
         required["PHASE10_INTEGRATION_MIGRATION_DATABASE_NAME_CONFIRM"],
         field="migration database",
     )
-    if database_name == migration_database_name:
+    restore_database_name = _validate_database_target(
+        required["PHASE10_INTEGRATION_RESTORE_DATABASE_URL"],
+        required["PHASE10_INTEGRATION_RESTORE_DATABASE_NAME_CONFIRM"],
+        field="restore database",
+    )
+    if len({database_name, migration_database_name, restore_database_name}) != 3:
         raise Phase10IntegrationGateError(
-            "Phase 10 integration and migration databases must be different dedicated databases."
+            "Phase 10 integration, migration, and restore databases must be different."
         )
 
     bucket = required["PHASE10_INTEGRATION_MINIO_BUCKET"]
@@ -132,11 +155,26 @@ def load_phase10_integration_settings(
     if parsed_search_url.scheme not in {"http", "https"} or not parsed_search_url.hostname:
         raise Phase10IntegrationGateError("Phase 10 OpenSearch URL must be an explicit HTTP(S) URL.")
 
+    try:
+        run_context.validate_configured_resources(
+            postgres_database=database_name,
+            migration_database=migration_database_name,
+            restore_database=restore_database_name,
+            minio_bucket=bucket,
+            opensearch_index=index_name,
+            opensearch_alias=alias_name,
+        )
+    except Phase10IntegrationRunContextError as exc:
+        raise Phase10IntegrationGateError(str(exc)) from exc
+
     return Phase10IntegrationSettings(
+        run_context=run_context,
         database_url=required["PHASE10_INTEGRATION_DATABASE_URL"],
         database_name=database_name,
         migration_database_url=required["PHASE10_INTEGRATION_MIGRATION_DATABASE_URL"],
         migration_database_name=migration_database_name,
+        restore_database_url=required["PHASE10_INTEGRATION_RESTORE_DATABASE_URL"],
+        restore_database_name=restore_database_name,
         minio_endpoint=required["PHASE10_INTEGRATION_MINIO_ENDPOINT"],
         minio_access_key=required["PHASE10_INTEGRATION_MINIO_ACCESS_KEY"],
         minio_secret_key=required["PHASE10_INTEGRATION_MINIO_SECRET_KEY"],
@@ -234,15 +272,50 @@ class Phase10TestDocument:
 class Phase10TestDocumentFactory:
     """Generate owned fixture identities; never accepts an existing Document ID."""
 
-    def __init__(self, *, now: datetime | None = None, chunk_count: int = 2) -> None:
+    def __init__(
+        self,
+        *,
+        run_context: Phase10IntegrationRunContext,
+        now: datetime | None = None,
+        chunk_count: int = 2,
+    ) -> None:
+        self._run_context = run_context
         self._now = now or datetime.now(UTC)
         self._chunk_count = chunk_count
+        self._created_document_ids: set[UUID] = set()
 
-    def create(self) -> Phase10TestDocument:
+    @property
+    def run_context(self) -> Phase10IntegrationRunContext:
+        return self._run_context
+
+    @property
+    def created_document_ids(self) -> frozenset[UUID]:
+        return frozenset(self._created_document_ids)
+
+    def assert_owned_document_id(self, document_id: UUID) -> None:
+        if document_id not in self._created_document_ids:
+            raise Phase10IntegrationGateError(
+                "Phase 10 destructive target was not created by this factory."
+            )
+
+    def assert_owned_document(self, identity: Phase10TestDocument) -> None:
+        self.assert_owned_document_id(identity.document_id)
+        if not self._run_context.owns_document_namespace(
+            identity.namespace,
+            identity.document_id,
+        ):
+            raise Phase10IntegrationGateError(
+                "Phase 10 destructive target namespace does not match the run context."
+            )
+
+    def create(self, *, document_type: str = "core") -> Phase10TestDocument:
         document_id = uuid4()
-        namespace = f"{PHASE10_FIXTURE_PREFIX}{document_id}"
+        namespace = self._run_context.build_document_namespace(
+            document_id,
+            document_type=document_type,
+        )
         parse_run_id = uuid4()
-        return Phase10TestDocument(
+        identity = Phase10TestDocument(
             namespace=namespace,
             document_id=document_id,
             filename=f"{namespace}.pdf",
@@ -254,6 +327,8 @@ class Phase10TestDocumentFactory:
             chunk_ids=tuple(uuid4() for _ in range(self._chunk_count)),
             chunk_block_ids=tuple(uuid4() for _ in range(self._chunk_count)),
         )
+        self._created_document_ids.add(identity.document_id)
+        return identity
 
 
 @dataclass(frozen=True, slots=True)
@@ -449,12 +524,19 @@ def require_clean_migration_database(engine: Engine) -> None:
         )
 
 
-def run_alembic(database_url: str, *arguments: str) -> subprocess.CompletedProcess[str]:
+def run_alembic(
+    settings: Phase10IntegrationSettings,
+    *arguments: str,
+) -> subprocess.CompletedProcess[str]:
     """Run Alembic only against an already gated explicit dedicated URL."""
 
+    if settings.migration_database_name != settings.run_context.migration_database:
+        raise Phase10IntegrationGateError(
+            "Phase 10 migration database does not match the run context."
+        )
     backend_dir = Path(__file__).resolve().parents[2]
     environment = os.environ.copy()
-    environment["DATABASE_URL"] = database_url
+    environment["DATABASE_URL"] = settings.migration_database_url
     environment["DOCUMENT_DELETION_EXECUTOR_ENABLED"] = "false"
     return subprocess.run(
         [sys.executable, "-m", "alembic", *arguments],

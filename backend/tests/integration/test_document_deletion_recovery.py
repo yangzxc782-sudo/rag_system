@@ -7,7 +7,6 @@ from sqlalchemy import select
 
 from app.models.document import Document
 from app.models.document_deletion_job import DocumentDeletionJob
-from app.services.document_deletion import request_document_deletion
 from app.services.hybrid_search import hybrid_search_chunks
 from app.services.rag import answer_question
 from app.tasks.document_deletion_executor import DocumentDeletionExecutor
@@ -15,6 +14,7 @@ from integration.phase10_fixtures import (
     index_opensearch_fixture,
     persist_document_fixture,
     persist_shared_knowledge_fixture,
+    request_owned_document_deletion,
     upload_minio_fixture_versions,
 )
 from integration.phase10_support import (
@@ -60,20 +60,42 @@ def test_full_saga_converges_to_zero_residual_and_preserves_unrelated_snapshot(
             session,
             target,
             bucket_name=phase10_settings.minio_bucket,
+            document_factory=phase10_document_factory,
         )
         persist_document_fixture(
             session,
             control,
             bucket_name=phase10_settings.minio_bucket,
+            document_factory=phase10_document_factory,
         )
         knowledge = persist_shared_knowledge_fixture(session, target=target, control=control)
         session.commit()
         before_pg = capture_postgresql_snapshot(session)
 
-    upload_minio_fixture_versions(phase10_minio_client, target, phase10_settings.minio_bucket)
-    upload_minio_fixture_versions(phase10_minio_client, control, phase10_settings.minio_bucket)
-    index_opensearch_fixture(phase10_opensearch_client, target, phase10_settings.opensearch_index)
-    index_opensearch_fixture(phase10_opensearch_client, control, phase10_settings.opensearch_index)
+    upload_minio_fixture_versions(
+        phase10_minio_client,
+        target,
+        phase10_settings.minio_bucket,
+        document_factory=phase10_document_factory,
+    )
+    upload_minio_fixture_versions(
+        phase10_minio_client,
+        control,
+        phase10_settings.minio_bucket,
+        document_factory=phase10_document_factory,
+    )
+    index_opensearch_fixture(
+        phase10_opensearch_client,
+        target,
+        phase10_settings.opensearch_index,
+        document_factory=phase10_document_factory,
+    )
+    index_opensearch_fixture(
+        phase10_opensearch_client,
+        control,
+        phase10_settings.opensearch_index,
+        document_factory=phase10_document_factory,
+    )
     before_minio = capture_minio_snapshot(phase10_minio_client, phase10_settings.minio_bucket)
     before_search = capture_opensearch_snapshot(
         phase10_opensearch_client,
@@ -82,9 +104,10 @@ def test_full_saga_converges_to_zero_residual_and_preserves_unrelated_snapshot(
     )
 
     with phase10_session_factory() as session:
-        scheduled = request_document_deletion(
+        scheduled = request_owned_document_deletion(
             session,
-            target.document_id,
+            target,
+            document_factory=phase10_document_factory,
             settings=phase10_runtime_settings,
         )
     assert scheduled is not None and scheduled.status == "deleting"
@@ -110,9 +133,10 @@ def test_full_saga_converges_to_zero_residual_and_preserves_unrelated_snapshot(
         after_pg = capture_postgresql_snapshot(session)
         assert session.get(Document, target.document_id) is None
         assert (
-            request_document_deletion(
+            request_owned_document_deletion(
                 session,
-                target.document_id,
+                target,
+                document_factory=phase10_document_factory,
                 settings=phase10_runtime_settings,
             )
             is None
@@ -215,19 +239,41 @@ def test_core_full_saga_converges_to_zero_residual_and_preserves_unrelated_snaps
             session,
             target,
             bucket_name=phase10_settings.minio_bucket,
+            document_factory=phase10_document_factory,
         )
         persist_document_fixture(
             session,
             control,
             bucket_name=phase10_settings.minio_bucket,
+            document_factory=phase10_document_factory,
         )
         session.commit()
         before_pg = capture_postgresql_snapshot(session)
 
-    upload_minio_fixture_versions(phase10_minio_client, target, phase10_settings.minio_bucket)
-    upload_minio_fixture_versions(phase10_minio_client, control, phase10_settings.minio_bucket)
-    index_opensearch_fixture(phase10_opensearch_client, target, phase10_settings.opensearch_index)
-    index_opensearch_fixture(phase10_opensearch_client, control, phase10_settings.opensearch_index)
+    upload_minio_fixture_versions(
+        phase10_minio_client,
+        target,
+        phase10_settings.minio_bucket,
+        document_factory=phase10_document_factory,
+    )
+    upload_minio_fixture_versions(
+        phase10_minio_client,
+        control,
+        phase10_settings.minio_bucket,
+        document_factory=phase10_document_factory,
+    )
+    index_opensearch_fixture(
+        phase10_opensearch_client,
+        target,
+        phase10_settings.opensearch_index,
+        document_factory=phase10_document_factory,
+    )
+    index_opensearch_fixture(
+        phase10_opensearch_client,
+        control,
+        phase10_settings.opensearch_index,
+        document_factory=phase10_document_factory,
+    )
     before_minio = capture_minio_snapshot(phase10_minio_client, phase10_settings.minio_bucket)
     before_search = capture_opensearch_snapshot(
         phase10_opensearch_client,
@@ -236,9 +282,10 @@ def test_core_full_saga_converges_to_zero_residual_and_preserves_unrelated_snaps
     )
 
     with phase10_session_factory() as session:
-        scheduled = request_document_deletion(
+        scheduled = request_owned_document_deletion(
             session,
-            target.document_id,
+            target,
+            document_factory=phase10_document_factory,
             settings=phase10_runtime_settings,
         )
         target_job_id = session.scalar(
@@ -270,9 +317,10 @@ def test_core_full_saga_converges_to_zero_residual_and_preserves_unrelated_snaps
         after_pg = capture_postgresql_snapshot(session)
         assert session.get(Document, target.document_id) is None
         assert (
-            request_document_deletion(
+            request_owned_document_deletion(
                 session,
-                target.document_id,
+                target,
+                document_factory=phase10_document_factory,
                 settings=phase10_runtime_settings,
             )
             is None
