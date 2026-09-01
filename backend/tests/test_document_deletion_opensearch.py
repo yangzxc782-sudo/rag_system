@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+import json
 import sys
+import threading
 import types
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import SimpleNamespace
 from typing import Any
+from urllib.parse import parse_qs, urlsplit
 from uuid import UUID
 
 import pytest
+from opensearchpy import OpenSearch
 from pydantic import ValidationError
 
 from app.core.config import Settings
@@ -215,6 +220,64 @@ def delete_opensearch_targets(
     )
 
 
+def test_document_delete_serializes_boolean_query_params_lowercase_at_http_boundary() -> None:
+    requests: list[tuple[str, dict[str, list[str]], dict[str, object]]] = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self) -> None:  # noqa: N802 - stdlib handler contract
+            length = int(self.headers.get("content-length", "0"))
+            body = json.loads(self.rfile.read(length))
+            parsed = urlsplit(self.path)
+            requests.append((parsed.path, parse_qs(parsed.query), body))
+            payload = json.dumps(
+                {"deleted": 1, "timed_out": False, "failures": []}
+            ).encode()
+            self.send_response(200)
+            self.send_header("content-type", "application/json")
+            self.send_header("content-length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, _format: str, *args: object) -> None:
+            del args
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    real_client = OpenSearch(
+        hosts=[{"host": "127.0.0.1", "port": server.server_port}],
+        max_retries=0,
+        retry_on_timeout=False,
+    )
+
+    class BoundaryClient(FakeOpenSearch):
+        def delete_by_query(self, **kwargs: Any) -> dict[str, object]:
+            return real_client.delete_by_query(**kwargs)
+
+    try:
+        delete_opensearch_targets(
+            manifest(),
+            client=BoundaryClient(),
+            checkpoint=always_owned,
+            timeout_seconds=30,
+        )
+    finally:
+        real_client.close()
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+    assert len(requests) == 1
+    path, params, body = requests[0]
+    assert path == "/casting_chunks_v1/_delete_by_query"
+    assert params == {
+        "conflicts": ["proceed"],
+        "refresh": ["true"],
+        "wait_for_completion": ["true"],
+    }
+    assert body == {"query": {"term": {"document_id": str(DOCUMENT_ID)}}}
+
+
 def test_document_delete_uses_exact_term_waits_refreshes_and_verifies_zero_hits() -> None:
     client = FakeOpenSearch()
 
@@ -233,9 +296,9 @@ def test_document_delete_uses_exact_term_waits_refreshes_and_verifies_zero_hits(
     }
     assert call["params"] == {
         "conflicts": "proceed",
-        "refresh": True,
+        "refresh": "true",
         "request_timeout": 30,
-        "wait_for_completion": True,
+        "wait_for_completion": "true",
     }
     assert client.count_calls[0]["body"] == {
         "query": {"term": {"document_id": str(DOCUMENT_ID)}}

@@ -234,9 +234,9 @@ def _delete_document_from_target(
             body=build_document_delete_query(manifest.document_id),
             params={
                 "conflicts": "proceed",
-                "refresh": True,
+                "refresh": "true",
                 "request_timeout": timeout_seconds,
-                "wait_for_completion": True,
+                "wait_for_completion": "true",
             },
         )
     except Exception as exc:
