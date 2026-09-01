@@ -27,6 +27,7 @@ from integration.phase10_support import (
     capture_postgresql_snapshot,
     load_phase10_integration_settings,
     merge_resource_snapshots,
+    require_phase10_validation_locked_bucket_ready,
     stable_json_sha256,
 )
 
@@ -173,6 +174,17 @@ def phase10_rollout_minio_client(
     return _phase10_minio_client(
         phase10_integration_settings,
         phase10_rollout_settings,
+    )
+
+
+@pytest.fixture(scope="session")
+def phase10_validation_locked_bucket(
+    phase10_run_context: Phase10IntegrationRunContext,
+    phase10_validation_minio_client: Minio,
+) -> str:
+    return require_phase10_validation_locked_bucket_ready(
+        phase10_validation_minio_client,
+        run_context=phase10_run_context,
     )
 
 

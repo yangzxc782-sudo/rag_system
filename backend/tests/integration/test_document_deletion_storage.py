@@ -53,6 +53,7 @@ from integration.phase10_support import (
     assert_unrelated_resources_unchanged,
     capture_minio_snapshot,
     capture_opensearch_snapshot,
+    require_phase10_validation_missing_bucket_absent,
     stable_json_sha256,
 )
 from integration.phase10_storage_faults import OneShotPartialDeleteMinioClient
@@ -248,6 +249,16 @@ def test_fixture_setup_minio_lists_versions_and_delete_markers(
     assert {entry[0] for entry in target_entries} == set(identity.all_minio_keys)
     assert all(entry[1] for entry in target_entries)
     assert any(entry[2] for entry in target_entries)
+
+
+def test_fixture_setup_validation_locked_bucket_capability(
+    phase10_run_context,
+    phase10_validation_locked_bucket,
+) -> None:
+    assert (
+        phase10_validation_locked_bucket
+        == phase10_run_context.validation_minio_locked_bucket
+    )
 
 
 def test_fixture_setup_heartbeat_contender_drain_rolls_back_unrelated_jobs(
@@ -857,8 +868,9 @@ def test_real_minio_missing_run_bucket_is_failure(
         validation_minio_missing_bucket=phase10_run_context.validation_minio_missing_bucket,
         validation_opensearch_rollover_index=phase10_run_context.validation_opensearch_rollover_index,
     )
-    assert not phase10_validation_minio_client.bucket_exists(
-        phase10_run_context.validation_minio_missing_bucket
+    missing_bucket = require_phase10_validation_missing_bucket_absent(
+        phase10_validation_minio_client,
+        run_context=phase10_run_context,
     )
     target = phase10_validation_document_factory.create()
     manifest = replace(
@@ -867,7 +879,7 @@ def test_real_minio_missing_run_bucket_is_failure(
             phase10_validation_settings,
             document_factory=phase10_validation_document_factory,
         ),
-        bucket_name=phase10_run_context.validation_minio_missing_bucket,
+        bucket_name=missing_bucket,
     )
 
     with pytest.raises(DocumentDeletionStorageError) as failure:
@@ -882,21 +894,12 @@ def test_real_minio_missing_run_bucket_is_failure(
 
 
 def test_real_minio_compliance_retention_prevents_hard_delete(
-    phase10_run_context,
+    phase10_validation_locked_bucket,
     phase10_validation_settings,
     phase10_validation_minio_client,
     phase10_validation_document_factory,
 ) -> None:
-    locked_bucket = phase10_run_context.validation_minio_locked_bucket
-    phase10_run_context.validate_storage_extension_resources(
-        validation_minio_locked_bucket=locked_bucket,
-        validation_minio_missing_bucket=phase10_run_context.validation_minio_missing_bucket,
-        validation_opensearch_rollover_index=phase10_run_context.validation_opensearch_rollover_index,
-    )
-    assert not phase10_validation_minio_client.bucket_exists(locked_bucket)
-    phase10_validation_minio_client.make_bucket(locked_bucket, object_lock=True)
-    versioning = phase10_validation_minio_client.get_bucket_versioning(locked_bucket)
-    assert str(getattr(versioning, "status", "")).lower() == "enabled"
+    locked_bucket = phase10_validation_locked_bucket
 
     target = phase10_validation_document_factory.create()
     payload = b"phase10-retained-version"
@@ -915,6 +918,14 @@ def test_real_minio_compliance_retention_prevents_hard_delete(
         Retention(COMPLIANCE, retain_until),
         version_id=uploaded.version_id,
     )
+    active_retention = phase10_validation_minio_client.get_object_retention(
+        locked_bucket,
+        target.raw_object_key,
+        version_id=uploaded.version_id,
+    )
+    assert active_retention is not None
+    assert active_retention.mode == COMPLIANCE
+    assert active_retention.retain_until_date > datetime.now(UTC)
     manifest = replace(
         build_storage_manifest(
             target,

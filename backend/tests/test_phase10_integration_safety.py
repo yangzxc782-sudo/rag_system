@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import inspect
 from pathlib import Path
 from uuid import UUID
 from uuid import uuid4
@@ -13,12 +14,13 @@ from integration.phase10_run_context import (
     Phase10ResourceDomain,
 )
 from integration.phase10_support import (
+    Phase10AlembicTarget,
     Phase10IntegrationGateError,
     Phase10ResourceSnapshot,
     Phase10TestDocumentFactory,
     assert_unrelated_resources_unchanged,
     load_phase10_integration_settings,
-    run_alembic,
+    run_phase10_alembic,
 )
 
 
@@ -321,6 +323,20 @@ def test_partial_minio_fault_delegates_real_prefix_then_fails_once() -> None:
     assert client.retry_attempted == (("b", "v2"), ("c", "v3"))
 
 
+def test_retention_integration_case_does_not_own_locked_bucket_lifecycle() -> None:
+    from integration.test_document_deletion_storage import (
+        test_real_minio_compliance_retention_prevents_hard_delete,
+    )
+
+    source = inspect.getsource(
+        test_real_minio_compliance_retention_prevents_hard_delete
+    )
+
+    assert "phase10_validation_locked_bucket" in source
+    assert ".make_bucket(" not in source
+    assert ".remove_bucket(" not in source
+
+
 def test_alembic_helper_uses_only_validated_context_migration_database(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -341,13 +357,149 @@ def test_alembic_helper_uses_only_validated_context_migration_database(
 
     monkeypatch.setattr(phase10_support.subprocess, "run", fake_run)
 
-    result = run_alembic(settings, "current")
+    result = run_phase10_alembic(
+        settings,
+        Phase10AlembicTarget.MIGRATION,
+        "current",
+    )
 
     assert result is not None
     environment = captured["env"]
     assert isinstance(environment, dict)
     assert environment["DATABASE_URL"] == settings.migration_database_url
     assert environment["DOCUMENT_DELETION_EXECUTOR_ENABLED"] == "false"
+
+
+@pytest.mark.parametrize(
+    ("target", "expected_url"),
+    [
+        (Phase10AlembicTarget.VALIDATION, "validation"),
+        (Phase10AlembicTarget.ROLLOUT, "rollout"),
+        (Phase10AlembicTarget.MIGRATION, "migration"),
+    ],
+)
+def test_safe_alembic_runner_selects_only_the_explicit_validated_target(
+    monkeypatch: pytest.MonkeyPatch,
+    target: Phase10AlembicTarget,
+    expected_url: str,
+) -> None:
+    settings = load_phase10_integration_settings(safe_environment())
+    assert settings is not None
+    captured: dict[str, object] = {}
+
+    def fake_run(command, *, cwd, env, check, capture_output, text):
+        captured.update(command=command, cwd=cwd, env=env)
+        return object()
+
+    monkeypatch.setattr(phase10_support.subprocess, "run", fake_run)
+
+    run_phase10_alembic(settings, target, "current")
+
+    urls = {
+        "validation": settings.validation.database_url,
+        "rollout": settings.rollout.database_url,
+        "migration": settings.migration_database_url,
+    }
+    child_environment = captured["env"]
+    assert isinstance(child_environment, dict)
+    assert child_environment["DATABASE_URL"] == urls[expected_url]
+
+
+def test_safe_alembic_runner_exposes_no_restore_database_target() -> None:
+    assert not hasattr(Phase10AlembicTarget, "RESTORE")
+
+
+def test_safe_alembic_runner_rejects_missing_target_url_before_subprocess(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = load_phase10_integration_settings(safe_environment())
+    assert settings is not None
+    unsafe_settings = replace(
+        settings,
+        validation=replace(settings.validation, database_url=""),
+    )
+    subprocess_called = False
+
+    def forbidden_run(*_args, **_kwargs):
+        nonlocal subprocess_called
+        subprocess_called = True
+        raise AssertionError("missing target must fail before subprocess creation")
+
+    monkeypatch.setattr(phase10_support.subprocess, "run", forbidden_run)
+
+    with pytest.raises(Phase10IntegrationGateError, match="database"):
+        run_phase10_alembic(
+            unsafe_settings,
+            Phase10AlembicTarget.VALIDATION,
+            "current",
+        )
+
+    assert subprocess_called is False
+
+
+def test_safe_alembic_runner_overrides_parent_default_for_explicit_rollout_target(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = load_phase10_integration_settings(safe_environment())
+    assert settings is not None
+    parent_url = "postgresql+psycopg://u:p@localhost/rag_system"
+    monkeypatch.setenv("DATABASE_URL", parent_url)
+    captured: dict[str, object] = {}
+
+    def fake_run(command, *, cwd, env, check, capture_output, text):
+        captured.update(command=command, cwd=cwd, env=env)
+        return object()
+
+    monkeypatch.setattr(phase10_support.subprocess, "run", fake_run)
+    runner = getattr(phase10_support, "run_phase10_alembic", None)
+    target_type = getattr(phase10_support, "Phase10AlembicTarget", None)
+    assert callable(runner)
+    assert target_type is not None
+
+    runner(settings, target_type.ROLLOUT, "current")
+
+    child_environment = captured["env"]
+    assert isinstance(child_environment, dict)
+    assert child_environment["DATABASE_URL"] == settings.rollout.database_url
+    assert child_environment["DATABASE_URL"] != parent_url
+    assert phase10_support.os.environ["DATABASE_URL"] == parent_url
+
+
+@pytest.mark.parametrize(
+    "database_url",
+    [
+        "postgresql+psycopg://u:p@localhost/rag_system",
+        "postgresql+psycopg://u:p@localhost/phase10_m7b_deadbeef",
+    ],
+    ids=("protected-default", "wrong-run"),
+)
+def test_safe_alembic_runner_rejects_wrong_rollout_target_before_subprocess(
+    monkeypatch: pytest.MonkeyPatch,
+    database_url: str,
+) -> None:
+    settings = load_phase10_integration_settings(safe_environment())
+    assert settings is not None
+    unsafe_settings = replace(
+        settings,
+        rollout=replace(settings.rollout, database_url=database_url),
+    )
+    subprocess_called = False
+
+    def forbidden_run(*_args, **_kwargs):
+        nonlocal subprocess_called
+        subprocess_called = True
+        raise AssertionError("unsafe target must fail before subprocess creation")
+
+    monkeypatch.setattr(phase10_support.subprocess, "run", forbidden_run)
+    runner = getattr(phase10_support, "run_phase10_alembic", None)
+    target_type = getattr(phase10_support, "Phase10AlembicTarget", None)
+    assert callable(runner)
+    assert target_type is not None
+
+    with pytest.raises(Phase10IntegrationGateError, match="database"):
+        runner(unsafe_settings, target_type.ROLLOUT, "current")
+
+    assert subprocess_called is False
 
 
 @pytest.mark.parametrize(

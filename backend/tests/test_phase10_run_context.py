@@ -78,6 +78,25 @@ def test_run_context_derives_validation_and_rollout_domains_from_one_token() -> 
     )
 
 
+def test_run_context_provisioning_plan_assigns_locked_and_missing_bucket_lifecycles() -> None:
+    context = Phase10IntegrationRunContext(run_token="abcdef12")
+
+    plan = context.resource_provisioning_plan()
+
+    assert plan.created_minio_buckets == (
+        "phase10-m7b-abcdef12-validation",
+        "phase10-m7b-abcdef12-validation-locked",
+        "phase10-m7b-abcdef12",
+    )
+    assert plan.versioning_enabled_minio_buckets == plan.created_minio_buckets
+    assert plan.object_lock_enabled_minio_buckets == (
+        "phase10-m7b-abcdef12-validation-locked",
+    )
+    assert plan.must_remain_absent_minio_buckets == (
+        "phase10-m7b-abcdef12-validation-missing",
+    )
+
+
 def test_run_context_all_postgresql_databases_are_pairwise_distinct() -> None:
     context = Phase10IntegrationRunContext(run_token="abcdef12")
 

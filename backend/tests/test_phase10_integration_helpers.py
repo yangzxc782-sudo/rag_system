@@ -6,7 +6,7 @@ from uuid import UUID, uuid4
 import pytest
 from minio.deleteobjects import DeleteObject
 
-from integration import phase10_fixtures
+from integration import phase10_fixtures, phase10_support
 from integration.phase10_run_context import (
     Phase10IntegrationRunContext,
     Phase10ResourceDomain,
@@ -77,6 +77,31 @@ class _RollbackSession:
 class _ForbiddenSession:
     def __getattr__(self, name: str) -> object:
         raise AssertionError(f"session must not be touched before ownership validation: {name}")
+
+
+class _PreprovisionedLockedBucketClient:
+    def __init__(self) -> None:
+        self.bucket_exists_calls: list[str] = []
+        self.versioning_calls: list[str] = []
+        self.object_lock_calls: list[str] = []
+
+    def bucket_exists(self, bucket_name: str) -> bool:
+        self.bucket_exists_calls.append(bucket_name)
+        return True
+
+    def get_bucket_versioning(self, bucket_name: str) -> object:
+        self.versioning_calls.append(bucket_name)
+        return SimpleNamespace(status="Enabled")
+
+    def get_object_lock_config(self, bucket_name: str) -> object:
+        self.object_lock_calls.append(bucket_name)
+        return SimpleNamespace(mode=None, duration=None, duration_unit=None)
+
+    def make_bucket(self, *_args, **_kwargs) -> None:
+        raise AssertionError("retention consumer must not create the locked bucket")
+
+    def remove_bucket(self, *_args, **_kwargs) -> None:
+        raise AssertionError("retention consumer must not remove the locked bucket")
 
 
 def _document_factory(
@@ -311,6 +336,52 @@ def test_slow_fake_minio_consumes_real_delete_object_name_and_version_id() -> No
 
     assert errors == []
     assert client.objects == {}
+
+
+def test_locked_bucket_capability_gate_consumes_preprovisioned_bucket_without_lifecycle_calls() -> None:
+    context = Phase10IntegrationRunContext(run_token="abcdef12")
+    client = _PreprovisionedLockedBucketClient()
+    capability_gate = getattr(
+        phase10_support,
+        "require_phase10_validation_locked_bucket_ready",
+        None,
+    )
+    assert callable(capability_gate)
+
+    bucket_name = capability_gate(client, run_context=context)
+
+    assert bucket_name == context.validation_minio_locked_bucket
+    assert client.bucket_exists_calls == [bucket_name]
+    assert client.versioning_calls == [bucket_name]
+    assert client.object_lock_calls == [bucket_name]
+
+
+def test_missing_bucket_gate_requires_provisioning_to_leave_bucket_absent() -> None:
+    context = Phase10IntegrationRunContext(run_token="abcdef12")
+    client = SimpleNamespace(bucket_exists=lambda _bucket_name: False)
+
+    bucket_name = phase10_support.require_phase10_validation_missing_bucket_absent(
+        client,
+        run_context=context,
+    )
+
+    assert bucket_name == context.validation_minio_missing_bucket
+
+
+def test_locked_bucket_capability_gate_fails_when_object_lock_cannot_be_read() -> None:
+    context = Phase10IntegrationRunContext(run_token="abcdef12")
+    client = _PreprovisionedLockedBucketClient()
+
+    def unavailable(_bucket_name: str) -> object:
+        raise RuntimeError("object lock is not enabled")
+
+    client.get_object_lock_config = unavailable  # type: ignore[method-assign]
+
+    with pytest.raises(Phase10IntegrationGateError, match="object-lock"):
+        phase10_support.require_phase10_validation_locked_bucket_ready(
+            client,
+            run_context=context,
+        )
 
 
 def test_postgresql_fixture_rejects_cross_context_identity_before_session_use() -> None:

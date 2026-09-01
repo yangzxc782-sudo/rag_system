@@ -7,6 +7,7 @@ import subprocess
 import sys
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from enum import Enum
 from pathlib import Path
 from typing import Mapping
 from urllib.parse import urlparse
@@ -41,6 +42,12 @@ PHASE10_INTEGRATION_ENVIRONMENT = "dedicated-local-test"
 
 class Phase10IntegrationGateError(RuntimeError):
     """Raised before any client is created when an integration target is unsafe."""
+
+
+class Phase10AlembicTarget(str, Enum):
+    VALIDATION = "validation"
+    ROLLOUT = "rollout"
+    MIGRATION = "migration"
 
 
 @dataclass(frozen=True, slots=True)
@@ -622,6 +629,74 @@ def capture_minio_snapshot(client: object, bucket_name: str) -> Phase10ResourceS
     return Phase10ResourceSnapshot(minio_versions=versions)
 
 
+def require_phase10_validation_locked_bucket_ready(
+    client: object,
+    *,
+    run_context: Phase10IntegrationRunContext,
+) -> str:
+    """Validate the provisioning-owned locked bucket without changing lifecycle."""
+
+    bucket_name = run_context.validation_minio_locked_bucket
+    plan = run_context.resource_provisioning_plan()
+    if bucket_name not in plan.created_minio_buckets:
+        raise Phase10IntegrationGateError(
+            "Phase 10 validation locked bucket is not provisioning-owned."
+        )
+    if bucket_name in plan.must_remain_absent_minio_buckets:
+        raise Phase10IntegrationGateError(
+            "Phase 10 validation locked bucket has conflicting lifecycle ownership."
+        )
+    if bucket_name not in plan.versioning_enabled_minio_buckets:
+        raise Phase10IntegrationGateError(
+            "Phase 10 validation locked bucket is not versioning-owned."
+        )
+    if bucket_name not in plan.object_lock_enabled_minio_buckets:
+        raise Phase10IntegrationGateError(
+            "Phase 10 validation locked bucket is not object-lock-owned."
+        )
+    if not client.bucket_exists(bucket_name):
+        raise Phase10IntegrationGateError(
+            "Dedicated Phase 10 validation locked bucket does not exist."
+        )
+    versioning = client.get_bucket_versioning(bucket_name)
+    if str(getattr(versioning, "status", "")).lower() != "enabled":
+        raise Phase10IntegrationGateError(
+            "Dedicated Phase 10 validation locked bucket must have versioning enabled."
+        )
+    try:
+        client.get_object_lock_config(bucket_name)
+    except Exception as exc:
+        raise Phase10IntegrationGateError(
+            "Dedicated Phase 10 validation locked bucket does not expose object-lock "
+            "configuration."
+        ) from exc
+    return bucket_name
+
+
+def require_phase10_validation_missing_bucket_absent(
+    client: object,
+    *,
+    run_context: Phase10IntegrationRunContext,
+) -> str:
+    """Validate that provisioning deliberately left the missing bucket absent."""
+
+    bucket_name = run_context.validation_minio_missing_bucket
+    plan = run_context.resource_provisioning_plan()
+    if bucket_name not in plan.must_remain_absent_minio_buckets:
+        raise Phase10IntegrationGateError(
+            "Phase 10 validation missing bucket is not absence-owned."
+        )
+    if bucket_name in plan.created_minio_buckets:
+        raise Phase10IntegrationGateError(
+            "Phase 10 validation missing bucket has conflicting lifecycle ownership."
+        )
+    if client.bucket_exists(bucket_name):
+        raise Phase10IntegrationGateError(
+            "Dedicated Phase 10 validation missing bucket must remain absent."
+        )
+    return bucket_name
+
+
 def capture_opensearch_snapshot(
     client: object,
     *,
@@ -698,19 +773,34 @@ def require_clean_migration_database(engine: Engine) -> None:
         )
 
 
-def run_alembic(
+def run_phase10_alembic(
     settings: Phase10IntegrationSettings,
+    target: Phase10AlembicTarget,
     *arguments: str,
 ) -> subprocess.CompletedProcess[str]:
-    """Run Alembic only against an already gated explicit dedicated URL."""
+    """Run Alembic with a validated target as the child process authority."""
 
-    if settings.migration_database_name != settings.run_context.migration_database:
+    database_url, configured_database_name, expected_database_name = (
+        _phase10_alembic_target(settings, target)
+    )
+    if configured_database_name != expected_database_name:
         raise Phase10IntegrationGateError(
-            "Phase 10 migration database does not match the run context."
+            f"Phase 10 {target.value} Alembic database does not match the run context."
         )
+    parsed_database_name = _validate_database_target(
+        database_url,
+        expected_database_name,
+        field=f"{target.value} Alembic database",
+    )
+    if parsed_database_name != expected_database_name:
+        raise Phase10IntegrationGateError(
+            f"Phase 10 {target.value} Alembic URL does not match the run context."
+        )
+    if not arguments:
+        raise Phase10IntegrationGateError("Phase 10 Alembic command is required.")
     backend_dir = Path(__file__).resolve().parents[2]
     environment = os.environ.copy()
-    environment["DATABASE_URL"] = settings.migration_database_url
+    environment["DATABASE_URL"] = database_url
     environment["DOCUMENT_DELETION_EXECUTOR_ENABLED"] = "false"
     return subprocess.run(
         [sys.executable, "-m", "alembic", *arguments],
@@ -720,3 +810,32 @@ def run_alembic(
         capture_output=True,
         text=True,
     )
+
+
+def _phase10_alembic_target(
+    settings: Phase10IntegrationSettings,
+    target: Phase10AlembicTarget,
+) -> tuple[str, str, str]:
+    if target is Phase10AlembicTarget.VALIDATION:
+        return (
+            settings.validation.database_url,
+            settings.validation.database_name,
+            settings.run_context.postgres_database_for(
+                Phase10ResourceDomain.VALIDATION
+            ),
+        )
+    if target is Phase10AlembicTarget.ROLLOUT:
+        return (
+            settings.rollout.database_url,
+            settings.rollout.database_name,
+            settings.run_context.postgres_database_for(
+                Phase10ResourceDomain.ROLLOUT
+            ),
+        )
+    if target is Phase10AlembicTarget.MIGRATION:
+        return (
+            settings.migration_database_url,
+            settings.migration_database_name,
+            settings.run_context.migration_database,
+        )
+    raise Phase10IntegrationGateError("Phase 10 Alembic target is invalid.")

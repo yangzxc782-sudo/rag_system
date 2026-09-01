@@ -20,6 +20,16 @@ class Phase10ResourceDomain(str, Enum):
 
 
 @dataclass(frozen=True, slots=True)
+class Phase10ResourceProvisioningPlan:
+    """Declarative MinIO lifecycle ownership for one integration run."""
+
+    created_minio_buckets: tuple[str, ...]
+    versioning_enabled_minio_buckets: tuple[str, ...]
+    object_lock_enabled_minio_buckets: tuple[str, ...]
+    must_remain_absent_minio_buckets: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class Phase10IntegrationRunContext:
     """Pure, credential-free identity for one dedicated integration run."""
 
@@ -68,6 +78,27 @@ class Phase10IntegrationRunContext:
     @property
     def validation_minio_missing_bucket(self) -> str:
         return f"{self.minio_bucket_for(Phase10ResourceDomain.VALIDATION)}-missing"
+
+    def resource_provisioning_plan(self) -> Phase10ResourceProvisioningPlan:
+        validation_bucket = self.minio_bucket_for(Phase10ResourceDomain.VALIDATION)
+        rollout_bucket = self.minio_bucket_for(Phase10ResourceDomain.ROLLOUT)
+        locked_bucket = self.validation_minio_locked_bucket
+        return Phase10ResourceProvisioningPlan(
+            created_minio_buckets=(
+                validation_bucket,
+                locked_bucket,
+                rollout_bucket,
+            ),
+            versioning_enabled_minio_buckets=(
+                validation_bucket,
+                locked_bucket,
+                rollout_bucket,
+            ),
+            object_lock_enabled_minio_buckets=(locked_bucket,),
+            must_remain_absent_minio_buckets=(
+                self.validation_minio_missing_bucket,
+            ),
+        )
 
     @property
     def opensearch_index(self) -> str:

@@ -21,11 +21,12 @@ from integration.phase10_fixtures import (
     request_owned_validation_document_deletion,
 )
 from integration.phase10_support import (
+    Phase10AlembicTarget,
     assert_unrelated_resources_unchanged,
     capture_postgresql_snapshot,
     current_alembic_revision,
     require_clean_migration_database,
-    run_alembic,
+    run_phase10_alembic,
 )
 
 
@@ -39,15 +40,30 @@ def test_real_0006_expand_enforce_and_enforce_only_downgrade(
     require_clean_migration_database(phase10_migration_engine)
     migration_started = False
     try:
-        run_alembic(phase10_integration_settings, "upgrade", "0006_add_document_parse")
+        run_phase10_alembic(
+            phase10_integration_settings,
+            Phase10AlembicTarget.MIGRATION,
+            "upgrade",
+            "0006_add_document_parse",
+        )
         migration_started = True
         assert current_alembic_revision(phase10_migration_engine) == "0006_add_document_parse"
 
-        run_alembic(phase10_integration_settings, "upgrade", "0007_phase10_expand")
+        run_phase10_alembic(
+            phase10_integration_settings,
+            Phase10AlembicTarget.MIGRATION,
+            "upgrade",
+            "0007_phase10_expand",
+        )
         assert current_alembic_revision(phase10_migration_engine) == "0007_phase10_expand"
         assert "knowledge_item_sources" in inspect(phase10_migration_engine).get_table_names()
 
-        run_alembic(phase10_integration_settings, "upgrade", "0008_phase10_enforce")
+        run_phase10_alembic(
+            phase10_integration_settings,
+            Phase10AlembicTarget.MIGRATION,
+            "upgrade",
+            "0008_phase10_enforce",
+        )
         assert current_alembic_revision(phase10_migration_engine) == "0008_phase10_enforce"
         foreign_keys = inspect(phase10_migration_engine).get_foreign_keys("knowledge_item_chunks")
         assert any(
@@ -55,7 +71,12 @@ def test_real_0006_expand_enforce_and_enforce_only_downgrade(
             for foreign_key in foreign_keys
         )
 
-        run_alembic(phase10_integration_settings, "downgrade", "0007_phase10_expand")
+        run_phase10_alembic(
+            phase10_integration_settings,
+            Phase10AlembicTarget.MIGRATION,
+            "downgrade",
+            "0007_phase10_expand",
+        )
         assert current_alembic_revision(phase10_migration_engine) == "0007_phase10_expand"
         foreign_keys = inspect(phase10_migration_engine).get_foreign_keys("knowledge_item_chunks")
         assert all(
@@ -64,7 +85,12 @@ def test_real_0006_expand_enforce_and_enforce_only_downgrade(
         )
     finally:
         if migration_started:
-            run_alembic(phase10_integration_settings, "upgrade", "0008_phase10_enforce")
+            run_phase10_alembic(
+                phase10_integration_settings,
+                Phase10AlembicTarget.MIGRATION,
+                "upgrade",
+                "0008_phase10_enforce",
+            )
 
 
 @pytest.mark.phase10_knowledge_deferred(
