@@ -7,8 +7,12 @@ import pytest
 from minio.deleteobjects import DeleteObject
 
 from integration import phase10_fixtures
-from integration.phase10_run_context import Phase10IntegrationRunContext
+from integration.phase10_run_context import (
+    Phase10IntegrationRunContext,
+    Phase10ResourceDomain,
+)
 from app.models.document import Document
+from app.models.document_deletion_job import DocumentDeletionJob
 from app.models.knowledge_item import KnowledgeItem
 from integration.phase10_fixtures import (
     Phase10KnowledgeFixture,
@@ -75,9 +79,14 @@ class _ForbiddenSession:
         raise AssertionError(f"session must not be touched before ownership validation: {name}")
 
 
-def _document_factory(run_token: str = "abcdef12") -> Phase10TestDocumentFactory:
+def _document_factory(
+    run_token: str = "abcdef12",
+    *,
+    resource_domain: Phase10ResourceDomain = Phase10ResourceDomain.VALIDATION,
+) -> Phase10TestDocumentFactory:
     return Phase10TestDocumentFactory(
-        run_context=Phase10IntegrationRunContext(run_token=run_token)
+        run_context=Phase10IntegrationRunContext(run_token=run_token),
+        resource_domain=resource_domain,
     )
 
 
@@ -163,7 +172,7 @@ def test_opensearch_fixture_uses_deterministic_non_zero_1024_dimension_vectors()
     index_opensearch_fixture(
         client,
         identity,
-        "phase10-test-v1",
+        factory.run_context.opensearch_index_for(Phase10ResourceDomain.VALIDATION),
         document_factory=factory,
     )
 
@@ -203,7 +212,7 @@ def test_opensearch_fixture_bulk_failure_reports_safe_item_detail() -> None:
         index_opensearch_fixture(
             client,
             identity,
-            "phase10-test-v1",
+            factory.run_context.opensearch_index_for(Phase10ResourceDomain.VALIDATION),
             document_factory=factory,
         )
 
@@ -335,8 +344,14 @@ def test_storage_manifest_rejects_cross_context_identity() -> None:
 
 
 def test_owned_deletion_wrapper_rejects_external_id_before_service_call() -> None:
-    identity = _document_factory("aaaabbbb").create()
-    wrong_factory = _document_factory("ccccdddd")
+    identity = _document_factory(
+        "aaaabbbb",
+        resource_domain=Phase10ResourceDomain.ROLLOUT,
+    ).create()
+    wrong_factory = _document_factory(
+        "ccccdddd",
+        resource_domain=Phase10ResourceDomain.ROLLOUT,
+    )
     request_owned = getattr(
         phase10_fixtures,
         "request_owned_document_deletion",
@@ -351,3 +366,75 @@ def test_owned_deletion_wrapper_rejects_external_id_before_service_call() -> Non
             document_factory=wrong_factory,
             settings=object(),
         )
+
+
+def test_rollout_deletion_wrapper_rejects_validation_factory_before_service_call() -> None:
+    factory = _document_factory(resource_domain=Phase10ResourceDomain.VALIDATION)
+    identity = factory.create()
+    request_owned = getattr(
+        phase10_fixtures,
+        "request_owned_document_deletion",
+        None,
+    )
+
+    assert callable(request_owned)
+    with pytest.raises(Phase10IntegrationGateError, match="resource domain"):
+        request_owned(
+            _ForbiddenSession(),
+            identity,
+            document_factory=factory,
+            settings=object(),
+        )
+
+
+def test_storage_manifest_rejects_rollout_factory_before_storage_use() -> None:
+    context = Phase10IntegrationRunContext(run_token="abcdef12")
+    factory = _document_factory(resource_domain=Phase10ResourceDomain.ROLLOUT)
+    identity = factory.create()
+    settings = SimpleNamespace(
+        minio_bucket=context.minio_bucket_for(Phase10ResourceDomain.ROLLOUT),
+        opensearch_index=context.opensearch_index_for(Phase10ResourceDomain.ROLLOUT),
+        opensearch_alias=context.opensearch_alias_for(Phase10ResourceDomain.ROLLOUT),
+    )
+
+    with pytest.raises(Phase10IntegrationGateError, match="resource domain"):
+        build_storage_manifest(
+            identity,
+            settings,
+            document_factory=factory,
+        )
+
+
+def test_retry_wait_assertion_reads_only_the_test_owned_job_and_document() -> None:
+    target_job_id = uuid4()
+    target_document_id = uuid4()
+    unrelated_job_ids = (uuid4(), uuid4(), uuid4())
+    session = _RecordingSession()
+    session.get_results[(DocumentDeletionJob, target_job_id)] = SimpleNamespace(
+        status="retry_wait",
+        current_step="delete_opensearch",
+        step_attempts=1,
+        next_retry_at=object(),
+        last_error_code="DOCUMENT_DELETION_OPENSEARCH_UNAVAILABLE",
+    )
+    session.get_results[(Document, target_document_id)] = SimpleNamespace(
+        deletion_status="deleting"
+    )
+    for unrelated_job_id in unrelated_job_ids:
+        session.get_results[(DocumentDeletionJob, unrelated_job_id)] = SimpleNamespace(
+            status="pending"
+        )
+
+    assertion = getattr(phase10_fixtures, "assert_owned_job_retry_wait", None)
+    assert callable(assertion)
+    assertion(
+        session,
+        job_id=target_job_id,
+        document_id=target_document_id,
+        expected_error_code="DOCUMENT_DELETION_OPENSEARCH_UNAVAILABLE",
+    )
+
+    assert session.get_calls == [
+        (DocumentDeletionJob, target_job_id),
+        (Document, target_document_id),
+    ]

@@ -46,79 +46,80 @@ class FixedEmbeddingProvider:
 )
 def test_full_saga_converges_to_zero_residual_and_preserves_unrelated_snapshot(
     monkeypatch,
-    phase10_settings,
-    phase10_session_factory,
-    phase10_minio_client,
-    phase10_opensearch_client,
-    phase10_document_factory,
-    phase10_runtime_settings,
+    phase10_rollout_pristine,
+    phase10_rollout_settings,
+    phase10_rollout_session_factory,
+    phase10_rollout_minio_client,
+    phase10_rollout_opensearch_client,
+    phase10_rollout_document_factory,
+    phase10_rollout_runtime_settings,
 ) -> None:
-    target = phase10_document_factory.create()
-    control = phase10_document_factory.create()
-    with phase10_session_factory() as session:
+    target = phase10_rollout_document_factory.create()
+    control = phase10_rollout_document_factory.create()
+    with phase10_rollout_session_factory() as session:
         persist_document_fixture(
             session,
             target,
-            bucket_name=phase10_settings.minio_bucket,
-            document_factory=phase10_document_factory,
+            bucket_name=phase10_rollout_settings.minio_bucket,
+            document_factory=phase10_rollout_document_factory,
         )
         persist_document_fixture(
             session,
             control,
-            bucket_name=phase10_settings.minio_bucket,
-            document_factory=phase10_document_factory,
+            bucket_name=phase10_rollout_settings.minio_bucket,
+            document_factory=phase10_rollout_document_factory,
         )
         knowledge = persist_shared_knowledge_fixture(session, target=target, control=control)
         session.commit()
         before_pg = capture_postgresql_snapshot(session)
 
     upload_minio_fixture_versions(
-        phase10_minio_client,
+        phase10_rollout_minio_client,
         target,
-        phase10_settings.minio_bucket,
-        document_factory=phase10_document_factory,
+        phase10_rollout_settings.minio_bucket,
+        document_factory=phase10_rollout_document_factory,
     )
     upload_minio_fixture_versions(
-        phase10_minio_client,
+        phase10_rollout_minio_client,
         control,
-        phase10_settings.minio_bucket,
-        document_factory=phase10_document_factory,
+        phase10_rollout_settings.minio_bucket,
+        document_factory=phase10_rollout_document_factory,
     )
     index_opensearch_fixture(
-        phase10_opensearch_client,
+        phase10_rollout_opensearch_client,
         target,
-        phase10_settings.opensearch_index,
-        document_factory=phase10_document_factory,
+        phase10_rollout_settings.opensearch_index,
+        document_factory=phase10_rollout_document_factory,
     )
     index_opensearch_fixture(
-        phase10_opensearch_client,
+        phase10_rollout_opensearch_client,
         control,
-        phase10_settings.opensearch_index,
-        document_factory=phase10_document_factory,
+        phase10_rollout_settings.opensearch_index,
+        document_factory=phase10_rollout_document_factory,
     )
-    before_minio = capture_minio_snapshot(phase10_minio_client, phase10_settings.minio_bucket)
+    before_minio = capture_minio_snapshot(phase10_rollout_minio_client, phase10_rollout_settings.minio_bucket)
     before_search = capture_opensearch_snapshot(
-        phase10_opensearch_client,
-        index_name=phase10_settings.opensearch_index,
-        alias_name=phase10_settings.opensearch_alias,
+        phase10_rollout_opensearch_client,
+        index_name=phase10_rollout_settings.opensearch_index,
+        alias_name=phase10_rollout_settings.opensearch_alias,
     )
 
-    with phase10_session_factory() as session:
+    with phase10_rollout_session_factory() as session:
         scheduled = request_owned_document_deletion(
             session,
             target,
-            document_factory=phase10_document_factory,
-            settings=phase10_runtime_settings,
+            document_factory=phase10_rollout_document_factory,
+            settings=phase10_rollout_runtime_settings,
         )
     assert scheduled is not None and scheduled.status == "deleting"
 
     executor = DocumentDeletionExecutor(
-        session_factory=phase10_session_factory,
-        settings=phase10_runtime_settings,
+        session_factory=phase10_rollout_session_factory,
+        settings=phase10_rollout_runtime_settings,
     )
     for _ in range(20):
         executor.run_once()
-        with phase10_session_factory() as session:
+        with phase10_rollout_session_factory() as session:
             job = session.scalar(
                 select(DocumentDeletionJob.id).where(
                     DocumentDeletionJob.document_id == target.document_id
@@ -129,15 +130,15 @@ def test_full_saga_converges_to_zero_residual_and_preserves_unrelated_snapshot(
     else:
         pytest.fail("Phase 10 executor did not converge within the bounded test drain.")
 
-    with phase10_session_factory() as session:
+    with phase10_rollout_session_factory() as session:
         after_pg = capture_postgresql_snapshot(session)
         assert session.get(Document, target.document_id) is None
         assert (
             request_owned_document_deletion(
                 session,
                 target,
-                document_factory=phase10_document_factory,
-                settings=phase10_runtime_settings,
+                document_factory=phase10_rollout_document_factory,
+                settings=phase10_rollout_runtime_settings,
             )
             is None
         )
@@ -145,19 +146,19 @@ def test_full_saga_converges_to_zero_residual_and_preserves_unrelated_snapshot(
             Document.__table__.select().where(Document.id == target.document_id)
         ).all()
 
-    after_minio = capture_minio_snapshot(phase10_minio_client, phase10_settings.minio_bucket)
+    after_minio = capture_minio_snapshot(phase10_rollout_minio_client, phase10_rollout_settings.minio_bucket)
     after_search = capture_opensearch_snapshot(
-        phase10_opensearch_client,
-        index_name=phase10_settings.opensearch_index,
-        alias_name=phase10_settings.opensearch_alias,
+        phase10_rollout_opensearch_client,
+        index_name=phase10_rollout_settings.opensearch_index,
+        alias_name=phase10_rollout_settings.opensearch_alias,
     )
-    assert phase10_opensearch_client.count(
-        index=phase10_settings.opensearch_index,
+    assert phase10_rollout_opensearch_client.count(
+        index=phase10_rollout_settings.opensearch_index,
         body={"query": {"term": {"document_id": str(target.document_id)}}},
     )["count"] == 0
     for chunk_id in target.chunk_ids:
-        assert phase10_opensearch_client.count(
-            index=phase10_settings.opensearch_index,
+        assert phase10_rollout_opensearch_client.count(
+            index=phase10_rollout_settings.opensearch_index,
             body={
                 "query": {
                     "bool": {
@@ -193,26 +194,26 @@ def test_full_saga_converges_to_zero_residual_and_preserves_unrelated_snapshot(
         target_opensearch_ids={str(chunk_id) for chunk_id in target.chunk_ids},
     )
 
-    search_settings = phase10_runtime_settings.model_copy(
+    search_settings = phase10_rollout_runtime_settings.model_copy(
         update={
-            "search_index_name": phase10_settings.opensearch_index,
-            "search_index_alias": phase10_settings.opensearch_alias,
+            "search_index_name": phase10_rollout_settings.opensearch_index,
+            "search_index_alias": phase10_rollout_settings.opensearch_alias,
         }
     )
-    with phase10_session_factory() as session:
+    with phase10_rollout_session_factory() as session:
         retrieval = hybrid_search_chunks(
             session,
             query=target.namespace,
             limit=8,
-            client=phase10_opensearch_client,
+            client=phase10_rollout_opensearch_client,
             settings=search_settings,
             embedding_provider=FixedEmbeddingProvider(),
-            deletion_filter_session_factory=phase10_session_factory,
+            deletion_filter_session_factory=phase10_rollout_session_factory,
         )
     assert all(item.document_id != str(target.document_id) for item in retrieval.items)
 
     monkeypatch.setattr("app.services.rag.retrieve_chunks", lambda *args, **kwargs: retrieval)
-    with phase10_session_factory() as session:
+    with phase10_rollout_session_factory() as session:
         rag_result = answer_question(
             session,
             target.namespace,
@@ -223,70 +224,71 @@ def test_full_saga_converges_to_zero_residual_and_preserves_unrelated_snapshot(
 
 def test_core_full_saga_converges_to_zero_residual_and_preserves_unrelated_snapshot(
     monkeypatch,
-    phase10_settings,
-    phase10_session_factory,
-    phase10_minio_client,
-    phase10_opensearch_client,
-    phase10_document_factory,
-    phase10_runtime_settings,
+    phase10_rollout_pristine,
+    phase10_rollout_settings,
+    phase10_rollout_session_factory,
+    phase10_rollout_minio_client,
+    phase10_rollout_opensearch_client,
+    phase10_rollout_document_factory,
+    phase10_rollout_runtime_settings,
 ) -> None:
     """Knowledge is intentionally excluded pending the separate library refactor."""
 
-    target = phase10_document_factory.create()
-    control = phase10_document_factory.create()
-    with phase10_session_factory() as session:
+    target = phase10_rollout_document_factory.create()
+    control = phase10_rollout_document_factory.create()
+    with phase10_rollout_session_factory() as session:
         persist_document_fixture(
             session,
             target,
-            bucket_name=phase10_settings.minio_bucket,
-            document_factory=phase10_document_factory,
+            bucket_name=phase10_rollout_settings.minio_bucket,
+            document_factory=phase10_rollout_document_factory,
         )
         persist_document_fixture(
             session,
             control,
-            bucket_name=phase10_settings.minio_bucket,
-            document_factory=phase10_document_factory,
+            bucket_name=phase10_rollout_settings.minio_bucket,
+            document_factory=phase10_rollout_document_factory,
         )
         session.commit()
         before_pg = capture_postgresql_snapshot(session)
 
     upload_minio_fixture_versions(
-        phase10_minio_client,
+        phase10_rollout_minio_client,
         target,
-        phase10_settings.minio_bucket,
-        document_factory=phase10_document_factory,
+        phase10_rollout_settings.minio_bucket,
+        document_factory=phase10_rollout_document_factory,
     )
     upload_minio_fixture_versions(
-        phase10_minio_client,
+        phase10_rollout_minio_client,
         control,
-        phase10_settings.minio_bucket,
-        document_factory=phase10_document_factory,
+        phase10_rollout_settings.minio_bucket,
+        document_factory=phase10_rollout_document_factory,
     )
     index_opensearch_fixture(
-        phase10_opensearch_client,
+        phase10_rollout_opensearch_client,
         target,
-        phase10_settings.opensearch_index,
-        document_factory=phase10_document_factory,
+        phase10_rollout_settings.opensearch_index,
+        document_factory=phase10_rollout_document_factory,
     )
     index_opensearch_fixture(
-        phase10_opensearch_client,
+        phase10_rollout_opensearch_client,
         control,
-        phase10_settings.opensearch_index,
-        document_factory=phase10_document_factory,
+        phase10_rollout_settings.opensearch_index,
+        document_factory=phase10_rollout_document_factory,
     )
-    before_minio = capture_minio_snapshot(phase10_minio_client, phase10_settings.minio_bucket)
+    before_minio = capture_minio_snapshot(phase10_rollout_minio_client, phase10_rollout_settings.minio_bucket)
     before_search = capture_opensearch_snapshot(
-        phase10_opensearch_client,
-        index_name=phase10_settings.opensearch_index,
-        alias_name=phase10_settings.opensearch_alias,
+        phase10_rollout_opensearch_client,
+        index_name=phase10_rollout_settings.opensearch_index,
+        alias_name=phase10_rollout_settings.opensearch_alias,
     )
 
-    with phase10_session_factory() as session:
+    with phase10_rollout_session_factory() as session:
         scheduled = request_owned_document_deletion(
             session,
             target,
-            document_factory=phase10_document_factory,
-            settings=phase10_runtime_settings,
+            document_factory=phase10_rollout_document_factory,
+            settings=phase10_rollout_runtime_settings,
         )
         target_job_id = session.scalar(
             select(DocumentDeletionJob.id).where(
@@ -297,12 +299,12 @@ def test_core_full_saga_converges_to_zero_residual_and_preserves_unrelated_snaps
     assert target_job_id is not None
 
     executor = DocumentDeletionExecutor(
-        session_factory=phase10_session_factory,
-        settings=phase10_runtime_settings,
+        session_factory=phase10_rollout_session_factory,
+        settings=phase10_rollout_runtime_settings,
     )
     for _ in range(20):
         executor.run_once()
-        with phase10_session_factory() as session:
+        with phase10_rollout_session_factory() as session:
             job = session.scalar(
                 select(DocumentDeletionJob.id).where(
                     DocumentDeletionJob.document_id == target.document_id
@@ -313,32 +315,32 @@ def test_core_full_saga_converges_to_zero_residual_and_preserves_unrelated_snaps
     else:
         pytest.fail("Phase 10 core executor did not converge within the bounded test drain.")
 
-    with phase10_session_factory() as session:
+    with phase10_rollout_session_factory() as session:
         after_pg = capture_postgresql_snapshot(session)
         assert session.get(Document, target.document_id) is None
         assert (
             request_owned_document_deletion(
                 session,
                 target,
-                document_factory=phase10_document_factory,
-                settings=phase10_runtime_settings,
+                document_factory=phase10_rollout_document_factory,
+                settings=phase10_rollout_runtime_settings,
             )
             is None
         )
 
-    after_minio = capture_minio_snapshot(phase10_minio_client, phase10_settings.minio_bucket)
+    after_minio = capture_minio_snapshot(phase10_rollout_minio_client, phase10_rollout_settings.minio_bucket)
     after_search = capture_opensearch_snapshot(
-        phase10_opensearch_client,
-        index_name=phase10_settings.opensearch_index,
-        alias_name=phase10_settings.opensearch_alias,
+        phase10_rollout_opensearch_client,
+        index_name=phase10_rollout_settings.opensearch_index,
+        alias_name=phase10_rollout_settings.opensearch_alias,
     )
-    assert phase10_opensearch_client.count(
-        index=phase10_settings.opensearch_index,
+    assert phase10_rollout_opensearch_client.count(
+        index=phase10_rollout_settings.opensearch_index,
         body={"query": {"term": {"document_id": str(target.document_id)}}},
     )["count"] == 0
     for chunk_id in target.chunk_ids:
-        assert phase10_opensearch_client.count(
-            index=phase10_settings.opensearch_index,
+        assert phase10_rollout_opensearch_client.count(
+            index=phase10_rollout_settings.opensearch_index,
             body={
                 "query": {
                     "bool": {
@@ -367,26 +369,26 @@ def test_core_full_saga_converges_to_zero_residual_and_preserves_unrelated_snaps
         target_opensearch_ids={str(chunk_id) for chunk_id in target.chunk_ids},
     )
 
-    search_settings = phase10_runtime_settings.model_copy(
+    search_settings = phase10_rollout_runtime_settings.model_copy(
         update={
-            "search_index_name": phase10_settings.opensearch_index,
-            "search_index_alias": phase10_settings.opensearch_alias,
+            "search_index_name": phase10_rollout_settings.opensearch_index,
+            "search_index_alias": phase10_rollout_settings.opensearch_alias,
         }
     )
-    with phase10_session_factory() as session:
+    with phase10_rollout_session_factory() as session:
         retrieval = hybrid_search_chunks(
             session,
             query=target.namespace,
             limit=8,
-            client=phase10_opensearch_client,
+            client=phase10_rollout_opensearch_client,
             settings=search_settings,
             embedding_provider=FixedEmbeddingProvider(),
-            deletion_filter_session_factory=phase10_session_factory,
+            deletion_filter_session_factory=phase10_rollout_session_factory,
         )
     assert all(item.document_id != str(target.document_id) for item in retrieval.items)
 
     monkeypatch.setattr("app.services.rag.retrieve_chunks", lambda *args, **kwargs: retrieval)
-    with phase10_session_factory() as session:
+    with phase10_rollout_session_factory() as session:
         rag_result = answer_question(
             session,
             target.namespace,

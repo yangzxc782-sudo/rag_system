@@ -4,7 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
 from uuid import uuid4
 
-from sqlalchemy import select, text, update
+from sqlalchemy import func, select, text, update
 
 import pytest
 
@@ -12,13 +12,14 @@ from app.models.document_deletion_job import DocumentDeletionJob
 from app.models.knowledge_item import KnowledgeItem
 from app.services.document_deletion import (
     advance_claimed_deletion,
-    claim_document_deletion,
     finalize_postgresql_deletion,
     renew_claimed_deletion,
     sweep_exhausted_deletions,
 )
 from integration.phase10_fixtures import (
     build_finalization_claim,
+    claim_test_owned_job,
+    drain_claimable_jobs_excluding_target,
     persist_document_fixture,
     persist_revision_boundary_fixture,
     persist_revision_cycle_fixture,
@@ -43,31 +44,36 @@ def _run_concurrently(*operations):
 
 
 def test_two_real_transactions_claim_one_job_once(
-    phase10_session_factory,
-    phase10_document_factory,
-    phase10_runtime_settings,
+    phase10_validation_session_factory,
+    phase10_validation_document_factory,
+    phase10_validation_runtime_settings,
 ) -> None:
-    target = phase10_document_factory.create()
-    with phase10_session_factory() as session:
+    target = phase10_validation_document_factory.create()
+    with phase10_validation_session_factory() as session:
         persist_document_fixture(
             session,
             target,
-            bucket_name=phase10_runtime_settings.minio_bucket,
-            document_factory=phase10_document_factory,
+            bucket_name=phase10_validation_runtime_settings.minio_bucket,
+            document_factory=phase10_validation_document_factory,
         )
-        schedule_pending_job(
+        job = schedule_pending_job(
             session,
             target,
-            phase10_runtime_settings,
+            phase10_validation_runtime_settings,
             current_step="delete_opensearch",
-            document_factory=phase10_document_factory,
+            document_factory=phase10_validation_document_factory,
         )
         session.commit()
 
     def claimant(worker: str):
-        with phase10_session_factory() as session:
-            claimed = claim_document_deletion(
+        with phase10_validation_session_factory() as session:
+            max_claims = int(
+                session.scalar(select(func.count()).select_from(DocumentDeletionJob)) or 0
+            ) + 2
+            claimed = claim_test_owned_job(
                 session,
+                target_job_id=job.id,
+                max_claims=max_claims,
                 locked_by=worker,
                 lease_token=uuid4(),
                 lease_seconds=3,
@@ -76,28 +82,28 @@ def test_two_real_transactions_claim_one_job_once(
             return claimed
 
     results = _run_concurrently(lambda: claimant("worker-a"), lambda: claimant("worker-b"))
-    assert sum(result is not None for result in results) == 1
+    assert sum(result is not None and result.job_id == job.id for result in results) == 1
 
 
 def test_expiry_fencing_heartbeat_and_exhaustion_are_mutually_exclusive(
-    phase10_session_factory,
-    phase10_document_factory,
-    phase10_runtime_settings,
+    phase10_validation_session_factory,
+    phase10_validation_document_factory,
+    phase10_validation_runtime_settings,
 ) -> None:
-    target = phase10_document_factory.create()
-    with phase10_session_factory() as session:
+    target = phase10_validation_document_factory.create()
+    with phase10_validation_session_factory() as session:
         persist_document_fixture(
             session,
             target,
-            bucket_name=phase10_runtime_settings.minio_bucket,
-            document_factory=phase10_document_factory,
+            bucket_name=phase10_validation_runtime_settings.minio_bucket,
+            document_factory=phase10_validation_document_factory,
         )
         old_claim, _manifest = build_finalization_claim(
             session,
             target,
-            document_factory=phase10_document_factory,
+            document_factory=phase10_validation_document_factory,
             knowledge=None,
-            settings=phase10_runtime_settings,
+            settings=phase10_validation_runtime_settings,
         )
         session.commit()
         session.execute(
@@ -107,9 +113,14 @@ def test_expiry_fencing_heartbeat_and_exhaustion_are_mutually_exclusive(
         )
         session.commit()
 
-    with phase10_session_factory() as session:
-        new_claim = claim_document_deletion(
+    with phase10_validation_session_factory() as session:
+        max_claims = int(
+            session.scalar(select(func.count()).select_from(DocumentDeletionJob)) or 0
+        ) + 2
+        new_claim = claim_test_owned_job(
             session,
+            target_job_id=old_claim.job_id,
+            max_claims=max_claims,
             locked_by="new-owner",
             lease_token=uuid4(),
             lease_seconds=5,
@@ -117,7 +128,7 @@ def test_expiry_fencing_heartbeat_and_exhaustion_are_mutually_exclusive(
         session.commit()
     assert new_claim is not None
 
-    with phase10_session_factory() as session:
+    with phase10_validation_session_factory() as session:
         assert advance_claimed_deletion(
             session,
             old_claim,
@@ -126,17 +137,18 @@ def test_expiry_fencing_heartbeat_and_exhaustion_are_mutually_exclusive(
         assert renew_claimed_deletion(session, new_claim, lease_seconds=5) is True
         session.commit()
 
-    with phase10_session_factory() as session:
-        assert (
-            claim_document_deletion(
-                session,
-                locked_by="third-owner",
-                lease_token=uuid4(),
-                lease_seconds=5,
-            )
-            is None
+    with phase10_validation_session_factory() as session:
+        max_claims = int(
+            session.scalar(select(func.count()).select_from(DocumentDeletionJob)) or 0
+        ) + 2
+        drained = drain_claimable_jobs_excluding_target(
+            session,
+            target_job_id=new_claim.job_id,
+            max_claims=max_claims,
+            locked_by="third-owner",
+            lease_seconds=5,
         )
-        session.rollback()
+        assert new_claim.job_id not in drained
 
         session.execute(
             update(DocumentDeletionJob)
@@ -148,17 +160,20 @@ def test_expiry_fencing_heartbeat_and_exhaustion_are_mutually_exclusive(
         )
         session.commit()
 
-    with phase10_session_factory() as session:
-        assert (
-            claim_document_deletion(
-                session,
-                locked_by="forbidden-extra-attempt",
-                lease_token=uuid4(),
-                lease_seconds=5,
-            )
-            is None
+    with phase10_validation_session_factory() as session:
+        max_claims = int(
+            session.scalar(select(func.count()).select_from(DocumentDeletionJob)) or 0
+        ) + 2
+        drained = drain_claimable_jobs_excluding_target(
+            session,
+            target_job_id=new_claim.job_id,
+            max_claims=max_claims,
+            locked_by="forbidden-extra-attempt",
+            lease_seconds=5,
         )
-        assert sweep_exhausted_deletions(session) == (new_claim.job_id,)
+        assert new_claim.job_id not in drained
+        swept = sweep_exhausted_deletions(session)
+        assert new_claim.job_id in swept
         session.commit()
 
 
@@ -166,24 +181,24 @@ def test_expiry_fencing_heartbeat_and_exhaustion_are_mutually_exclusive(
     reason="Deferred by project owner pending Knowledge Item Library refactor."
 )
 def test_simultaneous_a_b_finalization_deletes_last_shared_source_without_deadlock(
-    phase10_session_factory,
-    phase10_document_factory,
-    phase10_runtime_settings,
+    phase10_validation_session_factory,
+    phase10_validation_document_factory,
+    phase10_validation_runtime_settings,
 ) -> None:
-    document_a = phase10_document_factory.create()
-    document_b = phase10_document_factory.create()
-    with phase10_session_factory() as session:
+    document_a = phase10_validation_document_factory.create()
+    document_b = phase10_validation_document_factory.create()
+    with phase10_validation_session_factory() as session:
         persist_document_fixture(
             session,
             document_a,
-            bucket_name=phase10_runtime_settings.minio_bucket,
-            document_factory=phase10_document_factory,
+            bucket_name=phase10_validation_runtime_settings.minio_bucket,
+            document_factory=phase10_validation_document_factory,
         )
         persist_document_fixture(
             session,
             document_b,
-            bucket_name=phase10_runtime_settings.minio_bucket,
-            document_factory=phase10_document_factory,
+            bucket_name=phase10_validation_runtime_settings.minio_bucket,
+            document_factory=phase10_validation_document_factory,
         )
         knowledge = persist_shared_knowledge_fixture(
             session,
@@ -193,21 +208,21 @@ def test_simultaneous_a_b_finalization_deletes_last_shared_source_without_deadlo
         claim_a, manifest_a = build_finalization_claim(
             session,
             document_a,
-            document_factory=phase10_document_factory,
+            document_factory=phase10_validation_document_factory,
             knowledge=knowledge,
-            settings=phase10_runtime_settings,
+            settings=phase10_validation_runtime_settings,
         )
         claim_b, manifest_b = build_finalization_claim(
             session,
             document_b,
-            document_factory=phase10_document_factory,
+            document_factory=phase10_validation_document_factory,
             knowledge=knowledge,
-            settings=phase10_runtime_settings,
+            settings=phase10_validation_runtime_settings,
         )
         session.commit()
 
     def finalize(claimed, manifest):
-        with phase10_session_factory() as session:
+        with phase10_validation_session_factory() as session:
             finalize_postgresql_deletion(session, claimed=claimed, manifest=manifest)
             session.commit()
 
@@ -216,7 +231,7 @@ def test_simultaneous_a_b_finalization_deletes_last_shared_source_without_deadlo
         lambda: finalize(claim_b, manifest_b),
     )
 
-    with phase10_session_factory() as session:
+    with phase10_validation_session_factory() as session:
         assert session.get(KnowledgeItem, knowledge.shared_item_id) is None
         assert session.scalar(
             select(DocumentDeletionJob).where(
@@ -229,24 +244,24 @@ def test_simultaneous_a_b_finalization_deletes_last_shared_source_without_deadlo
     reason="Deferred by project owner pending Knowledge Item Library refactor."
 )
 def test_overlapping_revision_cycle_concurrent_finalization_terminates_without_deadlock(
-    phase10_session_factory,
-    phase10_document_factory,
-    phase10_runtime_settings,
+    phase10_validation_session_factory,
+    phase10_validation_document_factory,
+    phase10_validation_runtime_settings,
 ) -> None:
-    document_a = phase10_document_factory.create()
-    document_b = phase10_document_factory.create()
-    with phase10_session_factory() as session:
+    document_a = phase10_validation_document_factory.create()
+    document_b = phase10_validation_document_factory.create()
+    with phase10_validation_session_factory() as session:
         persist_document_fixture(
             session,
             document_a,
-            bucket_name=phase10_runtime_settings.minio_bucket,
-            document_factory=phase10_document_factory,
+            bucket_name=phase10_validation_runtime_settings.minio_bucket,
+            document_factory=phase10_validation_document_factory,
         )
         persist_document_fixture(
             session,
             document_b,
-            bucket_name=phase10_runtime_settings.minio_bucket,
-            document_factory=phase10_document_factory,
+            bucket_name=phase10_validation_runtime_settings.minio_bucket,
+            document_factory=phase10_validation_document_factory,
         )
         revision = persist_revision_cycle_fixture(
             session,
@@ -256,21 +271,21 @@ def test_overlapping_revision_cycle_concurrent_finalization_terminates_without_d
         claim_a, manifest_a = build_finalization_claim(
             session,
             document_a,
-            document_factory=phase10_document_factory,
+            document_factory=phase10_validation_document_factory,
             knowledge=revision,
-            settings=phase10_runtime_settings,
+            settings=phase10_validation_runtime_settings,
         )
         claim_b, manifest_b = build_finalization_claim(
             session,
             document_b,
-            document_factory=phase10_document_factory,
+            document_factory=phase10_validation_document_factory,
             knowledge=revision,
-            settings=phase10_runtime_settings,
+            settings=phase10_validation_runtime_settings,
         )
         session.commit()
 
     def finalize(claimed, manifest):
-        with phase10_session_factory() as session:
+        with phase10_validation_session_factory() as session:
             finalize_postgresql_deletion(session, claimed=claimed, manifest=manifest)
             session.commit()
 
@@ -279,7 +294,7 @@ def test_overlapping_revision_cycle_concurrent_finalization_terminates_without_d
         lambda: finalize(claim_b, manifest_b),
     )
 
-    with phase10_session_factory() as session:
+    with phase10_validation_session_factory() as session:
         assert all(session.get(KnowledgeItem, item_id) is None for item_id in revision.all_item_ids)
 
 
@@ -287,24 +302,24 @@ def test_overlapping_revision_cycle_concurrent_finalization_terminates_without_d
     reason="Deferred by project owner pending Knowledge Item Library refactor."
 )
 def test_real_self_cycle_terminates_and_surviving_revision_detaches_from_orphan_parent(
-    phase10_session_factory,
-    phase10_document_factory,
-    phase10_runtime_settings,
+    phase10_validation_session_factory,
+    phase10_validation_document_factory,
+    phase10_validation_runtime_settings,
 ) -> None:
-    document_a = phase10_document_factory.create()
-    document_b = phase10_document_factory.create()
-    with phase10_session_factory() as session:
+    document_a = phase10_validation_document_factory.create()
+    document_b = phase10_validation_document_factory.create()
+    with phase10_validation_session_factory() as session:
         persist_document_fixture(
             session,
             document_a,
-            bucket_name=phase10_runtime_settings.minio_bucket,
-            document_factory=phase10_document_factory,
+            bucket_name=phase10_validation_runtime_settings.minio_bucket,
+            document_factory=phase10_validation_document_factory,
         )
         persist_document_fixture(
             session,
             document_b,
-            bucket_name=phase10_runtime_settings.minio_bucket,
-            document_factory=phase10_document_factory,
+            bucket_name=phase10_validation_runtime_settings.minio_bucket,
+            document_factory=phase10_validation_document_factory,
         )
         boundary = persist_revision_boundary_fixture(
             session,
@@ -314,17 +329,17 @@ def test_real_self_cycle_terminates_and_surviving_revision_detaches_from_orphan_
         claimed, manifest = build_finalization_claim(
             session,
             document_a,
-            document_factory=phase10_document_factory,
+            document_factory=phase10_validation_document_factory,
             knowledge=None,
-            settings=phase10_runtime_settings,
+            settings=phase10_validation_runtime_settings,
         )
         session.commit()
 
-    with phase10_session_factory() as session:
+    with phase10_validation_session_factory() as session:
         finalize_postgresql_deletion(session, claimed=claimed, manifest=manifest)
         session.commit()
 
-    with phase10_session_factory() as session:
+    with phase10_validation_session_factory() as session:
         assert session.get(KnowledgeItem, boundary.orphan_parent_id) is None
         assert session.get(KnowledgeItem, boundary.self_cycle_id) is None
         surviving = session.get(KnowledgeItem, boundary.surviving_child_id)

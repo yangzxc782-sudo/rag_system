@@ -32,6 +32,7 @@ from app.services.object_storage import list_minio_object_versions
 from integration.phase10_run_context import (
     Phase10IntegrationRunContext,
     Phase10IntegrationRunContextError,
+    Phase10ResourceDomain,
 )
 
 
@@ -43,10 +44,20 @@ class Phase10IntegrationGateError(RuntimeError):
 
 
 @dataclass(frozen=True, slots=True)
-class Phase10IntegrationSettings:
-    run_context: Phase10IntegrationRunContext
+class Phase10ResourceSettings:
+    resource_domain: Phase10ResourceDomain
     database_url: str = field(repr=False)
     database_name: str
+    minio_bucket: str
+    opensearch_index: str
+    opensearch_alias: str
+
+
+@dataclass(frozen=True, slots=True)
+class Phase10IntegrationSettings:
+    run_context: Phase10IntegrationRunContext
+    validation: Phase10ResourceSettings
+    rollout: Phase10ResourceSettings
     migration_database_url: str = field(repr=False)
     migration_database_name: str
     restore_database_url: str = field(repr=False)
@@ -54,14 +65,18 @@ class Phase10IntegrationSettings:
     minio_endpoint: str
     minio_access_key: str = field(repr=False)
     minio_secret_key: str = field(repr=False)
-    minio_bucket: str
     minio_secure: bool
     opensearch_url: str
-    opensearch_index: str
-    opensearch_alias: str
     opensearch_username: str = field(default="", repr=False)
     opensearch_password: str = field(default="", repr=False)
     opensearch_verify_ssl: bool = False
+
+    def for_domain(self, domain: Phase10ResourceDomain) -> Phase10ResourceSettings:
+        if domain is Phase10ResourceDomain.VALIDATION:
+            return self.validation
+        if domain is Phase10ResourceDomain.ROLLOUT:
+            return self.rollout
+        raise Phase10IntegrationGateError("Phase 10 resource domain is invalid.")
 
 
 def load_phase10_integration_settings(
@@ -93,6 +108,8 @@ def load_phase10_integration_settings(
         for name in (
             "PHASE10_INTEGRATION_DATABASE_URL",
             "PHASE10_INTEGRATION_DATABASE_NAME_CONFIRM",
+            "PHASE10_INTEGRATION_VALIDATION_DATABASE_URL",
+            "PHASE10_INTEGRATION_VALIDATION_DATABASE_NAME_CONFIRM",
             "PHASE10_INTEGRATION_MIGRATION_DATABASE_URL",
             "PHASE10_INTEGRATION_MIGRATION_DATABASE_NAME_CONFIRM",
             "PHASE10_INTEGRATION_RESTORE_DATABASE_URL",
@@ -102,14 +119,19 @@ def load_phase10_integration_settings(
             "PHASE10_INTEGRATION_MINIO_SECRET_KEY",
             "PHASE10_INTEGRATION_MINIO_BUCKET",
             "PHASE10_INTEGRATION_MINIO_BUCKET_CONFIRM",
+            "PHASE10_INTEGRATION_VALIDATION_MINIO_BUCKET",
+            "PHASE10_INTEGRATION_VALIDATION_MINIO_BUCKET_CONFIRM",
             "PHASE10_INTEGRATION_OPENSEARCH_URL",
             "PHASE10_INTEGRATION_OPENSEARCH_INDEX",
             "PHASE10_INTEGRATION_OPENSEARCH_ALIAS",
             "PHASE10_INTEGRATION_OPENSEARCH_TARGET_CONFIRM",
+            "PHASE10_INTEGRATION_VALIDATION_OPENSEARCH_INDEX",
+            "PHASE10_INTEGRATION_VALIDATION_OPENSEARCH_ALIAS",
+            "PHASE10_INTEGRATION_VALIDATION_OPENSEARCH_TARGET_CONFIRM",
         )
     }
 
-    database_name = _validate_database_target(
+    rollout_database_name = _validate_database_target(
         required["PHASE10_INTEGRATION_DATABASE_URL"],
         required["PHASE10_INTEGRATION_DATABASE_NAME_CONFIRM"],
         field="integration database",
@@ -119,58 +141,109 @@ def load_phase10_integration_settings(
         required["PHASE10_INTEGRATION_MIGRATION_DATABASE_NAME_CONFIRM"],
         field="migration database",
     )
+    validation_database_name = _validate_database_target(
+        required["PHASE10_INTEGRATION_VALIDATION_DATABASE_URL"],
+        required["PHASE10_INTEGRATION_VALIDATION_DATABASE_NAME_CONFIRM"],
+        field="validation database",
+    )
     restore_database_name = _validate_database_target(
         required["PHASE10_INTEGRATION_RESTORE_DATABASE_URL"],
         required["PHASE10_INTEGRATION_RESTORE_DATABASE_NAME_CONFIRM"],
         field="restore database",
     )
-    if len({database_name, migration_database_name, restore_database_name}) != 3:
+    if len(
+        {
+            validation_database_name,
+            rollout_database_name,
+            migration_database_name,
+            restore_database_name,
+        }
+    ) != 4:
         raise Phase10IntegrationGateError(
-            "Phase 10 integration, migration, and restore databases must be different."
+            "Phase 10 validation, rollout, migration, and restore databases must be different."
         )
 
-    bucket = required["PHASE10_INTEGRATION_MINIO_BUCKET"]
-    if not bucket.startswith("phase10-"):
-        raise Phase10IntegrationGateError(
-            "Phase 10 MinIO bucket must be a dedicated phase10-* test bucket."
-        )
-    if required["PHASE10_INTEGRATION_MINIO_BUCKET_CONFIRM"] != bucket:
-        raise Phase10IntegrationGateError("Phase 10 MinIO bucket confirmation does not match.")
+    rollout_bucket = _validate_minio_bucket(
+        required["PHASE10_INTEGRATION_MINIO_BUCKET"],
+        required["PHASE10_INTEGRATION_MINIO_BUCKET_CONFIRM"],
+        field="rollout bucket",
+    )
+    validation_bucket = _validate_minio_bucket(
+        required["PHASE10_INTEGRATION_VALIDATION_MINIO_BUCKET"],
+        required["PHASE10_INTEGRATION_VALIDATION_MINIO_BUCKET_CONFIRM"],
+        field="validation bucket",
+    )
 
-    index_name = _validate_opensearch_name(
+    rollout_index_name = _validate_opensearch_name(
         required["PHASE10_INTEGRATION_OPENSEARCH_INDEX"],
-        field="index",
+        field="rollout index",
     )
-    alias_name = _validate_opensearch_name(
+    rollout_alias_name = _validate_opensearch_name(
         required["PHASE10_INTEGRATION_OPENSEARCH_ALIAS"],
-        field="alias",
+        field="rollout alias",
     )
-    if required["PHASE10_INTEGRATION_OPENSEARCH_TARGET_CONFIRM"] != f"{index_name}:{alias_name}":
-        raise Phase10IntegrationGateError(
-            "Phase 10 OpenSearch target confirmation does not match the index and alias."
-        )
+    _validate_opensearch_confirmation(
+        required["PHASE10_INTEGRATION_OPENSEARCH_TARGET_CONFIRM"],
+        index_name=rollout_index_name,
+        alias_name=rollout_alias_name,
+        field="rollout target",
+    )
+    validation_index_name = _validate_opensearch_name(
+        required["PHASE10_INTEGRATION_VALIDATION_OPENSEARCH_INDEX"],
+        field="validation index",
+    )
+    validation_alias_name = _validate_opensearch_name(
+        required["PHASE10_INTEGRATION_VALIDATION_OPENSEARCH_ALIAS"],
+        field="validation alias",
+    )
+    _validate_opensearch_confirmation(
+        required["PHASE10_INTEGRATION_VALIDATION_OPENSEARCH_TARGET_CONFIRM"],
+        index_name=validation_index_name,
+        alias_name=validation_alias_name,
+        field="validation target",
+    )
 
     opensearch_url = required["PHASE10_INTEGRATION_OPENSEARCH_URL"]
     parsed_search_url = urlparse(opensearch_url)
     if parsed_search_url.scheme not in {"http", "https"} or not parsed_search_url.hostname:
-        raise Phase10IntegrationGateError("Phase 10 OpenSearch URL must be an explicit HTTP(S) URL.")
+        raise Phase10IntegrationGateError(
+            "Phase 10 OpenSearch URL must be an explicit HTTP(S) URL."
+        )
 
     try:
         run_context.validate_configured_resources(
-            postgres_database=database_name,
+            validation_postgres_database=validation_database_name,
+            rollout_postgres_database=rollout_database_name,
             migration_database=migration_database_name,
             restore_database=restore_database_name,
-            minio_bucket=bucket,
-            opensearch_index=index_name,
-            opensearch_alias=alias_name,
+            validation_minio_bucket=validation_bucket,
+            rollout_minio_bucket=rollout_bucket,
+            validation_opensearch_index=validation_index_name,
+            rollout_opensearch_index=rollout_index_name,
+            validation_opensearch_alias=validation_alias_name,
+            rollout_opensearch_alias=rollout_alias_name,
         )
     except Phase10IntegrationRunContextError as exc:
         raise Phase10IntegrationGateError(str(exc)) from exc
 
     return Phase10IntegrationSettings(
         run_context=run_context,
-        database_url=required["PHASE10_INTEGRATION_DATABASE_URL"],
-        database_name=database_name,
+        validation=Phase10ResourceSettings(
+            resource_domain=Phase10ResourceDomain.VALIDATION,
+            database_url=required["PHASE10_INTEGRATION_VALIDATION_DATABASE_URL"],
+            database_name=validation_database_name,
+            minio_bucket=validation_bucket,
+            opensearch_index=validation_index_name,
+            opensearch_alias=validation_alias_name,
+        ),
+        rollout=Phase10ResourceSettings(
+            resource_domain=Phase10ResourceDomain.ROLLOUT,
+            database_url=required["PHASE10_INTEGRATION_DATABASE_URL"],
+            database_name=rollout_database_name,
+            minio_bucket=rollout_bucket,
+            opensearch_index=rollout_index_name,
+            opensearch_alias=rollout_alias_name,
+        ),
         migration_database_url=required["PHASE10_INTEGRATION_MIGRATION_DATABASE_URL"],
         migration_database_name=migration_database_name,
         restore_database_url=required["PHASE10_INTEGRATION_RESTORE_DATABASE_URL"],
@@ -178,11 +251,8 @@ def load_phase10_integration_settings(
         minio_endpoint=required["PHASE10_INTEGRATION_MINIO_ENDPOINT"],
         minio_access_key=required["PHASE10_INTEGRATION_MINIO_ACCESS_KEY"],
         minio_secret_key=required["PHASE10_INTEGRATION_MINIO_SECRET_KEY"],
-        minio_bucket=bucket,
         minio_secure=_bool_value(environ, "PHASE10_INTEGRATION_MINIO_SECURE", default=False),
         opensearch_url=opensearch_url,
-        opensearch_index=index_name,
-        opensearch_alias=alias_name,
         opensearch_username=str(environ.get("PHASE10_INTEGRATION_OPENSEARCH_USERNAME", "")),
         opensearch_password=str(environ.get("PHASE10_INTEGRATION_OPENSEARCH_PASSWORD", "")),
         opensearch_verify_ssl=_bool_value(
@@ -191,6 +261,31 @@ def load_phase10_integration_settings(
             default=False,
         ),
     )
+
+
+def _validate_minio_bucket(value: str, confirmation: str, *, field: str) -> str:
+    if not value.startswith("phase10-"):
+        raise Phase10IntegrationGateError(
+            f"Phase 10 MinIO {field} must be a dedicated phase10-* test bucket."
+        )
+    if confirmation != value:
+        raise Phase10IntegrationGateError(
+            f"Phase 10 MinIO {field} confirmation does not match."
+        )
+    return value
+
+
+def _validate_opensearch_confirmation(
+    confirmation: str,
+    *,
+    index_name: str,
+    alias_name: str,
+    field: str,
+) -> None:
+    if confirmation != f"{index_name}:{alias_name}":
+        raise Phase10IntegrationGateError(
+            f"Phase 10 OpenSearch {field} confirmation does not match."
+        )
 
 
 def _required(environ: Mapping[str, str], name: str) -> str:
@@ -241,6 +336,7 @@ def _bool_value(environ: Mapping[str, str], name: str, *, default: bool) -> bool
 
 @dataclass(frozen=True, slots=True)
 class Phase10TestDocument:
+    resource_domain: Phase10ResourceDomain
     namespace: str
     document_id: UUID
     filename: str
@@ -276,10 +372,12 @@ class Phase10TestDocumentFactory:
         self,
         *,
         run_context: Phase10IntegrationRunContext,
+        resource_domain: Phase10ResourceDomain,
         now: datetime | None = None,
         chunk_count: int = 2,
     ) -> None:
         self._run_context = run_context
+        self._resource_domain = resource_domain
         self._now = now or datetime.now(UTC)
         self._chunk_count = chunk_count
         self._created_document_ids: set[UUID] = set()
@@ -289,8 +387,18 @@ class Phase10TestDocumentFactory:
         return self._run_context
 
     @property
+    def resource_domain(self) -> Phase10ResourceDomain:
+        return self._resource_domain
+
+    @property
     def created_document_ids(self) -> frozenset[UUID]:
         return frozenset(self._created_document_ids)
+
+    def assert_resource_domain(self, expected: Phase10ResourceDomain) -> None:
+        if self._resource_domain is not expected:
+            raise Phase10IntegrationGateError(
+                "Phase 10 integration helper resource domain is not allowed."
+            )
 
     def assert_owned_document_id(self, document_id: UUID) -> None:
         if document_id not in self._created_document_ids:
@@ -299,10 +407,15 @@ class Phase10TestDocumentFactory:
             )
 
     def assert_owned_document(self, identity: Phase10TestDocument) -> None:
+        if identity.resource_domain is not self._resource_domain:
+            raise Phase10IntegrationGateError(
+                "Phase 10 destructive target resource domain does not match the factory."
+            )
         self.assert_owned_document_id(identity.document_id)
         if not self._run_context.owns_document_namespace(
             identity.namespace,
             identity.document_id,
+            resource_domain=self._resource_domain,
         ):
             raise Phase10IntegrationGateError(
                 "Phase 10 destructive target namespace does not match the run context."
@@ -312,10 +425,12 @@ class Phase10TestDocumentFactory:
         document_id = uuid4()
         namespace = self._run_context.build_document_namespace(
             document_id,
+            resource_domain=self._resource_domain,
             document_type=document_type,
         )
         parse_run_id = uuid4()
         identity = Phase10TestDocument(
+            resource_domain=self._resource_domain,
             namespace=namespace,
             document_id=document_id,
             filename=f"{namespace}.pdf",
@@ -350,6 +465,63 @@ class Phase10ResourceSnapshot:
     opensearch_document_count: int = 0
     opensearch_alias_targets: tuple[str, ...] = ()
     opensearch_mapping_sha256: str = ""
+
+
+def assert_phase10_rollout_pristine(
+    snapshot: Phase10ResourceSnapshot,
+    *,
+    run_context: Phase10IntegrationRunContext,
+    expected_mapping_sha256: str,
+) -> None:
+    """Fail closed unless only the rollout domain is globally pristine."""
+
+    nonempty_postgres = {
+        field_name: len(getattr(snapshot, field_name))
+        for field_name in (
+            "postgres_documents",
+            "postgres_chunks",
+            "postgres_parse_runs",
+            "postgres_assets",
+            "postgres_blocks",
+            "postgres_chunk_blocks",
+            "postgres_deletion_jobs",
+            "postgres_knowledge_items",
+            "postgres_knowledge_sources",
+            "postgres_knowledge_chunks",
+            "postgres_knowledge_versions",
+            "postgres_knowledge_reviews",
+        )
+        if getattr(snapshot, field_name)
+    }
+    expected_index = run_context.opensearch_index_for(Phase10ResourceDomain.ROLLOUT)
+    failures: list[str] = []
+    if nonempty_postgres:
+        counts = ",".join(
+            f"{field_name}={count}"
+            for field_name, count in sorted(nonempty_postgres.items())
+        )
+        failures.append(f"postgres[{counts}]")
+    if snapshot.minio_versions:
+        failures.append(f"minio[versions={len(snapshot.minio_versions)}]")
+    if snapshot.opensearch_document_count or snapshot.opensearch_ids:
+        failures.append(
+            "opensearch["
+            f"documents={snapshot.opensearch_document_count},"
+            f"ids={len(snapshot.opensearch_ids)}]"
+        )
+    if snapshot.opensearch_alias_targets != (expected_index,):
+        failures.append(
+            "opensearch_alias["
+            f"target_count={len(snapshot.opensearch_alias_targets)},"
+            f"expected={expected_index}]"
+        )
+    if snapshot.opensearch_mapping_sha256 != expected_mapping_sha256:
+        failures.append("opensearch_mapping[checksum_mismatch]")
+    if failures:
+        summary = "; ".join(failures)
+        raise Phase10IntegrationGateError(
+            f"PHASE10_ROLLOUT_NOT_PRISTINE: {summary}"
+        )
 
 
 def assert_unrelated_resources_unchanged(
@@ -478,7 +650,9 @@ def capture_opensearch_snapshot(
         opensearch_ids=search_ids,
         opensearch_document_count=count,
         opensearch_alias_targets=alias_targets,
-        opensearch_mapping_sha256=stable_json_sha256(mapping),
+        opensearch_mapping_sha256=stable_json_sha256(
+            mapping[index_name]["mappings"]
+        ),
     )
 
 

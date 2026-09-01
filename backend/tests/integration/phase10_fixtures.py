@@ -33,6 +33,7 @@ from app.services.document_deletion_manifest import (
     DocumentDeletionManifest,
 )
 from integration.phase10_support import Phase10TestDocument, Phase10TestDocumentFactory
+from integration.phase10_run_context import Phase10ResourceDomain
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,6 +110,10 @@ def persist_document_fixture(
     document_factory: Phase10TestDocumentFactory,
 ) -> Document:
     document_factory.assert_owned_document(identity)
+    _assert_domain_resource_names(
+        document_factory,
+        bucket_name=bucket_name,
+    )
     document = Document(
         id=identity.document_id,
         original_filename=identity.filename,
@@ -403,7 +408,14 @@ def build_storage_manifest(
     document_factory: Phase10TestDocumentFactory,
     knowledge: Phase10KnowledgeFixture | None = None,
 ) -> DocumentDeletionManifest:
+    document_factory.assert_resource_domain(Phase10ResourceDomain.VALIDATION)
     document_factory.assert_owned_document(identity)
+    _assert_domain_resource_names(
+        document_factory,
+        bucket_name=str(_setting(settings, "minio_bucket")),
+        opensearch_index=str(_setting(settings, "search_index_name", "opensearch_index")),
+        opensearch_alias=str(_setting(settings, "search_index_alias", "opensearch_alias")),
+    )
     source_ids = knowledge.source_ids_for(identity.document_id) if knowledge else ()
     item_ids = knowledge.all_item_ids if knowledge else ()
     return DocumentDeletionManifest(
@@ -431,6 +443,23 @@ def request_owned_document_deletion(
     document_factory: Phase10TestDocumentFactory,
     settings: Any,
 ):
+    document_factory.assert_resource_domain(Phase10ResourceDomain.ROLLOUT)
+    document_factory.assert_owned_document(identity)
+    return request_document_deletion(
+        session,
+        identity.document_id,
+        settings=settings,
+    )
+
+
+def request_owned_validation_document_deletion(
+    session: Session,
+    identity: Phase10TestDocument,
+    *,
+    document_factory: Phase10TestDocumentFactory,
+    settings: Any,
+):
+    document_factory.assert_resource_domain(Phase10ResourceDomain.VALIDATION)
     document_factory.assert_owned_document(identity)
     return request_document_deletion(
         session,
@@ -448,6 +477,7 @@ def schedule_pending_job(
     document_factory: Phase10TestDocumentFactory,
     knowledge: Phase10KnowledgeFixture | None = None,
 ) -> DocumentDeletionJob:
+    document_factory.assert_resource_domain(Phase10ResourceDomain.VALIDATION)
     document_factory.assert_owned_document(identity)
     document = session.get(Document, identity.document_id)
     if document is None:
@@ -479,6 +509,7 @@ def build_finalization_claim(
     knowledge: Phase10KnowledgeFixture | None,
     settings: Any,
 ) -> tuple[ClaimedDocumentDeletion, DocumentDeletionManifest]:
+    document_factory.assert_resource_domain(Phase10ResourceDomain.VALIDATION)
     manifest = build_storage_manifest(
         identity,
         settings,
@@ -553,6 +584,27 @@ def assert_postgresql_target_absent(
         assert session.get(KnowledgeItem, item_id) is None
 
 
+def assert_owned_job_retry_wait(
+    session: Session,
+    *,
+    job_id: UUID,
+    document_id: UUID,
+    expected_error_code: str,
+) -> None:
+    """Assert only the test-owned DBQ failure transition, never global job state."""
+
+    job = session.get(DocumentDeletionJob, job_id)
+    document = session.get(Document, document_id)
+    assert job is not None
+    assert job.status == "retry_wait"
+    assert job.current_step == "delete_opensearch"
+    assert job.step_attempts == 1
+    assert job.next_retry_at is not None
+    assert job.last_error_code == expected_error_code
+    assert document is not None
+    assert document.deletion_status == "deleting"
+
+
 def upload_minio_fixture_versions(
     client: Any,
     identity: Phase10TestDocument,
@@ -561,6 +613,7 @@ def upload_minio_fixture_versions(
     document_factory: Phase10TestDocumentFactory,
 ) -> None:
     document_factory.assert_owned_document(identity)
+    _assert_domain_resource_names(document_factory, bucket_name=bucket_name)
     for key in sorted(identity.all_minio_keys):
         for revision in (b"phase10-v1", b"phase10-v2"):
             client.put_object(
@@ -590,6 +643,7 @@ def index_opensearch_fixture(
     document_factory: Phase10TestDocumentFactory,
 ) -> None:
     document_factory.assert_owned_document(identity)
+    _assert_domain_resource_names(document_factory, opensearch_index=index_name)
     body: list[dict[str, Any]] = []
     for index, chunk_id in enumerate(identity.chunk_ids):
         body.append({"index": {"_index": index_name, "_id": str(chunk_id)}})
@@ -702,6 +756,35 @@ def drain_claimable_jobs_excluding_target(
         session.rollback()
 
 
+def claim_test_owned_job(
+    session: Session,
+    *,
+    target_job_id: UUID,
+    max_claims: int,
+    locked_by: str,
+    lease_token: UUID,
+    lease_seconds: int,
+    claim_function: Callable[..., ClaimedDocumentDeletion | None] | None = None,
+) -> ClaimedDocumentDeletion | None:
+    """Use production claiming while scoping the assertion to one test-owned job."""
+
+    if max_claims <= 0:
+        raise ValueError("max_claims must be greater than zero")
+    claim_one = claim_function or claim_document_deletion
+    for _ in range(max_claims):
+        claimed = claim_one(
+            session,
+            locked_by=locked_by,
+            lease_token=lease_token,
+            lease_seconds=lease_seconds,
+        )
+        if claimed is None or claimed.job_id == target_job_id:
+            return claimed
+    raise AssertionError(
+        "Test-owned claim exceeded its safety limit before reaching the target job."
+    )
+
+
 def _safe_bulk_detail(value: object, *, limit: int = 300) -> str:
     rendered = str(value).replace("\r", " ").replace("\n", " ")
     return rendered[:limit]
@@ -787,3 +870,33 @@ def _setting(settings: Any, primary: str, secondary: str | None = None) -> Any:
     if value is None:
         raise AssertionError(f"Phase 10 integration setting {primary} is missing.")
     return value
+
+
+def _assert_domain_resource_names(
+    document_factory: Phase10TestDocumentFactory,
+    *,
+    bucket_name: str | None = None,
+    opensearch_index: str | None = None,
+    opensearch_alias: str | None = None,
+) -> None:
+    context = document_factory.run_context
+    domain = document_factory.resource_domain
+    configured = {
+        "MinIO bucket": (
+            bucket_name,
+            context.minio_bucket_for(domain),
+        ),
+        "OpenSearch index": (
+            opensearch_index,
+            context.opensearch_index_for(domain),
+        ),
+        "OpenSearch alias": (
+            opensearch_alias,
+            context.opensearch_alias_for(domain),
+        ),
+    }
+    for field, (actual, expected) in configured.items():
+        if actual is not None and actual != expected:
+            raise AssertionError(
+                f"Phase 10 integration {field} does not match the factory resource domain."
+            )

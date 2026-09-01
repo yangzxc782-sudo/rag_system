@@ -18,7 +18,7 @@ from integration.phase10_fixtures import (
     build_finalization_claim,
     persist_document_fixture,
     persist_shared_knowledge_fixture,
-    request_owned_document_deletion,
+    request_owned_validation_document_deletion,
 )
 from integration.phase10_support import (
     assert_unrelated_resources_unchanged,
@@ -33,21 +33,21 @@ pytestmark = pytest.mark.integration
 
 
 def test_real_0006_expand_enforce_and_enforce_only_downgrade(
-    phase10_settings,
+    phase10_integration_settings,
     phase10_migration_engine,
 ) -> None:
     require_clean_migration_database(phase10_migration_engine)
     migration_started = False
     try:
-        run_alembic(phase10_settings, "upgrade", "0006_add_document_parse")
+        run_alembic(phase10_integration_settings, "upgrade", "0006_add_document_parse")
         migration_started = True
         assert current_alembic_revision(phase10_migration_engine) == "0006_add_document_parse"
 
-        run_alembic(phase10_settings, "upgrade", "0007_phase10_expand")
+        run_alembic(phase10_integration_settings, "upgrade", "0007_phase10_expand")
         assert current_alembic_revision(phase10_migration_engine) == "0007_phase10_expand"
         assert "knowledge_item_sources" in inspect(phase10_migration_engine).get_table_names()
 
-        run_alembic(phase10_settings, "upgrade", "0008_phase10_enforce")
+        run_alembic(phase10_integration_settings, "upgrade", "0008_phase10_enforce")
         assert current_alembic_revision(phase10_migration_engine) == "0008_phase10_enforce"
         foreign_keys = inspect(phase10_migration_engine).get_foreign_keys("knowledge_item_chunks")
         assert any(
@@ -55,7 +55,7 @@ def test_real_0006_expand_enforce_and_enforce_only_downgrade(
             for foreign_key in foreign_keys
         )
 
-        run_alembic(phase10_settings, "downgrade", "0007_phase10_expand")
+        run_alembic(phase10_integration_settings, "downgrade", "0007_phase10_expand")
         assert current_alembic_revision(phase10_migration_engine) == "0007_phase10_expand"
         foreign_keys = inspect(phase10_migration_engine).get_foreign_keys("knowledge_item_chunks")
         assert all(
@@ -64,39 +64,39 @@ def test_real_0006_expand_enforce_and_enforce_only_downgrade(
         )
     finally:
         if migration_started:
-            run_alembic(phase10_settings, "upgrade", "0008_phase10_enforce")
+            run_alembic(phase10_integration_settings, "upgrade", "0008_phase10_enforce")
 
 
 @pytest.mark.phase10_knowledge_deferred(
     reason="Deferred by project owner pending Knowledge Item Library refactor."
 )
 def test_postgresql_finalization_removes_target_and_preserves_shared_and_unrelated_rows(
-    phase10_session_factory,
-    phase10_document_factory,
-    phase10_runtime_settings,
+    phase10_validation_session_factory,
+    phase10_validation_document_factory,
+    phase10_validation_runtime_settings,
 ) -> None:
-    target = phase10_document_factory.create()
-    control = phase10_document_factory.create()
-    with phase10_session_factory() as session:
+    target = phase10_validation_document_factory.create()
+    control = phase10_validation_document_factory.create()
+    with phase10_validation_session_factory() as session:
         persist_document_fixture(
             session,
             target,
-            bucket_name=phase10_runtime_settings.minio_bucket,
-            document_factory=phase10_document_factory,
+            bucket_name=phase10_validation_runtime_settings.minio_bucket,
+            document_factory=phase10_validation_document_factory,
         )
         persist_document_fixture(
             session,
             control,
-            bucket_name=phase10_runtime_settings.minio_bucket,
-            document_factory=phase10_document_factory,
+            bucket_name=phase10_validation_runtime_settings.minio_bucket,
+            document_factory=phase10_validation_document_factory,
         )
         knowledge = persist_shared_knowledge_fixture(session, target=target, control=control)
         claimed, manifest = build_finalization_claim(
             session,
             target,
-            document_factory=phase10_document_factory,
+            document_factory=phase10_validation_document_factory,
             knowledge=knowledge,
-            settings=phase10_runtime_settings,
+            settings=phase10_validation_runtime_settings,
         )
         session.commit()
         before = capture_postgresql_snapshot(session)
@@ -148,33 +148,33 @@ def test_postgresql_finalization_removes_target_and_preserves_shared_and_unrelat
 
 
 def test_core_postgresql_finalization_removes_target_and_preserves_unrelated_rows(
-    phase10_session_factory,
-    phase10_document_factory,
-    phase10_runtime_settings,
+    phase10_validation_session_factory,
+    phase10_validation_document_factory,
+    phase10_validation_runtime_settings,
 ) -> None:
     """Knowledge is intentionally excluded pending the separate library refactor."""
 
-    target = phase10_document_factory.create()
-    control = phase10_document_factory.create()
-    with phase10_session_factory() as session:
+    target = phase10_validation_document_factory.create()
+    control = phase10_validation_document_factory.create()
+    with phase10_validation_session_factory() as session:
         persist_document_fixture(
             session,
             target,
-            bucket_name=phase10_runtime_settings.minio_bucket,
-            document_factory=phase10_document_factory,
+            bucket_name=phase10_validation_runtime_settings.minio_bucket,
+            document_factory=phase10_validation_document_factory,
         )
         persist_document_fixture(
             session,
             control,
-            bucket_name=phase10_runtime_settings.minio_bucket,
-            document_factory=phase10_document_factory,
+            bucket_name=phase10_validation_runtime_settings.minio_bucket,
+            document_factory=phase10_validation_document_factory,
         )
         claimed, manifest = build_finalization_claim(
             session,
             target,
-            document_factory=phase10_document_factory,
+            document_factory=phase10_validation_document_factory,
             knowledge=None,
-            settings=phase10_runtime_settings,
+            settings=phase10_validation_runtime_settings,
         )
         session.commit()
         before = capture_postgresql_snapshot(session)
@@ -198,24 +198,24 @@ def test_core_postgresql_finalization_removes_target_and_preserves_unrelated_row
 
 
 def test_finalization_rollback_then_retry_and_ambiguous_response_duplicate_delete_is_204_semantics(
-    phase10_session_factory,
-    phase10_document_factory,
-    phase10_runtime_settings,
+    phase10_validation_session_factory,
+    phase10_validation_document_factory,
+    phase10_validation_runtime_settings,
 ) -> None:
-    target = phase10_document_factory.create()
-    with phase10_session_factory() as session:
+    target = phase10_validation_document_factory.create()
+    with phase10_validation_session_factory() as session:
         persist_document_fixture(
             session,
             target,
-            bucket_name=phase10_runtime_settings.minio_bucket,
-            document_factory=phase10_document_factory,
+            bucket_name=phase10_validation_runtime_settings.minio_bucket,
+            document_factory=phase10_validation_document_factory,
         )
         claimed, manifest = build_finalization_claim(
             session,
             target,
-            document_factory=phase10_document_factory,
+            document_factory=phase10_validation_document_factory,
             knowledge=None,
-            settings=phase10_runtime_settings,
+            settings=phase10_validation_runtime_settings,
         )
         session.commit()
 
@@ -230,11 +230,11 @@ def test_finalization_rollback_then_retry_and_ambiguous_response_duplicate_delet
         assert_postgresql_target_absent(session, target, knowledge=None)
 
         assert (
-            request_owned_document_deletion(
+            request_owned_validation_document_deletion(
                 session,
                 target,
-                document_factory=phase10_document_factory,
-                settings=phase10_runtime_settings,
+                document_factory=phase10_validation_document_factory,
+                settings=phase10_validation_runtime_settings,
             )
             is None
         )
