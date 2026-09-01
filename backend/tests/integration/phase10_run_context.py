@@ -42,8 +42,20 @@ class Phase10IntegrationRunContext:
         return f"phase10-m7b-{self.run_token}"
 
     @property
+    def minio_locked_bucket(self) -> str:
+        return f"{self.minio_bucket}-locked"
+
+    @property
+    def minio_missing_bucket(self) -> str:
+        return f"{self.minio_bucket}-missing"
+
+    @property
     def opensearch_index(self) -> str:
         return f"phase10-m7b-{self.run_token}-v1"
+
+    @property
+    def opensearch_rollover_index(self) -> str:
+        return f"phase10-m7b-{self.run_token}-v2"
 
     @property
     def opensearch_alias(self) -> str:
@@ -108,6 +120,29 @@ class Phase10IntegrationRunContext:
                     f"Phase 10 integration run context {field} mismatch."
                 )
 
+    def validate_storage_extension_resources(
+        self,
+        *,
+        minio_locked_bucket: str,
+        minio_missing_bucket: str,
+        opensearch_rollover_index: str,
+    ) -> None:
+        configured = {
+            "locked bucket": minio_locked_bucket,
+            "missing bucket": minio_missing_bucket,
+            "rollover index": opensearch_rollover_index,
+        }
+        expected = {
+            "locked bucket": self.minio_locked_bucket,
+            "missing bucket": self.minio_missing_bucket,
+            "rollover index": self.opensearch_rollover_index,
+        }
+        for field, actual in configured.items():
+            if actual != expected[field]:
+                raise Phase10IntegrationRunContextError(
+                    f"Phase 10 integration run context {field} mismatch."
+                )
+
     def safe_summary(self) -> dict[str, str]:
         return {
             "run_token": self.run_token,
@@ -115,7 +150,10 @@ class Phase10IntegrationRunContext:
             "migration_database": self.migration_database,
             "restore_database": self.restore_database,
             "minio_bucket": self.minio_bucket,
+            "minio_locked_bucket": self.minio_locked_bucket,
+            "minio_missing_bucket": self.minio_missing_bucket,
             "opensearch_index": self.opensearch_index,
+            "opensearch_rollover_index": self.opensearch_rollover_index,
             "opensearch_alias": self.opensearch_alias,
             "document_prefix": self.document_prefix,
         }

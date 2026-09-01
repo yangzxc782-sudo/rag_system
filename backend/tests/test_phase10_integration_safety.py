@@ -170,6 +170,40 @@ def test_integration_gate_requires_three_distinct_postgresql_databases() -> None
         load_phase10_integration_settings(environment)
 
 
+def test_partial_minio_fault_delegates_real_prefix_then_fails_once() -> None:
+    from minio.deleteobjects import DeleteObject
+    from integration.phase10_storage_faults import OneShotPartialDeleteMinioClient
+
+    class RecordingMinio:
+        def __init__(self) -> None:
+            self.deleted: list[tuple[str | None, str | None]] = []
+
+        def remove_objects(self, bucket_name, delete_objects):
+            assert bucket_name == "phase10-m7b-abcdef12"
+            current = tuple(delete_objects)
+            self.deleted.extend((item.name, item.version_id) for item in current)
+            return iter(())
+
+    delegate = RecordingMinio()
+    client = OneShotPartialDeleteMinioClient(delegate, successful_prefix_size=1)
+    objects = (
+        DeleteObject("a", "v1"),
+        DeleteObject("b", "v2"),
+        DeleteObject("c", "v3"),
+    )
+
+    first_errors = tuple(client.remove_objects("phase10-m7b-abcdef12", objects))
+    second_errors = tuple(client.remove_objects("phase10-m7b-abcdef12", objects[1:]))
+
+    assert delegate.deleted == [("a", "v1"), ("b", "v2"), ("c", "v3")]
+    assert [(error.code, error.name, error.version_id) for error in first_errors] == [
+        ("InternalError", "b", "v2")
+    ]
+    assert second_errors == ()
+    assert client.first_attempt_deleted == (("a", "v1"),)
+    assert client.retry_attempted == (("b", "v2"), ("c", "v3"))
+
+
 def test_alembic_helper_uses_only_validated_context_migration_database(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

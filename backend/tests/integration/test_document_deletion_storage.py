@@ -1,24 +1,38 @@
 from __future__ import annotations
 
+from copy import deepcopy
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta
+from io import BytesIO
 import time
 from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 from uuid import UUID, uuid4
 
+from minio.commonconfig import COMPLIANCE
+from minio.retention import Retention
 from sqlalchemy import func, select, text, update
 
 import pytest
 
+from app.models.document import Document
 from app.models.document_deletion_job import DocumentDeletionJob
+from app.search_engine.index_schema import build_casting_chunks_index_body
 from app.services.document_deletion import (
     ClaimedDocumentDeletion,
+    DocumentDeletionSaga,
+    advance_claimed_deletion,
     claim_document_deletion,
     renew_claimed_deletion,
 )
 from app.services.document_deletion_storage import (
+    DOCUMENT_DELETION_MINIO_BUCKET_NOT_FOUND,
+    DOCUMENT_DELETION_MINIO_DELETE_FAILED,
+    DOCUMENT_DELETION_OPENSEARCH_UNAVAILABLE,
     DocumentDeletionLeaseLost,
     DocumentDeletionStorageError,
 )
+from app.tasks.document_deletion_executor import DocumentDeletionExecutor
 from app.services.document_deletion_minio import (
     delete_minio_derived_targets,
     delete_minio_raw_target,
@@ -38,7 +52,9 @@ from integration.phase10_support import (
     assert_unrelated_resources_unchanged,
     capture_minio_snapshot,
     capture_opensearch_snapshot,
+    stable_json_sha256,
 )
+from integration.phase10_storage_faults import OneShotPartialDeleteMinioClient
 
 
 pytestmark = pytest.mark.integration
@@ -724,3 +740,426 @@ def test_stale_heartbeat_cannot_resurrect_old_owner(
     with phase10_session_factory() as session:
         assert renew_claimed_deletion(session, old_claim, lease_seconds=5) is False
         session.rollback()
+
+
+def test_real_minio_partial_delete_retries_only_remaining_versions(
+    phase10_settings,
+    phase10_minio_client,
+    phase10_document_factory,
+) -> None:
+    target = phase10_document_factory.create()
+    manifest = build_storage_manifest(
+        target,
+        phase10_settings,
+        document_factory=phase10_document_factory,
+    )
+    upload_minio_fixture_versions(
+        phase10_minio_client,
+        target,
+        phase10_settings.minio_bucket,
+        document_factory=phase10_document_factory,
+    )
+    derived_keys = set(target.explicit_derived_keys)
+    before = {
+        entry
+        for entry in capture_minio_snapshot(
+            phase10_minio_client,
+            phase10_settings.minio_bucket,
+        ).minio_versions
+        if entry[0] in derived_keys
+    }
+    assert len(before) >= 3
+
+    faulting = OneShotPartialDeleteMinioClient(
+        phase10_minio_client,
+        successful_prefix_size=1,
+    )
+    with pytest.raises(DocumentDeletionStorageError) as failure:
+        delete_minio_derived_targets(
+            manifest,
+            client=faulting,
+            checkpoint=lambda: None,
+            heartbeat_interval_seconds=1,
+            delete_batch_size=1000,
+        )
+    assert failure.value.code == DOCUMENT_DELETION_MINIO_DELETE_FAILED
+
+    after_first = {
+        entry
+        for entry in capture_minio_snapshot(
+            phase10_minio_client,
+            phase10_settings.minio_bucket,
+        ).minio_versions
+        if entry[0] in derived_keys
+    }
+    assert len(after_first) == len(before) - 1
+    assert len(faulting.first_attempt_deleted) == 1
+    deleted_version = faulting.first_attempt_deleted[0]
+    assert not any(entry[:2] == deleted_version for entry in after_first)
+
+    delete_minio_derived_targets(
+        manifest,
+        client=faulting,
+        checkpoint=lambda: None,
+        heartbeat_interval_seconds=1,
+        delete_batch_size=1000,
+    )
+
+    after_retry = {
+        entry
+        for entry in capture_minio_snapshot(
+            phase10_minio_client,
+            phase10_settings.minio_bucket,
+        ).minio_versions
+        if entry[0] in derived_keys
+    }
+    assert after_retry == set()
+    assert deleted_version not in faulting.retry_attempted
+    assert set(faulting.retry_attempted) == {entry[:2] for entry in after_first}
+
+
+def test_real_minio_raw_absence_is_idempotent_success(
+    phase10_settings,
+    phase10_minio_client,
+    phase10_document_factory,
+) -> None:
+    target = phase10_document_factory.create()
+    manifest = build_storage_manifest(
+        target,
+        phase10_settings,
+        document_factory=phase10_document_factory,
+    )
+    assert not any(
+        entry[0] == target.raw_object_key
+        for entry in capture_minio_snapshot(
+            phase10_minio_client,
+            phase10_settings.minio_bucket,
+        ).minio_versions
+    )
+
+    delete_minio_raw_target(
+        manifest,
+        client=phase10_minio_client,
+        checkpoint=lambda: None,
+        heartbeat_interval_seconds=1,
+    )
+
+    assert not any(
+        entry[0] == target.raw_object_key
+        for entry in capture_minio_snapshot(
+            phase10_minio_client,
+            phase10_settings.minio_bucket,
+        ).minio_versions
+    )
+
+
+def test_real_minio_missing_run_bucket_is_failure(
+    phase10_run_context,
+    phase10_settings,
+    phase10_minio_client,
+    phase10_document_factory,
+) -> None:
+    phase10_run_context.validate_storage_extension_resources(
+        minio_locked_bucket=phase10_run_context.minio_locked_bucket,
+        minio_missing_bucket=phase10_run_context.minio_missing_bucket,
+        opensearch_rollover_index=phase10_run_context.opensearch_rollover_index,
+    )
+    assert not phase10_minio_client.bucket_exists(
+        phase10_run_context.minio_missing_bucket
+    )
+    target = phase10_document_factory.create()
+    manifest = replace(
+        build_storage_manifest(
+            target,
+            phase10_settings,
+            document_factory=phase10_document_factory,
+        ),
+        bucket_name=phase10_run_context.minio_missing_bucket,
+    )
+
+    with pytest.raises(DocumentDeletionStorageError) as failure:
+        delete_minio_raw_target(
+            manifest,
+            client=phase10_minio_client,
+            checkpoint=lambda: None,
+            heartbeat_interval_seconds=1,
+        )
+
+    assert failure.value.code == DOCUMENT_DELETION_MINIO_BUCKET_NOT_FOUND
+
+
+def test_real_minio_compliance_retention_prevents_hard_delete(
+    phase10_run_context,
+    phase10_settings,
+    phase10_minio_client,
+    phase10_document_factory,
+) -> None:
+    locked_bucket = phase10_run_context.minio_locked_bucket
+    phase10_run_context.validate_storage_extension_resources(
+        minio_locked_bucket=locked_bucket,
+        minio_missing_bucket=phase10_run_context.minio_missing_bucket,
+        opensearch_rollover_index=phase10_run_context.opensearch_rollover_index,
+    )
+    assert not phase10_minio_client.bucket_exists(locked_bucket)
+    phase10_minio_client.make_bucket(locked_bucket, object_lock=True)
+    versioning = phase10_minio_client.get_bucket_versioning(locked_bucket)
+    assert str(getattr(versioning, "status", "")).lower() == "enabled"
+
+    target = phase10_document_factory.create()
+    payload = b"phase10-retained-version"
+    uploaded = phase10_minio_client.put_object(
+        locked_bucket,
+        target.raw_object_key,
+        BytesIO(payload),
+        len(payload),
+        content_type="application/pdf",
+    )
+    assert uploaded.version_id
+    retain_until = datetime.now(UTC) + timedelta(minutes=15)
+    phase10_minio_client.set_object_retention(
+        locked_bucket,
+        target.raw_object_key,
+        Retention(COMPLIANCE, retain_until),
+        version_id=uploaded.version_id,
+    )
+    manifest = replace(
+        build_storage_manifest(
+            target,
+            phase10_settings,
+            document_factory=phase10_document_factory,
+        ),
+        bucket_name=locked_bucket,
+    )
+
+    with pytest.raises(DocumentDeletionStorageError) as failure:
+        delete_minio_raw_target(
+            manifest,
+            client=phase10_minio_client,
+            checkpoint=lambda: None,
+            heartbeat_interval_seconds=1,
+        )
+
+    assert failure.value.code == DOCUMENT_DELETION_MINIO_DELETE_FAILED
+    retained = {
+        entry
+        for entry in capture_minio_snapshot(
+            phase10_minio_client,
+            locked_bucket,
+        ).minio_versions
+        if entry[0] == target.raw_object_key
+    }
+    assert (target.raw_object_key, uploaded.version_id, False) in retained
+
+
+def test_real_opensearch_dbq_failure_records_retry_wait_then_advances(
+    phase10_settings,
+    phase10_session_factory,
+    phase10_minio_client,
+    phase10_opensearch_client,
+    phase10_document_factory,
+    phase10_runtime_settings,
+) -> None:
+    target = phase10_document_factory.create()
+    with phase10_session_factory() as session:
+        assert session.scalar(select(func.count()).select_from(DocumentDeletionJob)) == 0
+        persist_document_fixture(
+            session,
+            target,
+            bucket_name=phase10_settings.minio_bucket,
+            document_factory=phase10_document_factory,
+        )
+        job = schedule_pending_job(
+            session,
+            target,
+            phase10_runtime_settings,
+            current_step="delete_opensearch",
+            document_factory=phase10_document_factory,
+        )
+        session.commit()
+        job_id = job.id
+    index_opensearch_fixture(
+        phase10_opensearch_client,
+        target,
+        phase10_settings.opensearch_index,
+        document_factory=phase10_document_factory,
+    )
+    faulting = OneShotOpenSearchFault(
+        phase10_opensearch_client,
+        lose_response_after_delete=False,
+    )
+
+    def advance_step(claimed, next_step: str) -> None:
+        with phase10_session_factory() as session:
+            assert advance_claimed_deletion(
+                session,
+                claimed,
+                next_step=next_step,
+            )
+            session.commit()
+
+    saga = DocumentDeletionSaga(
+        settings=phase10_runtime_settings,
+        minio_client=phase10_minio_client,
+        opensearch_client=faulting,
+        advance_step=advance_step,
+        finalize_step=lambda *_: pytest.fail("Unexpected finalization step."),
+    )
+    executor = DocumentDeletionExecutor(
+        session_factory=phase10_session_factory,
+        settings=phase10_runtime_settings,
+        worker_id=f"phase10-storage-coverage-{target.document_id}",
+        saga=saga,
+    )
+
+    assert executor.run_once() is True
+    with phase10_session_factory() as session:
+        failed_job = session.get(DocumentDeletionJob, job_id)
+        document = session.get(Document, target.document_id)
+        assert failed_job is not None
+        assert failed_job.status == "retry_wait"
+        assert failed_job.current_step == "delete_opensearch"
+        assert failed_job.step_attempts == 1
+        assert failed_job.next_retry_at is not None
+        assert failed_job.last_error_code == DOCUMENT_DELETION_OPENSEARCH_UNAVAILABLE
+        assert document is not None and document.deletion_status == "deleting"
+        assert session.scalar(
+            select(DocumentDeletionJob.next_retry_at > func.now()).where(
+                DocumentDeletionJob.id == job_id
+            )
+        ) is True
+        session.execute(
+            update(DocumentDeletionJob)
+            .where(DocumentDeletionJob.id == job_id)
+            .values(next_retry_at=func.now() - text("INTERVAL '1 second'"))
+        )
+        session.commit()
+
+    assert executor.run_once() is True
+    with phase10_session_factory() as session:
+        advanced_job = session.get(DocumentDeletionJob, job_id)
+        assert advanced_job is not None
+        assert advanced_job.status == "pending"
+        assert advanced_job.current_step == "delete_minio_derived"
+        assert advanced_job.step_attempts == 0
+        assert advanced_job.next_retry_at is None
+        assert advanced_job.last_error_code is None
+    assert phase10_opensearch_client.count(
+        index=phase10_settings.opensearch_index,
+        body={"query": {"term": {"document_id": str(target.document_id)}}},
+    )["count"] == 0
+
+
+def test_real_opensearch_rollover_deletes_manifest_and_current_targets(
+    phase10_run_context,
+    phase10_settings,
+    phase10_opensearch_client,
+    phase10_document_factory,
+    phase10_runtime_settings,
+) -> None:
+    rollover_index = phase10_run_context.opensearch_rollover_index
+    phase10_run_context.validate_storage_extension_resources(
+        minio_locked_bucket=phase10_run_context.minio_locked_bucket,
+        minio_missing_bucket=phase10_run_context.minio_missing_bucket,
+        opensearch_rollover_index=rollover_index,
+    )
+    assert not phase10_opensearch_client.indices.exists(index=rollover_index)
+    rollover_body = deepcopy(build_casting_chunks_index_body(phase10_runtime_settings))
+    rollover_body["aliases"] = {}
+    phase10_opensearch_client.indices.create(
+        index=rollover_index,
+        body=rollover_body,
+    )
+
+    target = phase10_document_factory.create()
+    control = phase10_document_factory.create()
+    manifest = build_storage_manifest(
+        target,
+        phase10_settings,
+        document_factory=phase10_document_factory,
+    )
+    for index_name in (phase10_settings.opensearch_index, rollover_index):
+        index_opensearch_fixture(
+            phase10_opensearch_client,
+            target,
+            index_name,
+            document_factory=phase10_document_factory,
+        )
+        index_opensearch_fixture(
+            phase10_opensearch_client,
+            control,
+            index_name,
+            document_factory=phase10_document_factory,
+        )
+    mapping_before = {
+        index_name: stable_json_sha256(
+            phase10_opensearch_client.indices.get_mapping(index=index_name)[
+                index_name
+            ]["mappings"]
+        )
+        for index_name in (phase10_settings.opensearch_index, rollover_index)
+    }
+    assert all(
+        phase10_opensearch_client.count(
+            index=index_name,
+            body={"query": {"term": {"document_id": str(target.document_id)}}},
+        )["count"]
+        > 0
+        for index_name in (phase10_settings.opensearch_index, rollover_index)
+    )
+
+    phase10_opensearch_client.indices.update_aliases(
+        body={
+            "actions": [
+                {
+                    "remove": {
+                        "index": phase10_settings.opensearch_index,
+                        "alias": phase10_settings.opensearch_alias,
+                    }
+                },
+                {
+                    "add": {
+                        "index": rollover_index,
+                        "alias": phase10_settings.opensearch_alias,
+                    }
+                },
+            ]
+        }
+    )
+    assert tuple(
+        sorted(
+            phase10_opensearch_client.indices.get_alias(
+                name=phase10_settings.opensearch_alias
+            )
+        )
+    ) == (rollover_index,)
+
+    delete_opensearch_targets(
+        manifest,
+        client=phase10_opensearch_client,
+        checkpoint=lambda: None,
+        current_index_name=rollover_index,
+        current_index_alias=phase10_settings.opensearch_alias,
+        timeout_seconds=30,
+    )
+
+    for index_name in (phase10_settings.opensearch_index, rollover_index):
+        assert phase10_opensearch_client.count(
+            index=index_name,
+            body={"query": {"term": {"document_id": str(target.document_id)}}},
+        )["count"] == 0
+        assert phase10_opensearch_client.count(
+            index=index_name,
+            body={"query": {"term": {"document_id": str(control.document_id)}}},
+        )["count"] == len(control.chunk_ids)
+        assert stable_json_sha256(
+            phase10_opensearch_client.indices.get_mapping(index=index_name)[
+                index_name
+            ]["mappings"]
+        ) == mapping_before[index_name]
+    assert tuple(
+        sorted(
+            phase10_opensearch_client.indices.get_alias(
+                name=phase10_settings.opensearch_alias
+            )
+        )
+    ) == (rollover_index,)
