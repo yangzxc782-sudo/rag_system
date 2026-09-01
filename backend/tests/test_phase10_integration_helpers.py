@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 import pytest
+from minio.deleteobjects import DeleteObject
 
 from integration import phase10_fixtures
 from app.models.document import Document
@@ -14,6 +15,7 @@ from integration.phase10_fixtures import (
     index_opensearch_fixture,
 )
 from integration.phase10_support import Phase10TestDocumentFactory
+from integration.test_document_deletion_storage import SlowFakeMinio
 
 
 class _Rows:
@@ -256,3 +258,18 @@ def test_contender_drain_has_a_finite_safety_ceiling_and_rolls_back() -> None:
         )
 
     assert session.rollback_calls == 1
+
+
+def test_slow_fake_minio_consumes_real_delete_object_name_and_version_id() -> None:
+    object_name = "parsed-assets/11111111-1111-1111-1111-111111111111/output.md"
+    client = SlowFakeMinio([object_name], delay_seconds=0)
+
+    errors = list(
+        client.remove_objects(
+            "phase10-test-bucket",
+            [DeleteObject(object_name, version_id="v1")],
+        )
+    )
+
+    assert errors == []
+    assert client.objects == {}

@@ -81,7 +81,7 @@ class SlowFakeMinio:
         self.remove_calls += 1
         for delete_object in delete_objects:
             self.objects.pop(
-                (delete_object.object_name, delete_object.version_id),
+                (delete_object.name, delete_object.version_id),
                 None,
             )
         return iter(())
@@ -170,6 +170,34 @@ def test_fixture_setup_opensearch_accepts_non_zero_1024_dimension_vectors(
             index=phase10_settings.opensearch_index,
             id=str(chunk_id),
         )
+
+
+def test_opensearch_36_accepts_production_document_deletion_query_parameters(
+    phase10_settings,
+    phase10_opensearch_client,
+    phase10_document_factory,
+) -> None:
+    identity = phase10_document_factory.create()
+    manifest = build_storage_manifest(identity, phase10_settings)
+    index_opensearch_fixture(
+        phase10_opensearch_client,
+        identity,
+        phase10_settings.opensearch_index,
+    )
+
+    delete_opensearch_targets(
+        manifest,
+        client=phase10_opensearch_client,
+        checkpoint=lambda: None,
+        current_index_name=phase10_settings.opensearch_index,
+        current_index_alias=phase10_settings.opensearch_alias,
+        timeout_seconds=30,
+    )
+
+    assert phase10_opensearch_client.count(
+        index=phase10_settings.opensearch_index,
+        body={"query": {"term": {"document_id": str(identity.document_id)}}},
+    )["count"] == 0
 
 
 def test_fixture_setup_minio_lists_versions_and_delete_markers(
