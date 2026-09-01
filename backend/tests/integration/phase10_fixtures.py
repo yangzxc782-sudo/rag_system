@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -22,7 +23,10 @@ from app.models.knowledge_item_chunk import KnowledgeItemChunk
 from app.models.knowledge_item_review import KnowledgeItemReview
 from app.models.knowledge_item_source import KnowledgeItemSource
 from app.models.knowledge_item_version import KnowledgeItemVersion
-from app.services.document_deletion import ClaimedDocumentDeletion
+from app.services.document_deletion import (
+    ClaimedDocumentDeletion,
+    claim_document_deletion,
+)
 from app.services.document_deletion_manifest import (
     DOCUMENT_DELETION_MANIFEST_SCHEMA_VERSION,
     DocumentDeletionManifest,
@@ -561,7 +565,7 @@ def index_opensearch_fixture(
                 "content_smart": f"{identity.namespace} chunk {index}",
                 "source_metadata": {},
                 "exact_terms": [],
-                "embedding": [0.0] * 1024,
+                "embedding": build_test_embedding(1024, unit_index=index),
                 "embedding_model": "Qwen3-Embedding-0.6B",
                 "embedding_dim": 1024,
                 "embedding_status": "embedded",
@@ -572,7 +576,96 @@ def index_opensearch_fixture(
         )
     response = client.bulk(body=body, refresh=True)
     if bool(response.get("errors")):
-        raise AssertionError("Dedicated Phase 10 OpenSearch fixture indexing failed.")
+        details: list[str] = []
+        for item in response.get("items", ()):
+            if not isinstance(item, dict):
+                continue
+            for operation, result in item.items():
+                if not isinstance(result, dict):
+                    continue
+                error = result.get("error")
+                status = result.get("status")
+                if not isinstance(error, dict) and not (
+                    isinstance(status, int) and status >= 300
+                ):
+                    continue
+                error_type = (
+                    error.get("type", "unknown")
+                    if isinstance(error, dict)
+                    else "unknown"
+                )
+                reason = (
+                    error.get("reason", "unknown")
+                    if isinstance(error, dict)
+                    else "unknown"
+                )
+                chunk_id = result.get("_id", "unknown")
+                details.append(
+                    f"{operation} status={_safe_bulk_detail(status)} "
+                    f"type={_safe_bulk_detail(error_type)} "
+                    f"reason={_safe_bulk_detail(reason)} "
+                    f"chunk_id={_safe_bulk_detail(chunk_id)}"
+                )
+        diagnostic = "; ".join(details) or "failure detail unavailable"
+        raise AssertionError(
+            f"Dedicated Phase 10 OpenSearch fixture indexing failed: {diagnostic}"
+        )
+
+
+def build_test_embedding(
+    dimension: int = 1024,
+    *,
+    unit_index: int = 0,
+) -> list[float]:
+    """Return a deterministic non-zero unit vector for integration fixtures."""
+
+    if dimension <= 0:
+        raise ValueError("dimension must be greater than zero")
+    vector = [0.0] * dimension
+    vector[unit_index % dimension] = 1.0
+    return vector
+
+
+def drain_claimable_jobs_excluding_target(
+    session: Session,
+    *,
+    target_job_id: UUID,
+    max_claims: int,
+    locked_by: str = "phase10-heartbeat-contender",
+    lease_seconds: int = 3,
+    claim_function: Callable[..., ClaimedDocumentDeletion | None] | None = None,
+) -> tuple[UUID, ...]:
+    """Temporarily drain claimable jobs and prove the heartbeat target is excluded."""
+
+    if max_claims <= 0:
+        raise ValueError("max_claims must be greater than zero")
+    claim_one = claim_function or claim_document_deletion
+    unrelated_claimed_ids: list[UUID] = []
+    try:
+        for _ in range(max_claims):
+            claimed = claim_one(
+                session,
+                locked_by=locked_by,
+                lease_token=uuid4(),
+                lease_seconds=lease_seconds,
+            )
+            if claimed is None:
+                return tuple(unrelated_claimed_ids)
+            if claimed.job_id == target_job_id:
+                raise AssertionError(
+                    "Contender claimed the active heartbeat target job."
+                )
+            unrelated_claimed_ids.append(claimed.job_id)
+        raise AssertionError(
+            "Contender claim drain exceeded its safety limit before reaching no job."
+        )
+    finally:
+        session.rollback()
+
+
+def _safe_bulk_detail(value: object, *, limit: int = 300) -> str:
+    rendered = str(value).replace("\r", " ").replace("\n", " ")
+    return rendered[:limit]
 
 
 def _knowledge_item(identity: Phase10TestDocument, *, label: str) -> KnowledgeItem:

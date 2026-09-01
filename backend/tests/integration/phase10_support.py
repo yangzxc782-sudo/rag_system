@@ -31,7 +31,7 @@ from app.models.knowledge_item_version import KnowledgeItemVersion
 from app.services.object_storage import list_minio_object_versions
 
 
-PHASE10_FIXTURE_PREFIX = "phase10-hard-delete-r3-"
+PHASE10_FIXTURE_PREFIX = "phase10-hard-delete-r4-"
 PHASE10_INTEGRATION_ENVIRONMENT = "dedicated-local-test"
 
 

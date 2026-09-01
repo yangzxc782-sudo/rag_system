@@ -118,7 +118,7 @@ def test_integration_gate_rejects_non_phase10_opensearch_names(
 
 
 def test_test_document_factory_generates_owned_unique_resource_identity() -> None:
-    assert PHASE10_FIXTURE_PREFIX == "phase10-hard-delete-r3-"
+    assert PHASE10_FIXTURE_PREFIX == "phase10-hard-delete-r4-"
     factory = Phase10TestDocumentFactory()
 
     first = factory.create()

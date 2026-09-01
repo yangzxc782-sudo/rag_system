@@ -3,14 +3,15 @@ from __future__ import annotations
 import time
 from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
-from uuid import uuid4
+from uuid import UUID, uuid4
 
-from sqlalchemy import text, update
+from sqlalchemy import func, select, text, update
 
 import pytest
 
 from app.models.document_deletion_job import DocumentDeletionJob
 from app.services.document_deletion import (
+    ClaimedDocumentDeletion,
     claim_document_deletion,
     renew_claimed_deletion,
 )
@@ -24,7 +25,9 @@ from app.services.document_deletion_minio import (
 )
 from app.services.document_deletion_opensearch import delete_opensearch_targets
 from integration.phase10_fixtures import (
+    build_test_embedding,
     build_storage_manifest,
+    drain_claimable_jobs_excluding_target,
     index_opensearch_fixture,
     persist_document_fixture,
     schedule_pending_job,
@@ -107,6 +110,159 @@ class OneShotOpenSearchFault:
 
     def bulk(self, **kwargs):
         return self.delegate.bulk(**kwargs)
+
+
+def _persist_processing_heartbeat_target(
+    session,
+    identity,
+    settings,
+    *,
+    locked_by: str,
+    lease_seconds: int,
+) -> ClaimedDocumentDeletion:
+    job = schedule_pending_job(
+        session,
+        identity,
+        settings,
+        current_step="delete_minio_derived",
+    )
+    job.status = "processing"
+    job.step_attempts = 1
+    job.locked_by = locked_by
+    job.lease_token = uuid4()
+    job.locked_at = func.now()
+    job.lease_expires_at = func.now() + text(
+        f"INTERVAL '{int(lease_seconds)} seconds'"
+    )
+    session.flush()
+    session.refresh(job)
+    return ClaimedDocumentDeletion.from_job(job)
+
+
+def test_fixture_setup_opensearch_accepts_non_zero_1024_dimension_vectors(
+    phase10_settings,
+    phase10_opensearch_client,
+    phase10_document_factory,
+) -> None:
+    identity = phase10_document_factory.create()
+    mapping = phase10_opensearch_client.indices.get_mapping(
+        index=phase10_settings.opensearch_index
+    )
+    properties = mapping[phase10_settings.opensearch_index]["mappings"]["properties"]
+    dimension = int(properties["embedding"]["dimension"])
+    vector = build_test_embedding(dimension)
+    assert dimension == 1024
+    assert any(value != 0.0 for value in vector)
+
+    index_opensearch_fixture(
+        phase10_opensearch_client,
+        identity,
+        phase10_settings.opensearch_index,
+    )
+
+    document_hits = phase10_opensearch_client.count(
+        index=phase10_settings.opensearch_index,
+        body={"query": {"term": {"document_id": str(identity.document_id)}}},
+    )["count"]
+    assert document_hits == len(identity.chunk_ids)
+    for chunk_id in identity.chunk_ids:
+        assert phase10_opensearch_client.exists(
+            index=phase10_settings.opensearch_index,
+            id=str(chunk_id),
+        )
+
+
+def test_fixture_setup_minio_lists_versions_and_delete_markers(
+    phase10_settings,
+    phase10_minio_client,
+    phase10_document_factory,
+) -> None:
+    identity = phase10_document_factory.create()
+    upload_minio_fixture_versions(
+        phase10_minio_client,
+        identity,
+        phase10_settings.minio_bucket,
+    )
+
+    snapshot = capture_minio_snapshot(
+        phase10_minio_client,
+        phase10_settings.minio_bucket,
+    )
+    target_entries = tuple(
+        entry for entry in snapshot.minio_versions if entry[0] in identity.all_minio_keys
+    )
+    assert {entry[0] for entry in target_entries} == set(identity.all_minio_keys)
+    assert all(entry[1] for entry in target_entries)
+    assert any(entry[2] for entry in target_entries)
+
+
+def test_fixture_setup_heartbeat_contender_drain_rolls_back_unrelated_jobs(
+    phase10_session_factory,
+    phase10_settings,
+    phase10_document_factory,
+) -> None:
+    target = phase10_document_factory.create()
+    other_pending = phase10_document_factory.create()
+    other_retry = phase10_document_factory.create()
+    with phase10_session_factory() as session:
+        for identity in (target, other_pending, other_retry):
+            persist_document_fixture(
+                session,
+                identity,
+                bucket_name=phase10_settings.minio_bucket,
+            )
+        claimed = _persist_processing_heartbeat_target(
+            session,
+            target,
+            phase10_settings,
+            locked_by="fixture-heartbeat-owner",
+            lease_seconds=30,
+        )
+        pending_job = schedule_pending_job(
+            session,
+            other_pending,
+            phase10_settings,
+            current_step="delete_minio_derived",
+        )
+        retry_job = schedule_pending_job(
+            session,
+            other_retry,
+            phase10_settings,
+            current_step="delete_minio_derived",
+        )
+        retry_job.status = "retry_wait"
+        retry_job.next_retry_at = func.now() - text("INTERVAL '1 second'")
+        session.commit()
+        session.refresh(pending_job)
+        session.refresh(retry_job)
+        existing_job_count = int(
+            session.scalar(select(func.count()).select_from(DocumentDeletionJob)) or 0
+        )
+        target_token = claimed.lease_token
+
+    with phase10_session_factory() as contender_session:
+        temporarily_claimed = drain_claimable_jobs_excluding_target(
+            contender_session,
+            target_job_id=claimed.job_id,
+            max_claims=existing_job_count + 2,
+        )
+
+    assert {pending_job.id, retry_job.id}.issubset(set(temporarily_claimed))
+    with phase10_session_factory() as session:
+        restored_pending = session.get(DocumentDeletionJob, pending_job.id)
+        restored_retry = session.get(DocumentDeletionJob, retry_job.id)
+        owned_target = session.get(DocumentDeletionJob, claimed.job_id)
+        assert restored_pending is not None and restored_pending.status == "pending"
+        assert restored_retry is not None and restored_retry.status == "retry_wait"
+        assert owned_target is not None
+        assert owned_target.status == "processing"
+        assert owned_target.locked_by == "fixture-heartbeat-owner"
+        assert owned_target.lease_token == target_token
+        assert session.scalar(
+            select(DocumentDeletionJob.lease_expires_at > func.now()).where(
+                DocumentDeletionJob.id == claimed.job_id
+            )
+        ) is True
 
 
 def test_real_storage_deleters_remove_target_versions_markers_and_hits_only(
@@ -263,6 +419,8 @@ def test_long_minio_operation_heartbeats_beyond_initial_lease_and_blocks_second_
     phase10_runtime_settings,
 ) -> None:
     target = phase10_document_factory.create()
+    other_pending = phase10_document_factory.create()
+    other_retry = phase10_document_factory.create()
     manifest = build_storage_manifest(target, phase10_settings)
     slow_keys = [
         f"{manifest.derived_prefixes[0]}images/slow-{index}.png"
@@ -270,27 +428,44 @@ def test_long_minio_operation_heartbeats_beyond_initial_lease_and_blocks_second_
     ]
     minio = SlowFakeMinio(slow_keys, delay_seconds=0.3)
     with phase10_session_factory() as session:
-        persist_document_fixture(
+        for identity in (target, other_pending, other_retry):
+            persist_document_fixture(
+                session,
+                identity,
+                bucket_name=phase10_settings.minio_bucket,
+            )
+        claimed = _persist_processing_heartbeat_target(
             session,
             target,
-            bucket_name=phase10_settings.minio_bucket,
-        )
-        schedule_pending_job(session, target, phase10_settings, current_step="delete_minio_derived")
-        session.commit()
-        claimed = claim_document_deletion(
-            session,
+            phase10_settings,
             locked_by="heartbeat-owner",
-            lease_token=uuid4(),
             lease_seconds=3,
         )
+        pending_job = schedule_pending_job(
+            session,
+            other_pending,
+            phase10_settings,
+            current_step="delete_minio_derived",
+        )
+        retry_job = schedule_pending_job(
+            session,
+            other_retry,
+            phase10_settings,
+            current_step="delete_minio_derived",
+        )
+        retry_job.status = "retry_wait"
+        retry_job.next_retry_at = func.now() - text("INTERVAL '1 second'")
         session.commit()
         initial_expiry = session.get(
-            DocumentDeletionJob,
-            claimed.job_id if claimed is not None else uuid4(),
+            DocumentDeletionJob, claimed.job_id
         ).lease_expires_at
-    assert claimed is not None
+        initial_token = claimed.lease_token
+        existing_job_count = int(
+            session.scalar(select(func.count()).select_from(DocumentDeletionJob)) or 0
+        )
 
     renewals: list[bool] = []
+    unrelated_claimed_ids: set[UUID] = set()
 
     def checkpoint() -> None:
         with phase10_session_factory() as heartbeat_session:
@@ -313,22 +488,35 @@ def test_long_minio_operation_heartbeats_beyond_initial_lease_and_blocks_second_
         while not deletion.done():
             time.sleep(0.25)
             with phase10_session_factory() as contender_session:
-                contender = claim_document_deletion(
+                drained = drain_claimable_jobs_excluding_target(
                     contender_session,
-                    locked_by="contender",
-                    lease_token=uuid4(),
-                    lease_seconds=3,
+                    target_job_id=claimed.job_id,
+                    max_claims=existing_job_count + 2,
                 )
-                contender_session.rollback()
-            assert contender is None
+            unrelated_claimed_ids.update(drained)
         deletion.result(timeout=1)
 
     with phase10_session_factory() as session:
-        renewed_expiry = session.get(DocumentDeletionJob, claimed.job_id).lease_expires_at
+        target_job = session.get(DocumentDeletionJob, claimed.job_id)
+        restored_pending = session.get(DocumentDeletionJob, pending_job.id)
+        restored_retry = session.get(DocumentDeletionJob, retry_job.id)
+        renewed_expiry = target_job.lease_expires_at
+        assert target_job.status == "processing"
+        assert target_job.locked_by == "heartbeat-owner"
+        assert target_job.lease_token == initial_token
+        assert session.scalar(
+            select(DocumentDeletionJob.lease_expires_at > func.now()).where(
+                DocumentDeletionJob.id == claimed.job_id
+            )
+        ) is True
+        assert restored_pending.status == "pending"
+        assert restored_retry.status == "retry_wait"
 
     assert renewed_expiry > initial_expiry
     assert len(renewals) >= 3
     assert minio.remove_calls == 3
+    assert {pending_job.id, retry_job.id}.issubset(unrelated_claimed_ids)
+    assert claimed.job_id not in unrelated_claimed_ids
 
 
 def test_lease_lost_checkpoint_stops_slow_minio_before_new_external_operation(
