@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Request, status
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
@@ -65,6 +65,7 @@ def validate_request(request: RagAskRequest) -> None:
 def rag_ask_endpoint(
     request: RagAskRequest,
     db: DbSession,
+    http_request: Request,
 ) -> ApiResponse[RagAskData] | JSONResponse:
     try:
         validate_request(request)
@@ -73,6 +74,8 @@ def rag_ask_endpoint(
             question=request.question,
             limit=request.limit,
             document_id=request.document_id,
+            settings=getattr(http_request.app.state, "settings", None),
+            graph_retrieval=getattr(http_request.app.state, "graph_retrieval", None),
         )
         return ApiResponse[RagAskData].ok(RagAskData.from_service_result(result))
     except BusinessError as error:
