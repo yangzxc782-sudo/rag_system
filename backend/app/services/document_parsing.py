@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -26,8 +26,12 @@ from app.ingestion.block_chunker import (
     BlockChunkerConfig,
     BuiltChunkBlockLink,
     BuiltDocumentChunk,
+    ChunkBuildResult,
     build_block_aware_chunks,
 )
+from app.ingestion.chunk_adapters import adapt_mineru_chunks
+from app.ingestion.markdown.chunker import build_markdown_chunks
+from app.ingestion.markdown.parser import parse_markdown
 from app.ingestion.mineru.client import MinerUClient
 from app.ingestion.mineru.models import (
     MinerUClientError,
@@ -45,10 +49,10 @@ from app.ingestion.mineru.normalizer import (
 )
 from app.models.document import Document
 from app.models.document_chunk import DocumentChunk
-from app.models.document_chunk_block import DocumentChunkBlock
 from app.models.document_parse_run import DocumentParseRun
 from app.services.document_assets import add_document_assets
 from app.services.document_blocks import add_document_blocks
+from app.services.document_chunk_writer import DocumentChunkWriter
 from app.services.document_parse_runs import (
     create_parse_run,
     mark_failed,
@@ -105,12 +109,7 @@ def parse_document(db: Session, document_id: UUID) -> DocumentParseResult:
         if extension and not extension.startswith("."):
             extension = f".{extension}"
     if extension == MARKDOWN_FILE_EXTENSION:
-        raise BusinessError(
-            DOCUMENT_PARSER_UNAVAILABLE,
-            "Markdown 原生解析尚未开放，已上传的文档可保留等待后续解析。",
-            detail={"document_id": str(document_id), "extension": extension},
-            status_code=503,
-        )
+        return _parse_document_with_markdown(db, document, get_settings())
     if extension not in MINERU_FILE_EXTENSIONS:
         raise BusinessError(
             INVALID_FILE_TYPE,
@@ -127,6 +126,92 @@ def parse_document(db: Session, document_id: UUID) -> DocumentParseResult:
             status_code=400,
         )
     return _parse_document_with_mineru(db, document, settings)
+
+
+def _parse_document_with_markdown(
+    db: Session, document: Document, settings: Any,
+) -> DocumentParseResult:
+    document_id = document.id
+    stage = "start"
+    try:
+        document = DocumentOperationGuard(db).lock_normal(document_id)
+        _ensure_document_has_no_chunks(db, document_id)
+        document.process_status = "parsing"
+        document.error_message = None
+        db.add(document)
+        db.commit()
+
+        # No lock spans source IO or AST work; the final guard re-reads state.
+        stage = "source_file"
+        content = get_object_bytes_from_minio(
+            bucket_name=document.bucket_name, object_key=document.object_key,
+        )
+        stage = "markdown_ast"
+        clean_document = parse_markdown(content)
+        stage = "markdown_chunking"
+        drafts = build_markdown_chunks(
+            clean_document, config=_mineru_chunker_config(settings),
+        )
+        stage = "document_chunks"
+        document = DocumentOperationGuard(db).lock_normal(document_id)
+        _ensure_document_has_no_chunks(db, document_id)
+        objects = DocumentChunkWriter(db).write(document_id=document_id, drafts=drafts)
+        document.process_status = "parsed"
+        document.error_message = None
+        db.add(document)
+        db.commit()
+        db.refresh(document)
+    except Exception as exc:
+        db.rollback()
+        if isinstance(exc, BusinessError) and (
+            _is_document_deletion_guard_error(exc)
+            or exc.code in {DOCUMENT_ALREADY_PARSED, DOCUMENT_NOT_FOUND}
+        ):
+            raise
+        summary = f"Markdown 文档解析失败（阶段：{stage}，错误类型：{exc.__class__.__name__}）。"
+        _record_markdown_failure(db, document_id, summary)
+        if isinstance(exc, BusinessError):
+            raise
+        raise BusinessError(
+            DOCUMENT_PARSE_FAILED,
+            "Markdown 文档解析入库失败。",
+            detail={"document_id": str(document_id), "stage": stage, "error_type": exc.__class__.__name__},
+            status_code=500,
+        ) from exc
+
+    return DocumentParseResult(
+        document_id=document_id, process_status=document.process_status,
+        chunk_count=len(objects), parser_name="markdown_native",
+        parser_version=clean_document.parser_version,
+    )
+
+
+def _record_markdown_failure(db: Session, document_id: UUID, summary: str) -> None:
+    try:
+        document = DocumentOperationGuard(db).lock_if_normal(document_id)
+        if document is None:
+            db.rollback()
+            return
+        try:
+            _ensure_document_has_no_chunks(db, document_id)
+        except BusinessError as exc:
+            if exc.code != DOCUMENT_ALREADY_PARSED:
+                raise
+            # Another parse won while this attempt failed. Keep its state.
+            db.rollback()
+            return
+        document.process_status = "parse_failed"
+        document.error_message = summary
+        db.add(document)
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        raise BusinessError(
+            DOCUMENT_PARSE_FAILED,
+            "文档解析失败，且失败状态未能可靠持久化。",
+            detail={"document_id": str(document_id), "failure_status_persisted": False},
+            status_code=500,
+        ) from exc
 
 
 def _parse_document_with_mineru(
@@ -217,12 +302,6 @@ def _parse_document_with_mineru(
             document_id=document.id,
             parse_run_id=parse_run.id,
             chunks=chunk_build.chunks,
-        )
-
-        stage = "document_chunk_blocks"
-        _add_chunk_block_mappings(
-            db,
-            chunks=chunk_objects,
             links=chunk_build.links,
         )
 
@@ -719,61 +798,12 @@ def _add_mineru_chunks(
     document_id: UUID,
     parse_run_id: UUID,
     chunks: list[BuiltDocumentChunk],
-) -> list[DocumentChunk]:
-    objects = [
-        DocumentChunk(
-            id=uuid4(),
-            document_id=document_id,
-            parse_run_id=parse_run_id,
-            chunk_index=chunk.chunk_index,
-            content=chunk.content,
-            token_count=chunk.estimated_token_count,
-            page_start=chunk.page_start,
-            page_end=chunk.page_end,
-            section_title=chunk.section_title,
-            chunk_type=chunk.chunk_type,
-            chunk_method=chunk.chunk_method,
-            content_format=chunk.content_format,
-            source_metadata=dict(chunk.source_metadata),
-            embedding=None,
-            embedding_model=None,
-            embedding_dim=None,
-            embedding_status="not_started",
-        )
-        for chunk in chunks
-    ]
-    if objects:
-        db.add_all(objects)
-        db.flush()
-    return objects
-
-
-def _add_chunk_block_mappings(
-    db: Session,
-    *,
-    chunks: list[DocumentChunk],
     links: list[BuiltChunkBlockLink],
-) -> list[DocumentChunkBlock]:
-    chunk_ids = {chunk.chunk_index: chunk.id for chunk in chunks}
-    mappings: list[DocumentChunkBlock] = []
-    for link in links:
-        chunk_id = chunk_ids.get(link.chunk_index)
-        if chunk_id is None:
-            raise ValueError("Chunk-block mapping references an unknown chunk")
-        if link.block_id is None:
-            raise ValueError("Chunk-block mapping requires a persisted block id")
-        mappings.append(
-            DocumentChunkBlock(
-                id=uuid4(),
-                chunk_id=chunk_id,
-                block_id=UUID(link.block_id),
-                block_order=link.block_order,
-            )
-        )
-    if mappings:
-        db.add_all(mappings)
-        db.flush()
-    return mappings
+) -> list[DocumentChunk]:
+    drafts = adapt_mineru_chunks(ChunkBuildResult(chunks=chunks, links=links))
+    if any(draft.parse_run_id != parse_run_id for draft in drafts):
+        raise ValueError("MinerU chunk references a different parse run")
+    return DocumentChunkWriter(db).write(document_id=document_id, drafts=drafts)
 
 
 def _record_mineru_failure(

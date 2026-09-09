@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from app.core.config import Settings
-from app.core.errors import DOCUMENT_PARSER_UNAVAILABLE, INVALID_FILE_TYPE, BusinessError
+from app.core.errors import INVALID_FILE_TYPE, BusinessError
 from app.db.session import get_db
 from app.main import app
 from app.services import document_parsing, documents
@@ -68,16 +68,23 @@ def isolated_routing(monkeypatch):
 
 
 @pytest.mark.parametrize("extension", [".md", ".MD"])
-def test_markdown_parse_is_unavailable_without_state_or_storage_changes(isolated_routing, extension):
-    document, db = isolated_routing
+def test_markdown_parse_uses_native_route_without_mineru(isolated_routing, monkeypatch, extension):
+    from app.models.document_chunk import DocumentChunk
+    from test_document_parsing_mineru import FakeDb as ParseDb
+
+    document, _db = isolated_routing
+    db = ParseDb(document=document)
+    monkeypatch.setitem(app.dependency_overrides, get_db, lambda: db)
+    monkeypatch.setattr(document_parsing, "get_object_bytes_from_minio", lambda **kwargs: b"# Native Markdown\n")
     document.original_filename = "source" + extension
     document.file_type = extension
     response = TestClient(app).post(f"/api/v1/documents/{DOCUMENT_ID}/parse")
-    assert response.status_code == 503
-    assert response.json()["error"]["code"] == DOCUMENT_PARSER_UNAVAILABLE
-    assert document.process_status == "uploaded"
-    assert db.commits == 0
-    assert db.added == db.added_all == []
+    assert response.status_code == 200
+    assert response.json()["data"]["parser_name"] == "markdown_native"
+    assert document.process_status == "parsed"
+    assert db.parse_runs == {}
+    assert db.added_all and all(isinstance(item, DocumentChunk) for item in db.added_all)
+    assert all(item.parse_run_id is None and item.block_mappings == [] for item in db.added_all)
 
 
 def test_markdown_upload_remains_available_without_parsing(isolated_routing, monkeypatch):

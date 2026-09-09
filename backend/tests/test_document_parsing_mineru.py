@@ -79,6 +79,8 @@ class FakeDb:
             return self.document
         if model is DocumentParseRun:
             return self.parse_runs.get(item_id)
+        if model is DocumentBlock:
+            return next((item for item in self.added_all if isinstance(item, DocumentBlock) and item.id == item_id), None)
         return None
 
     def scalar(self, statement):
@@ -1034,11 +1036,14 @@ def test_mineru_pipeline_failure_marks_run_and_document_failed(
             lambda *args, **kwargs: fail(),
         )
     else:
-        monkeypatch.setattr(
-            document_parsing,
-            "_add_chunk_block_mappings",
-            lambda *args, **kwargs: fail(),
-        )
+        original_flush = db.flush
+
+        def fail_mapping_flush():
+            if any(isinstance(item, DocumentChunkBlock) for item in db.added_all):
+                fail()
+            original_flush()
+
+        monkeypatch.setattr(db, "flush", fail_mapping_flush)
 
     with pytest.raises(BusinessError) as exc_info:
         document_parsing.parse_document(db, DOCUMENT_ID)
