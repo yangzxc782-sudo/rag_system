@@ -17,6 +17,7 @@ dependencies = [
   "redis>=5.0,<7.0",
   "minio>=7.2,<8.0",
   "python-multipart>=0.0.9,<1.0",
+  "markdown-it-py==4.2.0",
   "opensearch-py>=3.2,<4.0",
   "openai>=1.0,<3.0",
   "pgvector>=0.3,<1.0",

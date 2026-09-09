@@ -30,17 +30,6 @@ Basic Parser 已退出。生产解析 provider 仅接受 `DOCUMENT_PARSER_PROVID
 - 根目录、后端、前端环境变量示例文件。
 - 基础健康检查接口和本地验证说明。
 
-第一阶段暂不配置或实现：
-
-- Neo4j。
-- Elasticsearch。
-- Celery Worker。
-- 模型服务容器。
-- RAG 检索链路。
-- 问答链路。
-- 知识抽取。
-- 文件上传。
-- 生产级权限系统。
 
 ## 本地开发架构
 
@@ -143,7 +132,6 @@ docker compose --env-file .env -f infra/docker-compose.yml logs minio
 - MinIO Console 地址：`http://localhost:9001`
 - 默认本地开发账号来自根目录 `.env`。
 - 默认 bucket：`rag-documents`
-- 第一阶段 bucket 由用户手动创建。
 - 不得自动清空或删除 bucket。
 - `/api/v1/health/services` 中 bucket 不存在应显示 warning，而不是 failed。
 
@@ -168,8 +156,6 @@ copy .env.example .env
 ```powershell
 alembic upgrade head
 ```
-
-第一阶段 PostgreSQL 容器启用 pgvector 扩展，仅作为第二阶段向量检索准备。第一阶段业务表不创建真实 `vector` 字段，不创建 HNSW、IVFFlat 或其他向量索引。embedding 只保留 `embedding_model`、`embedding_dim`、`embedding_status` 等元数据字段。
 
 ## 后端启动
 
@@ -222,18 +208,6 @@ curl http://127.0.0.1:8000/api/v1/health/services
 - MinIO 服务不可达为 failed。
 - MinIO bucket 不存在为 warning。
 
-## 第一阶段验收标准
-
-- 根目录基础文件存在，环境变量示例完整且不包含真实密钥。
-- Docker Compose 后续只包含 PostgreSQL + pgvector、Redis、MinIO。
-- FastAPI 后端可在 Windows 本机运行。
-- Next.js 前端可在 Windows 本机运行。
-- 后端本机访问 PostgreSQL 使用 `localhost:5432`。
-- Alembic 首个迁移创建 8 张基础表。
-- 自动抽取的知识条目默认进入 `pending_review`。
-- 不实现 RAG 检索、问答链路、知识抽取、文件上传、Celery、Neo4j、Elasticsearch、模型调用或生产级权限系统。
-- 不创建真实 `vector` 字段，不创建向量索引。
-
 ## 禁止操作
 
 在没有用户单独、明确授权且没有备份的情况下，禁止：
@@ -271,92 +245,6 @@ curl http://127.0.0.1:8000/api/v1/health/services
 - 后端列表接口：`GET /api/v1/documents`。
 - 后端详情接口：`GET /api/v1/documents/{document_id}`。
 
-第二阶段仍保持本机 FastAPI、本机 Next.js、Docker 基础服务的开发架构。FastAPI 和 Next.js 不放入 Docker Compose。
-
-## 第二阶段本地运行命令
-
-以下命令只供用户手动执行。Codex 不得自动执行 Docker、Git、npm、pip、alembic、pytest、uvicorn 或任何长期运行服务命令。
-
-启动 Docker 基础服务：
-
-```powershell
-docker compose --env-file .env -f infra/docker-compose.yml up -d
-docker compose --env-file .env -f infra/docker-compose.yml ps
-```
-
-准备并验证后端：
-
-```powershell
-cd backend
-pip install -e ".[dev]"
-alembic upgrade head
-pytest
-uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
-```
-
-`alembic upgrade head` 由用户确认本地开发库后手动执行。`uvicorn` 是前台长期运行命令，验证完成后使用 Ctrl+C 停止。
-
-准备并验证前端：
-
-```powershell
-cd frontend
-npm run lint
-npm run dev
-```
-
-`npm run dev` 是前台长期运行命令，验证完成后使用 Ctrl+C 停止。
-
-## 第二阶段手动验收
-
-1. 用户手动启动 Docker 基础服务。
-2. 用户手动确认 PostgreSQL、Redis、MinIO 容器正在运行。
-3. 打开 MinIO Console：`http://localhost:9001`。
-4. 确认 `rag-documents` bucket 已存在。
-5. 用户手动执行 Alembic 迁移。
-6. 用户手动启动 FastAPI。
-7. 用户手动启动 Next.js。
-8. 打开 `http://localhost:3000/documents`。
-9. 上传 PDF、Word、Excel、图片各 1 个。
-10. 确认前端文档列表出现记录。
-11. 点击详情进入 `/documents/[id]`。
-12. 确认详情页展示文件名、bucket、object key、类型、MIME、大小、hash、状态、上传时间和更新时间。
-13. 在 MinIO 中确认 `raw/YYYY/MM/` 路径下出现对象。
-
-## 第二阶段配置说明
-
-后端上传配置示例：
-
-```text
-UPLOAD_MAX_FILE_SIZE_BYTES=52428800
-UPLOAD_ALLOWED_EXTENSIONS=.pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg,.bmp,.tif,.tiff,.webp
-BACKEND_CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
-MINIO_BUCKET=rag-documents
-```
-
-前端配置示例：
-
-```text
-NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000
-```
-
-真实 `.env`、`backend/.env`、`frontend/.env.local` 不得提交 Git。示例 env 文件可以提交。前端只允许暴露 `NEXT_PUBLIC_*` 变量，不得暴露数据库、Redis、MinIO 密钥。
-
-## 第二阶段明确不实现
-
-第二阶段不实现文档真实解析、`document_chunks` 切分入库、embedding 生成、真实 `vector` 字段、HNSW/IVFFlat 或其他向量索引、RAG 问答、知识条目自动抽取、Celery Worker、Neo4j、Elasticsearch、模型服务、文件下载、文件预览、大文件流式上传、深度文件内容识别。
-
-## 第二阶段安全边界
-
-继续禁止删除 Docker volume、清空或删除 MinIO bucket、删除 MinIO 已有对象、清空数据库、删除数据库结构、执行无条件数据删除、强制修复 npm audit、重建或覆盖 `frontend`。
-
-禁止项包括：`docker compose down -v`、`docker volume rm`、`docker volume prune`、`docker system prune --volumes`、`DROP DATABASE`、`DROP TABLE`、`TRUNCATE`、无 `WHERE` 条件的 `DELETE`、`npm audit fix --force`。
-
-所有 Docker Compose 命令继续统一使用：
-
-```powershell
-docker compose --env-file .env -f infra/docker-compose.yml ...
-```
-
 # 第三阶段补充：文档解析适配与基础切片可视化闭环
 
 第三阶段在第二阶段文档上传闭环基础上，新增“文档解析适配与基础切片可视化闭环”。本阶段从已上传到 MinIO 的原始文件出发，打通同步解析、基础字符切块、`document_chunks` 入库和前端轻量查看 chunk 效果。
@@ -389,49 +277,6 @@ MinIO 原始文件 bytes
 -> 前端 chunk 可视化
 ```
 
-## 第三阶段本地运行提示
-
-第三阶段 Step 3 只创建了 Alembic 迁移文件。实际运行解析前，用户需要手动确认连接的是本地开发库，并在 `backend` 目录中手动执行：
-
-```powershell
-alembic upgrade head
-```
-
-后端 `.env` 需要确认第三阶段配置：
-
-```text
-DOCUMENT_PARSER=simple
-CHUNK_SIZE_CHARS=1000
-CHUNK_OVERLAP_CHARS=100
-MINERU_ENDPOINT=
-MINERU_TIMEOUT_SECONDS=60
-```
-
-MinIO bucket `rag-documents` 仍需用户手动确认存在。本阶段不自动创建 bucket，不删除、不移动、不覆盖 MinIO 原始对象。
-
-`POST /parse` 是同步接口，`parsing` 状态只用于后端状态流转；由于轻量解析通常很快，前端不保证一定能观察到 `parsing`。如果已有 chunks，重复解析返回 `DOCUMENT_ALREADY_PARSED` / HTTP 409，不删除、不覆盖已有 chunks，也不修改当前文档状态。`force` 覆盖或版本化重新解析不在第三阶段实现。
-
-## 第三阶段明确不实现
-
-第三阶段不实现：
-
-- 真实 MinerU 服务强制接入。
-- embedding 生成。
-- 真实 `vector` 字段。
-- HNSW / IVFFlat 或其他向量索引。
-- 语义检索。
-- RAG 问答。
-- 知识条目自动抽取。
-- Neo4j。
-- Elasticsearch。
-- Celery Worker。
-- 复杂可视化调参系统。
-- 文件下载。
-- 文件预览。
-- 多文件上传。
-- 拖拽上传。
-- 单 chunk 详情页。
-
 ## 第三阶段 PostgreSQL MCP 边界
 
 PostgreSQL MCP 仅允许只读核验，例如：
@@ -443,24 +288,6 @@ PostgreSQL MCP 仅允许只读核验，例如：
 - 查看 `chunk_index`、`chunk_type`、`embedding_status`、`source_metadata`。
 
 禁止使用 PostgreSQL MCP 执行迁移、改表、补数据、删除数据、清空表或修改数据库结构。禁止通过 MCP 执行 `INSERT`、`UPDATE`、`DELETE`、`DROP`、`TRUNCATE`、`ALTER`、`CREATE`。
-
-## 第三阶段安全边界
-
-继续禁止：
-
-- `docker compose down -v`
-- 删除 Docker volume
-- `docker volume prune`
-- `docker system prune --volumes`
-- 清空 MinIO bucket
-- 删除 MinIO bucket
-- 删除 MinIO 对象
-- `DROP`
-- `TRUNCATE`
-- 无 `WHERE` 条件的 `DELETE`
-- 通过 PostgreSQL MCP 写入或修改数据
-- 通过 PostgreSQL MCP 修改数据库结构
-- `npm audit fix --force`
 
 # 第四阶段补充：Embedding 生成与基础向量检索闭环
 
@@ -601,7 +428,7 @@ PostgreSQL MCP 仅允许只读核验，例如：
 
 - `DOCUMENT_PARSER_PROVIDER=mineru_api` 是正式主路径。
 - `DOCUMENT_PARSER_PROVIDER=basic` 仅用于 fallback、单元测试、本地最小开发验证或 MinerU 不可用时的受控兜底。
-- 当 provider 为 `mineru_api` 且 MinerU API 配置缺失时，后端应返回明确配置错误，不会静默 fallback 到 basic。
+- 当 provider 为 `mineru_api` 且 MinerU API 配置缺失时，后端应返回明确配置错误。
 - 第八阶段 v1 不实现正式 reparse API；已有 `document_chunks` 的文档默认仍返回 `DOCUMENT_ALREADY_PARSED`。
 
 第八阶段核心数据流：

@@ -1,6 +1,6 @@
 # MinIO 本地说明
 
-第一阶段 MinIO 只作为本地对象存储基础服务，用于后续保存原始文档、解析结果和中间资源。Docker Compose 不自动创建 bucket。
+MinIO 只作为本地对象存储基础服务，用于后续保存原始文档、解析结果和中间资源。Docker Compose 不自动创建 bucket。
 
 ## 手动创建 bucket
 
@@ -17,11 +17,3 @@
 docker compose --env-file .env -f infra/docker-compose.yml ps
 docker compose --env-file .env -f infra/docker-compose.yml logs minio
 ```
-
-## 第一阶段约束
-
-- 不在 Compose 中自动创建 `rag-documents` bucket。
-- 不清空 bucket 数据。
-- 不删除 MinIO 持久化 volume。
-- `/api/v1/health/services` 后续应区分 MinIO 服务可达性和 `rag-documents` bucket 是否存在。
-- bucket 不存在只应返回 warning，不影响后端应用启动。

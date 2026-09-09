@@ -6,22 +6,6 @@
 
 本项目是“铸型工艺知识库大型 RAG 系统”。第一阶段目标是完成可持续扩展的项目骨架，不实现具体业务功能。
 
-第一阶段范围包括：
-
-- FastAPI 后端骨架，本机运行；
-- Next.js 前端骨架，本机运行；
-- PostgreSQL + pgvector、Redis、MinIO 基础服务，运行在 Docker 容器中；
-- PostgreSQL 数据表设计与迁移基础；
-- Docker Compose 基础服务配置。
-
-第一阶段暂不配置：
-
-- Neo4j；
-- Elasticsearch；
-- 模型服务容器；
-- Celery Worker 容器；
-- 复杂业务流程、检索链路、问答链路或生产级权限系统。
-
 ## 2. 目录结构规范
 
 推荐项目根目录结构如下。创建文件或目录时，应尽量保持该结构清晰稳定。
@@ -84,7 +68,7 @@ D:\rag_system
 
 ## 3. 后端代码规范
 
-后端采用 FastAPI，第一阶段只建立骨架和基础连接能力。
+后端采用 FastAPI，。
 
 后端开发规则：
 
@@ -101,11 +85,9 @@ D:\rag_system
 - 新增接口时必须考虑基础异常处理、日志记录和类型标注。
 - 测试放在 `backend/tests/`，推荐使用 `pytest`。
 
-第一阶段后端验收重点是“能启动、结构清楚、配置可读、能连接基础服务”，不是实现完整 RAG 业务。
-
 ## 4. 前端代码规范
 
-前端采用 Next.js，第一阶段只建立可运行骨架和基础页面结构。
+前端采用 Next.js。
 
 前端开发规则：
 
@@ -121,8 +103,6 @@ D:\rag_system
 - 未明确技术选型前，不要引入大型 UI 框架、状态管理库或复杂可视化依赖。
 - 页面文案、组件命名和目录命名应围绕“铸型工艺知识库”和“RAG 管理系统”保持一致。
 
-第一阶段前端验收重点是“能启动、能展示基础壳、能预留后端 API 对接位置”，不是实现复杂交互。
-
 ## 5. Docker 使用规则
 
 第一阶段 Docker 只用于本地基础服务：
@@ -135,7 +115,6 @@ Docker 使用规则：
 
 - FastAPI 后端本机运行，不放入 Docker Compose。
 - Next.js 前端本机运行，不放入 Docker Compose。
-- 暂时不要在 Docker Compose 中加入 Neo4j、Elasticsearch、模型服务、Celery Worker。
 - Docker Compose 配置固定放在 `infra/docker-compose.yml`。
 - 所有 Docker Compose 命令必须从项目根目录执行，并显式使用 `-f infra/docker-compose.yml`。
 - 数据服务必须使用持久化 volume。
@@ -147,7 +126,6 @@ Docker 使用规则：
   - `docker compose -f infra/docker-compose.yml stop`
   - `docker compose -f infra/docker-compose.yml restart`
 - 修改 Docker Compose 前，必须确认不会导致已有 volume 被删除或重建。
-- 第一阶段默认 MinIO bucket 名称为 `rag-documents`。
 - 不得删除 MinIO bucket，不得清空 bucket 数据。
 
 MinIO 用于保存：
@@ -167,7 +145,6 @@ PostgreSQL 运行在 Docker 容器中，FastAPI 后端从本机连接 PostgreSQL
 - 后端本机连接 PostgreSQL 时，host 使用 `localhost` 或 `127.0.0.1`。
 - 容器内部服务互联时，才使用 Docker Compose service name。
 - 数据库连接字符串必须来自环境变量，例如 `DATABASE_URL`。
-- 第一阶段优先使用同步 SQLAlchemy 2.x session，不使用异步 session。
 - 数据库连接格式使用 `postgresql+psycopg://<user>:<password>@localhost:<port>/<database>`。
 - 不要混用 `asyncpg` 连接字符串和同步 SQLAlchemy session；除非后续阶段明确切换到异步数据库访问，否则不要引入 `postgresql+asyncpg://`。
 - pgvector 扩展必须通过初始化脚本或 Alembic migration 显式创建。
