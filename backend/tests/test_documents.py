@@ -52,8 +52,8 @@ def fake_parse_result() -> SimpleNamespace:
         document_id=DOCUMENT_ID,
         process_status="parsed",
         chunk_count=2,
-        parser_name="simple",
-        parser_version="0.1.0",
+        parser_name="mineru_api",
+        parser_version="test-v1",
     )
 
 
@@ -84,6 +84,7 @@ def fake_embedding_status() -> SimpleNamespace:
 
 
 def fake_chunk() -> SimpleNamespace:
+    # Historical persisted provenance remains readable after parser retirement.
     now = datetime(2026, 6, 30, 12, 30, tzinfo=timezone.utc)
     return SimpleNamespace(
         id=CHUNK_ID,
@@ -242,8 +243,8 @@ def test_parse_document_success(monkeypatch) -> None:
     assert body["data"]["document_id"] == str(DOCUMENT_ID)
     assert body["data"]["process_status"] == "parsed"
     assert body["data"]["chunk_count"] == 2
-    assert body["data"]["parser_name"] == "simple"
-    assert body["data"]["parser_version"] == "0.1.0"
+    assert body["data"]["parser_name"] == "mineru_api"
+    assert body["data"]["parser_version"] == "test-v1"
     assert body["error"] is None
 
 

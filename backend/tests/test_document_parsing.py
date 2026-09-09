@@ -12,7 +12,6 @@ from app.core.errors import (
     DOCUMENT_PARSER_CONFIG_INVALID,
     DOCUMENT_SOURCE_FILE_NOT_FOUND,
     DOCUMENT_DELETION_IN_PROGRESS,
-    DOCUMENT_DELETION_IN_PROGRESS,
     BusinessError,
 )
 from app.services import document_parsing
@@ -84,10 +83,10 @@ class FakeDb:
 def fake_document(process_status: str = "uploaded") -> SimpleNamespace:
     return SimpleNamespace(
         id=DOCUMENT_ID,
-        original_filename="notes.txt",
+        original_filename="notes.pdf",
         bucket_name="rag-documents",
-        object_key=f"raw/2026/07/{DOCUMENT_ID}.txt",
-        file_type=".txt",
+        object_key=f"raw/2026/07/{DOCUMENT_ID}.pdf",
+        file_type=".pdf",
         mime_type="text/plain",
         process_status=process_status,
         deletion_status="normal",
@@ -96,15 +95,12 @@ def fake_document(process_status: str = "uploaded") -> SimpleNamespace:
 
 
 def fake_settings(
-    document_parser_provider: str = "basic",
+    document_parser_provider: str = "mineru_api",
 ) -> SimpleNamespace:
     return SimpleNamespace(
         document_parser_provider=document_parser_provider,
-        document_parser="simple",
         chunk_size_chars=1000,
         chunk_overlap_chars=100,
-        mineru_endpoint="",
-        mineru_timeout_seconds=60,
         mineru_api_base_url=None,
         mineru_api_key=None,
         mineru_api_timeout_seconds=300,
@@ -117,27 +113,18 @@ def fake_settings(
     )
 
 
-def test_parse_document_success(monkeypatch) -> None:
+def test_parse_document_success_uses_supported_mineru_route(monkeypatch) -> None:
+    from test_document_parsing_mineru import FakeDb as MinerUDb, _install_success_dependencies
+
     document = fake_document()
-    db = FakeDb(document=document)
-    monkeypatch.setattr(document_parsing, "get_settings", lambda: fake_settings())
-    monkeypatch.setattr(document_parsing, "get_object_bytes_from_minio", lambda **kwargs: b"a" * 1200)
-
+    db = MinerUDb(document=document)
+    _install_success_dependencies(monkeypatch)
     result = document_parsing.parse_document(db, DOCUMENT_ID)
-
     assert result.document_id == DOCUMENT_ID
     assert result.process_status == "parsed"
-    assert result.chunk_count == 2
-    assert result.parser_name == "simple"
-    assert result.parser_version == "0.1.0"
+    assert result.chunk_count > 0
+    assert result.parser_name == "mineru_api"
     assert document.process_status == "parsed"
-    assert len(db.added_all) == 2
-    first_chunk = db.added_all[0]
-    assert first_chunk.embedding_status == "not_started"
-    assert first_chunk.token_count is None
-    assert first_chunk.embedding_model is None
-    assert first_chunk.embedding_dim is None
-    assert first_chunk.source_metadata["character_count"] == 1000
 
 
 def test_parse_deleting_document_never_reads_or_persists_source(monkeypatch) -> None:
@@ -224,18 +211,18 @@ def test_parse_document_unknown_provider_is_rejected_before_storage(monkeypatch)
 
 
 def test_parse_document_source_file_not_found_marks_parse_failed(monkeypatch) -> None:
+    from test_document_parsing_mineru import FakeDb as MinerUDb
+
     document = fake_document()
-    db = FakeDb(document=document)
+    db = MinerUDb(document=document)
     monkeypatch.setattr(document_parsing, "get_settings", lambda: fake_settings())
 
-    def fake_get_object_bytes_from_minio(**kwargs):
+    def missing_source(**kwargs):
         raise BusinessError(DOCUMENT_SOURCE_FILE_NOT_FOUND, "source missing", status_code=503)
 
-    monkeypatch.setattr(document_parsing, "get_object_bytes_from_minio", fake_get_object_bytes_from_minio)
-
+    monkeypatch.setattr(document_parsing, "get_object_bytes_from_minio", missing_source)
     with pytest.raises(BusinessError) as exc_info:
         document_parsing.parse_document(db, DOCUMENT_ID)
-
     assert exc_info.value.code == DOCUMENT_SOURCE_FILE_NOT_FOUND
     assert db.rollbacks == 1
     assert document.process_status == "parse_failed"
@@ -243,19 +230,25 @@ def test_parse_document_source_file_not_found_marks_parse_failed(monkeypatch) ->
 
 
 def test_parse_document_chunk_write_failure_rolls_back_and_marks_failed(monkeypatch) -> None:
-    document = fake_document()
-    db = FakeDb(document=document, fail_commit_after_add_all=True)
-    monkeypatch.setattr(document_parsing, "get_settings", lambda: fake_settings())
-    monkeypatch.setattr(document_parsing, "get_object_bytes_from_minio", lambda **kwargs: b"content")
+    from app.models.document_chunk import DocumentChunk
+    from test_document_parsing_mineru import FakeDb as MinerUDb, _install_success_dependencies
 
+    class ChunkWriteFailureDb(MinerUDb):
+        def flush(self):
+            if any(isinstance(item, DocumentChunk) for item in self.added_all):
+                raise RuntimeError("simulated chunk write failure")
+            super().flush()
+
+    document = fake_document()
+    db = ChunkWriteFailureDb(document=document)
+    _install_success_dependencies(monkeypatch)
     with pytest.raises(BusinessError) as exc_info:
         document_parsing.parse_document(db, DOCUMENT_ID)
-
     assert exc_info.value.code == DOCUMENT_PARSE_FAILED
     assert db.rollbacks == 1
     assert document.process_status == "parse_failed"
-    assert document.error_message == "文档解析失败。"
-    assert len(db.added_all) == 1
+    assert document.error_message
+    assert next(iter(db.parse_runs.values())).status == "failed"
 
 
 def test_list_document_chunks_returns_stats_without_token_count() -> None:

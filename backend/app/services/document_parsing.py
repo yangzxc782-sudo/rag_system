@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from typing import Any
 from uuid import UUID, uuid4
 
 from sqlalchemy import func, select
-from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -19,9 +18,10 @@ from app.core.errors import (
     DOCUMENT_PARSE_FAILED,
     DOCUMENT_PARSER_CONFIG_INVALID,
     DOCUMENT_PARSER_UNAVAILABLE,
+    INVALID_FILE_TYPE,
     BusinessError,
 )
-from app.ingestion import ParsedChunk, Parser, SimpleParser, chunk_parsed_document
+from app.ingestion.file_types import MARKDOWN_FILE_EXTENSION, MINERU_FILE_EXTENSIONS
 from app.ingestion.block_chunker import (
     BlockChunkerConfig,
     BuiltChunkBlockLink,
@@ -99,95 +99,34 @@ class _PendingMinerUUpload:
 def parse_document(db: Session, document_id: UUID) -> DocumentParseResult:
     document = _get_document_or_raise(db, document_id)
     _ensure_document_has_no_chunks(db, document_id)
+    extension = Path(document.original_filename).suffix.lower()
+    if not extension:
+        extension = (document.file_type or "").strip().lower()
+        if extension and not extension.startswith("."):
+            extension = f".{extension}"
+    if extension == MARKDOWN_FILE_EXTENSION:
+        raise BusinessError(
+            DOCUMENT_PARSER_UNAVAILABLE,
+            "Markdown 原生解析尚未开放，已上传的文档可保留等待后续解析。",
+            detail={"document_id": str(document_id), "extension": extension},
+            status_code=503,
+        )
+    if extension not in MINERU_FILE_EXTENSIONS:
+        raise BusinessError(
+            INVALID_FILE_TYPE,
+            "此文件类型没有受支持的文档解析路径。",
+            detail={"document_id": str(document_id), "extension": extension},
+            status_code=415,
+        )
     settings = get_settings()
-    provider = settings.document_parser_provider.strip().lower()
-
-    if provider == "basic":
-        return _parse_document_with_basic(db, document)
-    if provider == "mineru_api":
-        return _parse_document_with_mineru(db, document, settings)
-
-    raise BusinessError(
-        DOCUMENT_PARSER_CONFIG_INVALID,
-        "未支持的文档解析器配置。",
-        detail={"document_parser_provider": provider},
-        status_code=400,
-    )
-
-
-def _parse_document_with_basic(
-    db: Session,
-    document: Document,
-) -> DocumentParseResult:
-    document = DocumentOperationGuard(db).lock_normal(document.id)
-    document.process_status = "parsing"
-    document.error_message = None
-    db.add(document)
-    db.commit()
-    db.refresh(document)
-
-    try:
-        parser = _get_configured_basic_parser()
-        content = get_object_bytes_from_minio(
-            bucket_name=document.bucket_name,
-            object_key=document.object_key,
-        )
-        parsed_document = parser.parse(
-            content=content,
-            filename=document.original_filename,
-            file_type=document.file_type or "",
-            mime_type=document.mime_type,
-        )
-        parsed_chunks = chunk_parsed_document(
-            parsed_document,
-            chunk_size_chars=get_settings().chunk_size_chars,
-            chunk_overlap_chars=get_settings().chunk_overlap_chars,
-        )
-
-        document = DocumentOperationGuard(db).lock_normal(document.id)
-        db.add_all(_build_document_chunks(document_id=document.id, parsed_chunks=parsed_chunks))
-        document.process_status = "parsed"
-        document.error_message = None
-        db.add(document)
-        db.commit()
-        db.refresh(document)
-    except BusinessError as exc:
-        db.rollback()
-        if _is_document_deletion_guard_error(exc):
-            raise
-        _mark_document_parse_failed(db, document.id, exc.message)
-        raise
-    except SQLAlchemyError as exc:
-        db.rollback()
-        message = "文档解析结果写入失败。"
-        _mark_document_parse_failed(db, document.id, message)
+    if settings.document_parser_provider != "mineru_api":
         raise BusinessError(
-            DOCUMENT_PARSE_FAILED,
-            message,
-            detail={"document_id": str(document.id)},
-            status_code=500,
-        ) from exc
-    except Exception as exc:
-        db.rollback()
-        message = "文档解析失败。"
-        _mark_document_parse_failed(db, document.id, message)
-        raise BusinessError(
-            DOCUMENT_PARSE_FAILED,
-            message,
-            detail={
-                "document_id": str(document.id),
-                "error_type": exc.__class__.__name__,
-            },
-            status_code=500,
-        ) from exc
-
-    return DocumentParseResult(
-        document_id=document.id,
-        process_status=document.process_status,
-        chunk_count=len(parsed_chunks),
-        parser_name=parsed_document.parser_name,
-        parser_version=parsed_document.parser_version,
-    )
+            DOCUMENT_PARSER_CONFIG_INVALID,
+            "未支持的文档解析器配置。",
+            detail={"document_parser_provider": settings.document_parser_provider},
+            status_code=400,
+        )
+    return _parse_document_with_mineru(db, document, settings)
 
 
 def _parse_document_with_mineru(
@@ -413,10 +352,6 @@ def _ensure_document_has_no_chunks(db: Session, document_id: UUID) -> None:
             detail={"document_id": str(document_id), "chunk_count": chunk_count},
             status_code=409,
         )
-
-
-def _get_configured_basic_parser() -> Parser:
-    return SimpleParser()
 
 
 def _create_mineru_client(settings: Any) -> MinerUClient:
@@ -932,26 +867,6 @@ def _mineru_api_key_value(settings: Any) -> str:
     if callable(get_secret_value):
         return str(get_secret_value())
     return str(api_key)
-
-
-def _build_document_chunks(*, document_id: UUID, parsed_chunks: list[ParsedChunk]) -> list[DocumentChunk]:
-    return [
-        DocumentChunk(
-            document_id=document_id,
-            chunk_index=parsed_chunk.chunk_index,
-            content=parsed_chunk.content,
-            token_count=None,
-            page_start=None,
-            page_end=None,
-            section_title=None,
-            chunk_type=parsed_chunk.chunk_type,
-            embedding_model=None,
-            embedding_dim=None,
-            embedding_status="not_started",
-            source_metadata=parsed_chunk.source_metadata,
-        )
-        for parsed_chunk in parsed_chunks
-    ]
 
 
 def _mark_document_parse_failed(db: Session, document_id: UUID, error_message: str) -> None:

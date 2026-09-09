@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 
 import { uploadDocument } from "@/lib/documents";
 
-const ACCEPTED_FILE_TYPES = ".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg,.bmp,.tif,.tiff,.webp,.txt,.md,.csv";
+const ACCEPTED_FILE_TYPES = ".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg,.bmp,.webp,.md";
 
 export default function DocumentUploadForm() {
   const router = useRouter();
@@ -45,7 +45,7 @@ export default function DocumentUploadForm() {
       <div className="border-b border-slate-200 px-5 py-4">
         <h2 className="text-lg font-semibold text-slate-950">上传文档</h2>
         <p className="mt-1 text-sm leading-6 text-slate-600">
-          支持 PDF、Word、Excel、常见图片、TXT、Markdown 和 CSV。
+          支持 PDF、Word、Excel、PNG、JPG、JPEG、BMP、WebP 和 Markdown。Markdown 暂仅支持上传，解析尚未开放。
         </p>
       </div>
 

@@ -503,13 +503,13 @@ document_chunks
 
 ### document_parse_runs
 
-`document_parse_runs` 记录一次文档解析任务，可以来自 `mineru_api` 或 `basic`。第八阶段正式主路径为 `mineru_api`。
+`document_parse_runs` 记录真实 MinerU 解析任务，当前 provider 为 `mineru_api`。Basic 已退出；未来 Markdown Native 不创建 ParseRun。
 
 主要字段：
 
 - `id`：解析任务 ID。
 - `document_id`：关联 `documents.id`。
-- `parser_provider`：解析器来源，例如 `mineru_api` / `basic`。
+- `parser_provider`：解析器来源，当前为 `mineru_api`；不迁移或重写历史记录。
 - `parser_version`：解析器版本。
 - `parse_mode`：解析模式，例如 `auto`。
 - `status`：`pending` / `running` / `succeeded` / `failed`。
@@ -640,8 +640,8 @@ parsed-assets/{document_id}/{parse_run_id}/...
 
 新增字段：
 
-- `parse_run_id`：nullable，表示该 chunk 来源于哪次解析；不破坏旧数据和 basic fallback 数据。
-- `chunk_method`：例如 `basic_text_split` / `mineru_block_merge`。
+- `parse_run_id`：nullable，表示该 chunk 来源于哪次解析；兼容历史无 ParseRun 数据和未来 Markdown Native chunks。
+- `chunk_method`：当前 MinerU 为 `mineru_block_merge`；历史 `basic_text_split` 仅作为存量 provenance，不再生成。
 - `content_format`：例如 `plain_text` / `markdown` / `mixed`。
 
 保留规则：

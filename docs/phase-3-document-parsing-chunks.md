@@ -1,5 +1,7 @@
 # 第三阶段：文档解析适配与基础切片可视化闭环
 
+> 历史阶段记录：本文的 Basic / SimpleParser / 旧 parser stub 描述已由 2026-09-09 的 [Basic Retirement](phase-11-basic-parser-retirement.md) 决策替代，不得作为未来生产路径或配置使用。MinerU 稳定实现保持，Markdown Native 尚待 Phase 11 M1—M3。
+
 本文记录 `D:\rag_system` 第三阶段实施设计与当前实现边界。第三阶段只打通“MinIO 原始文件读取 -> 解析适配 -> 标准化 Markdown / text / metadata -> 基础文本切块 -> document_chunks 入库 -> 更新 documents.process_status -> 前端轻量查看切块效果”的本地开发闭环。
 
 第三阶段继续保持本机 FastAPI、本机 Next.js、Docker 基础服务的开发架构。FastAPI 和 Next.js 不放入 Docker Compose。

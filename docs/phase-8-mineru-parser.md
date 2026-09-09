@@ -1,5 +1,7 @@
 # 第八阶段：MinerU API 文档解析增强与解析中间层重构
 
+> 历史阶段记录：本文的 Basic / SimpleParser / 旧 parser stub 描述已由 2026-09-09 的 [Basic Retirement](phase-11-basic-parser-retirement.md) 决策替代，不得作为未来生产路径或配置使用。MinerU 稳定实现保持，Markdown Native 尚待 Phase 11 M1—M3。
+
 ## 1. 阶段目标
 
 第八阶段的目标是重构文档解析入库层，以 MinerU API 作为正式主解析器，提升 PDF、扫描 PDF、图文混排文档、表格、公式、图片等复杂文档的解析质量。

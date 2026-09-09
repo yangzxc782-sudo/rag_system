@@ -1,16 +1,19 @@
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import model_validator
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from app.ingestion.file_types import DOCUMENT_FILE_EXTENSIONS
 
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 
 
 class Settings(BaseSettings):
-    document_parser_provider: str = "mineru_api"
+    document_parser_provider: Literal["mineru_api"] = "mineru_api"
     mineru_api_base_url: str | None = None
     mineru_api_key: SecretStr | None = None
     mineru_api_timeout_seconds: int = 300
@@ -52,19 +55,15 @@ class Settings(BaseSettings):
     document_deletion_heartbeat_object_interval: int = 25
 
     upload_max_file_size_bytes: int = 52_428_800
-    upload_allowed_extensions: str = ".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg,.bmp,.tif,.tiff,.webp,.txt,.md,.csv"
+    upload_allowed_extensions: str = ".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg,.bmp,.webp,.md"
     # content_type is auxiliary metadata only. Leave this empty by default so browser-specific
     # or application/octet-stream values do not block an allowed extension.
     upload_allowed_content_types: str = ""
     backend_cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
 
-    # Deprecated compatibility fields. Phase 8 parsing ignores these values;
-    # use document_parser_provider and mineru_api_* exclusively for MinerU V4.
-    document_parser: str = "simple"
+    # Shared sizing settings remain in use by the MinerU block-aware chunker.
     chunk_size_chars: int = 1000
     chunk_overlap_chars: int = 100
-    mineru_endpoint: str = ""
-    mineru_timeout_seconds: int = 60
 
     embedding_provider: str = "local_qwen3"
     embedding_model: str = "Qwen3-Embedding-0.6B"
@@ -210,7 +209,8 @@ class Settings(BaseSettings):
 
     @property
     def upload_allowed_extension_set(self) -> set[str]:
-        return {item.strip().lower() for item in self.upload_allowed_extensions.split(",") if item.strip()}
+        configured = {item.strip().lower() for item in self.upload_allowed_extensions.split(",") if item.strip()}
+        return configured & DOCUMENT_FILE_EXTENSIONS
 
     @property
     def upload_allowed_content_type_set(self) -> set[str]:

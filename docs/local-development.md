@@ -1,5 +1,7 @@
 # 第一阶段本地开发说明
 
+> 当前解析边界见 [Basic Retirement](phase-11-basic-parser-retirement.md)。早期阶段的 SimpleParser、TXT/CSV 和旧 parser 配置示例仅作历史记录，不适用于 Phase 11 P0。当前 provider 仅为 mineru_api；Markdown 仅可上传，parse 暂返回 503。
+
 本文说明 `D:\rag_system` 第一阶段 Windows 本机开发方式。本文中的命令只供用户手动执行，Codex 不自动执行这些命令。
 
 ## 本机开发架构
@@ -1335,17 +1337,11 @@ MINERU_ENABLE_OCR=true
 MINERU_OUTPUT_PREFIX=parsed-assets
 ```
 
-最小本地 fallback / 测试：
-
-```env
-DOCUMENT_PARSER_PROVIDER=basic
-```
-
 说明：
 
 - `mineru_api` 是正式主路径。
-- `basic` 仅用于 fallback、测试 parser 或简单文本类文档验证。
-- 当 provider 为 `mineru_api` 且配置缺失时，后端会返回明确配置错误，不会静默 fallback 到 basic。
+- 已退出的 provider 在 Settings 加载时拒绝，不保留替代解析器。
+- MinerU 配置缺失时返回明确配置错误；Markdown 独立路由，P0 暂返回 DOCUMENT_PARSER_UNAVAILABLE / HTTP 503。
 - 不要把真实 API key 提交到仓库。
 
 `MINERU_API_BASE_URL` 只填写官方域名，后端自行拼接 V4 路径。当前本地文件流程先调用 `POST /api/v4/file-urls/batch`，再用签名地址 `PUT` 原始文件，随后轮询 `GET /api/v4/extract-results/batch/{batch_id}`。签名上传和结果 ZIP 下载不会携带 MinerU Bearer Token，上传时也不会主动设置 `Content-Type`。`MINERU_PARSE_MODE=auto` 仅作为兼容别名，实际按 `vlm` 请求；正式配置推荐直接写 `vlm`。

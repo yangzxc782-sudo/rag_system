@@ -1,5 +1,7 @@
 # 第八阶段最终交接摘要：MinerU API 文档解析增强与 OpenSearch 索引同步
 
+> 历史阶段记录：本文的 Basic / SimpleParser / 旧 parser stub 描述已由 2026-09-09 的 [Basic Retirement](phase-11-basic-parser-retirement.md) 决策替代，不得作为未来生产路径或配置使用。MinerU 稳定实现保持，Markdown Native 尚待 Phase 11 M1—M3。
+
 > 新 Codex 对话请先阅读本摘要，并以当前仓库代码、Git 状态和运行环境的重新核验结果为最终依据。第八阶段已经由项目负责人验收；下一对话不得重新设计第八阶段，也不得直接开始第九阶段实现。
 
 ## 1. 项目目标和当前阶段

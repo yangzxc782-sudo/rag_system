@@ -46,7 +46,7 @@ export default function DocumentParseButton({ documentId, disabled = false }: Do
     <div className="flex flex-col gap-3 rounded-md border border-slate-200 bg-white p-4 shadow-sm">
       <div>
         <h3 className="text-base font-semibold text-slate-950">解析与切片</h3>
-        <p className="mt-1 text-sm leading-6 text-slate-600">同步触发轻量解析并生成基础 chunks。</p>
+        <p className="mt-1 text-sm leading-6 text-slate-600">解析文档并生成切片。Markdown 解析尚未开放。</p>
       </div>
 
       <button

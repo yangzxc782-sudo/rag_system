@@ -13,14 +13,14 @@
 - [ ] `.env` / `backend/.env` 中 `DOCUMENT_PARSER_PROVIDER` 设置符合当前验收目标。
 - [ ] 未在仓库或日志中写入真实 MinerU API key。
 
-### 2. basic parser 验收
+### 2. 当前 P0 文件路由验收
 
-- [ ] 设置 `DOCUMENT_PARSER_PROVIDER=basic`。
-- [ ] 上传简单 txt / md 测试文档。
-- [ ] 调用 `POST /api/v1/documents/{document_id}/parse`。
-- [ ] parse 成功。
-- [ ] `GET /api/v1/documents/{document_id}/chunks` 仍可用。
-- [ ] basic parser 路径不要求写入 `document_blocks` / `document_assets`。
+- [ ] `DOCUMENT_PARSER_PROVIDER=basic` 在 Settings 加载时明确拒绝，不静默 fallback。
+- [ ] `.txt/.csv/.tif/.tiff` 上传返回 INVALID_FILE_TYPE / HTTP 415，未写 MinIO / Document。
+- [ ] 旧 unsupported 文档 parse 明确拒绝，不进入 parsing 状态。
+- [ ] `.md` 可上传；parse 返回 DOCUMENT_PARSER_UNAVAILABLE / HTTP 503，不调用 MinerU、不创建 ParseRun/Block/Chunk。
+- [ ] 已有文档、chunks 的读取与 Hard Delete 不受退休影响，不清理历史数据。
+- [ ] M3 接通 Markdown Native 之前，不把 503 当作已实现原生解析。
 
 ### 3. MinerU 配置错误验收
 
@@ -28,7 +28,7 @@
 - [ ] 故意缺省 `MINERU_API_BASE_URL` 或 `MINERU_API_KEY`。
 - [ ] 调用 parse API。
 - [ ] 返回明确配置错误，例如 `DOCUMENT_PARSER_CONFIG_INVALID`。
-- [ ] 不静默 fallback 到 basic。
+- [ ] 不使用替代解析器。
 - [ ] error detail 不泄露 API key、完整原文或完整 MinerU JSON。
 
 ### 4. MinerU 成功解析验收

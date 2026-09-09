@@ -275,8 +275,9 @@ def _install_success_dependencies(
     return fake_client, uploads
 
 
+@pytest.mark.parametrize("extension", [".pdf", ".docx"])
 def test_mineru_success_writes_full_pipeline_before_marking_active(
-    monkeypatch,
+    monkeypatch, extension: str,
 ) -> None:
     old_run = DocumentParseRun(
         id=uuid4(),
@@ -286,6 +287,9 @@ def test_mineru_success_writes_full_pipeline_before_marking_active(
         is_active=True,
     )
     document = fake_document()
+    document.original_filename = "casting" + extension
+    document.file_type = extension
+    document.object_key = f"raw/2026/07/{DOCUMENT_ID}{extension}"
     db = FakeDb(document=document, parse_runs=[old_run])
     fake_client, uploads = _install_success_dependencies(monkeypatch)
 

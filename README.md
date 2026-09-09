@@ -1,5 +1,20 @@
 # 铸型工艺知识库 RAG 管理系统
 
+## 当前 ingestion 边界（2026-09-09，Phase 11 P0）
+
+Basic Parser 已退出。生产解析 provider 仅接受 `DOCUMENT_PARSER_PROVIDER=mineru_api`；其他值在配置加载时拒绝。
+最终 ingestion 仅有 MinerU 与 Markdown Native。Markdown Native 尚未实现：`.md` 可上传，但 parse 返回
+`DOCUMENT_PARSER_UNAVAILABLE` / HTTP 503，且不会读写解析产物或调用 MinerU。
+
+当前上传允许 `.pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg,.bmp,.webp,.md`。
+`.txt/.csv` 已停止支持；`.tif/.tiff` 未获当前官方 V4 上传契约支持，也明确拒绝。
+上传拒绝使用 `INVALID_FILE_TYPE` / HTTP 415；已存 unsupported 文件的 parse 同样拒绝，既有文档与 chunks 不清理。
+部署的 `UPLOAD_ALLOWED_EXTENSIONS` 只能收窄上述范围，旧 `.env` 的额外扩展名不会重新启用已退出格式。
+
+详见 [Basic Retirement 审计与验收](docs/phase-11-basic-parser-retirement.md)。
+下文按阶段保存历史记录；第三阶段的 SimpleParser、字符切块与旧配置不再代表当前能力。
+
+
 本项目是“铸型工艺知识库大型 RAG 系统”。第一阶段目标是建立可持续扩展的本地开发骨架，先把后端、前端、基础服务、迁移和文档边界搭清楚，不实现具体 RAG 业务功能。
 
 本文中的命令只供用户手动执行。Codex 不自动执行 Docker、Git、npm、pip、alembic、pytest、uvicorn、next 等命令，也不启动长期运行服务。
@@ -346,7 +361,7 @@ docker compose --env-file .env -f infra/docker-compose.yml ...
 
 第三阶段在第二阶段文档上传闭环基础上，新增“文档解析适配与基础切片可视化闭环”。本阶段从已上传到 MinIO 的原始文件出发，打通同步解析、基础字符切块、`document_chunks` 入库和前端轻量查看 chunk 效果。
 
-## 第三阶段当前能力
+## 第三阶段历史能力（已被后续阶段替代）
 
 第三阶段已补充：
 
