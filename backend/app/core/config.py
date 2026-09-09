@@ -1,8 +1,9 @@
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlsplit
 
-from pydantic import model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -100,6 +101,21 @@ class Settings(BaseSettings):
     hybrid_vector_top_k: int = 50
     hybrid_final_limit: int = 10
 
+    # Runtime credentials must be provisioned with database-level read-only
+    # privileges. READ access mode alone is not an authorization boundary.
+    graph_retrieval_enabled: bool = False
+    neo4j_uri: str | None = Field(default=None, repr=False)
+    neo4j_database: str | None = None
+    neo4j_username: str | None = Field(default=None, repr=False)
+    neo4j_password: SecretStr | None = Field(default=None, repr=False)
+    graph_retrieval_max_anchors: int = Field(default=8, gt=0)
+    graph_retrieval_max_entities_per_anchor: int = Field(default=200, gt=0)
+    graph_retrieval_max_relationships_per_anchor: int = Field(default=400, gt=0)
+    graph_retrieval_query_timeout_seconds: float = Field(default=2, gt=0, allow_inf_nan=False)
+    graph_retrieval_total_budget_seconds: float = Field(default=5, gt=0, allow_inf_nan=False)
+    neo4j_connection_timeout_seconds: float = Field(default=1, gt=0, allow_inf_nan=False)
+    neo4j_connection_acquisition_timeout_seconds: float = Field(default=1, gt=0, allow_inf_nan=False)
+
     llm_provider: str = "local"
     llm_base_url: str = "http://localhost:11434/v1"
     llm_model: str = "qwen3:8b"
@@ -129,6 +145,20 @@ class Settings(BaseSettings):
     reranker_model: str = "Qwen3-Reranker-0.6B"
     reranker_model_path: str = "D:/rag_system/models/Qwen3-Reranker-0.6B"
     reranker_top_k: int = 8
+
+    @field_validator("neo4j_uri")
+    @classmethod
+    def validate_neo4j_uri(cls, value: str | None) -> str | None:
+        if value is None or not value.strip():
+            return None
+        uri = urlsplit(value.strip())
+        if (uri.scheme not in {"bolt", "bolt+s", "bolt+ssc", "neo4j", "neo4j+s", "neo4j+ssc"}
+                or not uri.hostname or uri.username is not None or uri.password is not None
+                or uri.query or uri.fragment or uri.path not in {"", "/"}):
+            raise ValueError("neo4j_uri must be a credential-free Bolt/Neo4j endpoint")
+        if uri.port is not None and uri.port <= 0:
+            raise ValueError("neo4j_uri port must be positive")
+        return value.strip()
 
     @model_validator(mode="after")
     def validate_search_settings(self) -> "Settings":

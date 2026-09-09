@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import Settings, get_settings
 from app.core.logging import configure_logging
+from app.graph.repository import Neo4jRepository
 from app.llm.configuration import validate_active_llm_configuration
 from app.llm.provider import clear_llm_provider_cache
 from app.tasks.document_deletion_executor import DocumentDeletionExecutor
@@ -14,6 +15,8 @@ from app.tasks.document_deletion_executor import DocumentDeletionExecutor
 def _lifespan(settings: Settings):
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        graph_repository = Neo4jRepository(settings)
+        app.state.graph_repository = graph_repository
         executor: DocumentDeletionExecutor | None = None
         if bool(getattr(settings, "document_deletion_executor_enabled", False)):
             executor = DocumentDeletionExecutor(settings=settings)
@@ -22,14 +25,19 @@ def _lifespan(settings: Settings):
         try:
             yield
         finally:
-            if executor is not None:
-                executor.stop()
-                executor.join(
-                    timeout=float(
-                        settings.document_deletion_shutdown_grace_seconds
+            try:
+                if executor is not None:
+                    executor.stop()
+                    executor.join(
+                        timeout=float(
+                            settings.document_deletion_shutdown_grace_seconds
+                        )
                     )
-                )
-            clear_llm_provider_cache()
+            finally:
+                try:
+                    clear_llm_provider_cache()
+                finally:
+                    graph_repository.close()
 
     return lifespan
 
