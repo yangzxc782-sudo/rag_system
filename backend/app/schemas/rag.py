@@ -46,6 +46,53 @@ class RagLlmInfo(BaseModel):
     model: str | None = None
 
 
+class RagGraphDocument(BaseModel):
+    doc_id: str
+
+
+class RagGraphTable(BaseModel):
+    table_id: str
+    table_ref: str
+    page: int | None = None
+    table_index: int | None = None
+
+
+class RagGraphEntity(BaseModel):
+    id: str
+    name: str
+    entity_type: str
+    page: int | None = None
+
+
+class RagGraphRelationship(BaseModel):
+    source_entity_id: str
+    source_name: str
+    type: str
+    target_entity_id: str
+    target_name: str
+
+
+class RagGraphEvidence(BaseModel):
+    graph_id: str
+    anchor_id: str
+    anchor_type: str
+    table_ref: str | None
+    source_citations: list[int]
+    document: RagGraphDocument
+    table: RagGraphTable
+    entities: list[RagGraphEntity]
+    relationships: list[RagGraphRelationship]
+
+
+class RagGraphData(BaseModel):
+    enabled: bool
+    triggered: bool
+    status: Literal["success", "partial", "not_triggered", "unavailable"]
+    truncated: bool
+    evidence_count: int
+    evidence: list[RagGraphEvidence]
+
+
 class RagAskData(BaseModel):
     question: str
     answer: str
@@ -53,9 +100,12 @@ class RagAskData(BaseModel):
     citations: list[RagCitationItem]
     retrieval: SearchData
     llm: RagLlmInfo
+    graph: RagGraphData | None = None
 
     @classmethod
     def from_service_result(cls, result: Any) -> "RagAskData":
+        from app.rag.graph_response import build_graph_response
+
         return cls(
             question=str(getattr(result, "question", "") or ""),
             answer=str(getattr(result, "answer", "") or ""),
@@ -68,5 +118,9 @@ class RagAskData(BaseModel):
             llm=RagLlmInfo(
                 provider=getattr(result, "llm_provider", None),
                 model=getattr(result, "llm_model", None),
+            ),
+            graph=build_graph_response(
+                getattr(result, "graph_context", None),
+                triggered=bool(getattr(result, "graph_triggered", False)),
             ),
         )

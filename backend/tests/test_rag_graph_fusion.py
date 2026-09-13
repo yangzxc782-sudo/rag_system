@@ -204,7 +204,7 @@ def test_graph_success_calls_llm_once_with_text_authority_and_unchanged_public_c
     for term in ("数值", "单位", "上下限", "适用条件", "文本", "不得仅凭图谱"):
         assert term in system
     public = RagAskData.from_service_result(answer).model_dump(mode="json")
-    assert set(public) == {"question", "answer", "context_status", "citations", "retrieval", "llm"}
+    assert set(public) == {"question", "answer", "context_status", "citations", "retrieval", "llm", "graph"}
     assert set(public["citations"][0]) == {"citation_id", "chunk_id", "document_id", "original_filename",
         "chunk_index", "content", "hybrid_score", "retrieval_source"}
     assert public["citations"][0]["content"] == source.content
@@ -256,7 +256,7 @@ def test_real_hybrid_deletion_filter_precedes_graph_and_excludes_stale_hit(monke
     assert client.search.call_count == 2  # no graph-expanded text retrieval
 
 
-def test_api_uses_lifespan_owned_service_without_public_schema_change(monkeypatch):
+def test_api_uses_lifespan_owned_service_with_additive_graph_field(monkeypatch):
     import app.main as main
     from app.api.v1.rag import get_db
     config = settings()
@@ -273,7 +273,7 @@ def test_api_uses_lifespan_owned_service_without_public_schema_change(monkeypatc
         response = client.post("/api/v1/rag/ask", json={"question": "question"})
         assert response.status_code == 200
         assert "知识图谱辅助证据" in prompts(llm)[1]
-        assert set(response.json()["data"]) == {"question", "answer", "context_status", "citations", "retrieval", "llm"}
+        assert set(response.json()["data"]) == {"question", "answer", "context_status", "citations", "retrieval", "llm", "graph"}
         schema = app.openapi()
         assert not schema["paths"]["/api/v1/rag/ask"]["post"].get("parameters")
     repo.fetch_table_context.assert_called_once()

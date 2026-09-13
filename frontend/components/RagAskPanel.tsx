@@ -2,6 +2,7 @@
 
 import type { FormEvent } from "react";
 import { useState } from "react";
+import GraphEvidencePanel from "@/components/GraphEvidencePanel";
 
 import {
   friendlyRagErrorMessage,
@@ -139,6 +140,8 @@ function AnswerPanel({ result }: { result: RagAskData }) {
         )}
       </section>
 
+      <GraphEvidencePanel graph={result.graph} />
+
       <section>
         <div className="border-t border-slate-200 px-5 py-3">
           <h3 className="text-sm font-semibold text-slate-950">引用片段</h3>
@@ -168,6 +171,7 @@ export default function RagAskPanel() {
   const [limit, setLimit] = useState(8);
   const [isAsking, setIsAsking] = useState(false);
   const [result, setResult] = useState<RagAskData | null>(null);
+  const [answerVersion, setAnswerVersion] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
   async function handleAsk(event: FormEvent<HTMLFormElement>) {
@@ -205,6 +209,7 @@ export default function RagAskPanel() {
     }
 
     setResult(response.data);
+    setAnswerVersion((version) => version + 1);
   }
 
   return (
@@ -256,7 +261,7 @@ export default function RagAskPanel() {
         </div>
       ) : null}
 
-      {result ? <AnswerPanel result={result} /> : null}
+      {result ? <AnswerPanel key={answerVersion} result={result} /> : null}
     </div>
   );
 }

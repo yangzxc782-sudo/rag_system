@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from copy import deepcopy
 import logging
 from typing import Any
@@ -24,10 +24,10 @@ from app.llm.provider import (
 )
 from app.rag.citations import RagCitation
 from app.rag.citations import build_citations as build_context_citations
-from app.rag.context_builder import RagContext, RagContextStatus, build_rag_context
+from app.rag.context_builder import RagContext, RagContextStatus, build_rag_context, format_context_for_prompt
 from app.graph.models import GraphTriggerProvenance, KGRef
 from app.rag.graph_context_builder import GraphContext, build_graph_context
-from app.rag.prompt import build_rag_prompt
+from app.rag.prompt import build_rag_prompt, build_user_prompt
 from app.services.graph_retrieval import GraphRetrievalService
 from app.services.hybrid_search import HybridSearchResult
 
@@ -39,6 +39,7 @@ logger = logging.getLogger(__name__)
 class RagPrompt:
     system_prompt: str
     user_prompt: str
+    graph_context: GraphContext | None = None
 
 
 @dataclass(frozen=True)
@@ -50,6 +51,8 @@ class RagAnswerResult:
     retrieval: HybridSearchResult
     llm_provider: str | None
     llm_model: str | None
+    graph_context: GraphContext | None = None
+    graph_triggered: bool = False
 
 
 def retrieve_chunks(
@@ -108,6 +111,14 @@ def build_prompt(question: str, context: RagContext, settings: Any,
                  graph_context: GraphContext | None = None) -> RagPrompt:
     try:
         system_prompt, user_prompt = build_rag_prompt(question, context, settings, graph_context=graph_context)
+        # M6's formatter can fall back to the exact text prompt. Observe that
+        # outcome without changing prompt semantics or serializing graph again.
+        # Comparing the baseline avoids mistaking a heading in source text for
+        # a graph section. Unused evidence must never be exposed as used evidence.
+        if graph_context is not None and graph_context.evidence:
+            text_prompt = build_user_prompt(question, format_context_for_prompt(context))
+            if user_prompt == text_prompt:
+                graph_context = replace(graph_context, status="empty", evidence=(), total_chars=0)
     except BusinessError:
         raise
     except Exception as exc:
@@ -117,7 +128,7 @@ def build_prompt(question: str, context: RagContext, settings: Any,
             detail={"error_type": exc.__class__.__name__},
             status_code=500,
         ) from exc
-    return RagPrompt(system_prompt=system_prompt, user_prompt=user_prompt)
+    return RagPrompt(system_prompt=system_prompt, user_prompt=user_prompt, graph_context=graph_context)
 
 
 def generate_answer(prompt: RagPrompt, llm_provider: LLMProvider, settings: Any) -> LLMGenerateResult:
@@ -240,6 +251,7 @@ def answer_question(
             retrieval=search_result,
             llm_provider=active_llm.provider,
             llm_model=active_llm.model or None,
+            graph_context=GraphContext() if bool(getattr(settings, "graph_retrieval_enabled", False)) else None,
         )
 
     graph_context = build_graph_context_for_rag(context, settings, graph_retrieval)
@@ -255,6 +267,9 @@ def answer_question(
         retrieval=search_result,
         llm_provider=llm_result.provider,
         llm_model=llm_result.model,
+        graph_context=prompt.graph_context,
+        # Pure provenance inspection for reporting; retrieval remains owned by M6.
+        graph_triggered=graph_context.enabled and bool(extract_graph_refs(context)[0]),
     )
 
 

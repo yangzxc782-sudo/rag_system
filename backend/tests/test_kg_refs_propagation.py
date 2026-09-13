@@ -336,7 +336,7 @@ def test_public_search_rag_and_citation_fields_remain_unchanged():
                      "keyword_rank", "vector_rank", "hybrid_score", "matched_keywords",
                      "embedding_model", "embedding_dim"},
         RagAskRequest: {"question", "limit", "document_id"},
-        RagAskData: {"question", "answer", "context_status", "citations", "retrieval", "llm"},
+        RagAskData: {"question", "answer", "context_status", "citations", "retrieval", "llm", "graph"},
         RagCitationItem: {"citation_id", "chunk_id", "document_id", "original_filename",
                           "chunk_index", "content", "hybrid_score", "retrieval_source"},
     }

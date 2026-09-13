@@ -256,6 +256,7 @@ def test_rag_openapi_request_schema_does_not_add_messages_or_history() -> None:
         "citations",
         "retrieval",
         "llm",
+        "graph",
     }
 
 

@@ -132,7 +132,7 @@ class Settings(BaseSettings):
 
     rag_top_k: int = 8
     rag_context_max_chars: int = 12000
-    rag_graph_context_max_chars: int = Field(default=6000, ge=0)
+    rag_graph_context_max_chars: int = Field(default=50000, ge=0)
     rag_require_citations: bool = True
     rag_no_context_message: str = "当前知识库中未检索到足够依据，无法可靠回答该问题。"
     rag_system_prompt_name: str = "casting_rag_default"
