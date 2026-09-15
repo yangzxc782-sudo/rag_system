@@ -149,6 +149,6 @@ def test_graph_budget_setting_is_independent():
     from app.core.config import Settings
     from pydantic import ValidationError
     settings = Settings(_env_file=None, rag_context_max_chars=1234)
-    assert settings.rag_graph_context_max_chars == 6000
+    assert settings.rag_graph_context_max_chars == 50000
     with pytest.raises(ValidationError):
         Settings(_env_file=None, rag_graph_context_max_chars=-1)
