@@ -1,5 +1,7 @@
 # Phase 12：BAAI/bge-reranker-v2-m3 设计与实施计划 — Design
 
+> 2026-09-15 M0 evidence 更新：真实探针与回归已结束，当前为 `AWAITING_PROJECT_OWNER_PHASE12_M0_REVIEW`。Graph baseline 已在独立提交解决；见本文第十一节。前文 Repository Audit 保留 Planning 时点事实，不以旧环境记录替代本次实测。
+
 ## 文档状态与边界
 
 - 状态：`PHASE12_BGE_PLAN_ACCEPTED`。
@@ -88,7 +90,7 @@ tests/test_graph_context.py::test_graph_budget_setting_is_independent
 - `D:\rag_system\backend\app\core\config.py` 当前默认 `rag_graph_context_max_chars = 50000`。
 - `D:\rag_system\backend\tests\test_graph_context.py` 的 existing test expected = `6000`。
 
-这是 Phase 11 / Graph baseline mismatch，不属于 Phase 12 reranker。**M0 开始前必须由负责人在独立边界解决。** Phase 12 不得借机修改 Graph budget，也不得新增 skip/xfail 或改写断言绕过该问题。Planning Baseline 只记录现状，不运行修复或重新执行测试。
+这是 Planning 时点的 Phase 11 / Graph baseline mismatch，不属于 Phase 12 reranker。**现已在 M0 前由独立提交 `4fc3412` 解决，50000 生产默认不变。** Phase 12 不得借机修改 Graph budget，也不得新增 skip/xfail 绕过问题；以上保留原审计证据，本次 M0 未再次修改该测试。
 
 ## 二、CURRENT_RERANKER_PLACEHOLDER_AUDIT
 
@@ -698,24 +700,60 @@ M7 使用该参数包只运行一次 Final held-out。失败后保持 `RERANKER_
 | Graph 只由最终 Text Context 触发 | 是 |
 | fail-open、all-or-nothing、no second Hybrid | 是 |
 | Embedding、1024 维、mapping、DB schema、public API 不变 | 是 |
-| M0 包含真实 GPU/runtime/coexist probe | 是，尚未执行 |
+| M0 包含真实 GPU/runtime/coexist probe | 实测见第十一节，含 FP32 限制，待 Owner Review |
 | 人工 gold、三集合隔离、分类指标 | 是 |
 | M0 后负责人冻结 SLO，M5 不改通过线 | 是 |
 | M7 final 只验收一次，失败保持关闭 | 是 |
 | M0—M7 各有独立 commit 边界 | 见 canonical Implementation Plan |
 | 未引入旧 Ollama reranker 设计 | 是 |
-| Graph baseline mismatch 在 M0 前独立解决 | 必须 |
+| Graph baseline mismatch 在 M0 前独立解决 | 已由 `4fc3412` 独立解决，M0 未改 Graph budget |
 
 ## 十一、M0 后证据更新位置
 
-本节在 Planning Baseline 中仅定义更新位置，不包含真实 BGE 结果，不声明 M0 开始。
+### 1. 2026-09-15 实测依据
 
-- Runtime evidence：待负责人授权并完成真实 BGE probe 后更新。
-- Benchmark results：待真实 probe 后更新；必须覆盖本文所有矩阵、延迟、共存及失败项。
-- SLO owner decisions：待负责人在 M0 Review 中基于实测结果冻结数值后记录。
+- M0 branch/HEAD：`phase12-bge-reranker` / `4fc3412f7a20efbac21032b44a8964debed12fd2`；开始前 clean。
+- Planning Baseline 已独立提交：`559087f42816859a2c255750d1b6613bc228d845`。
+- Graph baseline 已由独立提交 `4fc3412` 对齐测试至当前默认 50000；M0 未修改 Graph budget、算法或测试。
+- Baseline：1335 passed / 28 deselected / 0 FAIL；最终 full：1386 passed / 28 deselected / 0 FAIL。Probe unit 51 passed，Search/Embedding 171 passed；各普通回归与真实推理分开计数。
+- 完整方法、限制、原始数据：[M0 Probe Report](../../phase-12-m0-bge-probe.md)。
 
-M0 仅更新既有 canonical docs 的这些证据与决议；不得把两份 Design/Plan 再列为首次创建文件，或将 Planning Baseline 初始提交混入 M0 commit。
+### 2. Runtime / model evidence
 
-当前状态：`PHASE12_BGE_PLAN_ACCEPTED`。
+| 项目 | 本次证据 |
+|---|---|
+| 模型 | BAAI/bge-reranker-v2-m3 |
+| 固定 revision | `953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e` |
+| 文件身份 | [model-identity.json](../../phase-12-m0-results/model-identity.json)，六文件大小/hash；每进程加载前复核 |
+| Runtime | Python 3.13.9；torch 2.11.0+cu128；Transformers 4.57.6；sentence-transformers 5.6.0；CUDA 12.8 |
+| GPU | RTX 5060 Laptop，capability 12.0，BF16 supported=True，CUDA total 8150.56 MiB |
+| Direct Transformers | 加载成功；local_files_only=True，trust_remote_code=False；eval + inference_mode；无需新依赖 |
+| Tokenizer / output | XLMRobertaTokenizerFast，8192 声明上限、pair 开销 4；实际 logits 严格 [N,1]，raw score DESC |
+| 输入长度 | 仅测 512/1024；真实 token IDs 校验 query 完整，仅临时截 passage；长段落/表格均有有限分数 |
 
-下一授权边界：`AWAITING_PROJECT_OWNER_PHASE12_M0_AUTHORIZATION`。
+当前实际下载路径为 `D:\rag_system\models\bge-reranker-v2-m3`，只新增该目录的精确 ignore；没有权重进入 Git。仅下载这一模型，未安装依赖。
+
+### 3. Benchmark results 与限制
+
+- Reranker-only：三种 dtype × 两长度 × 六个 C/batch 组合全部完成，共 36 配置。
+- FP16/BF16 共存：24 配置全部完成；完整配置的最慢 warm p95 分别 1163.39 / 1098.38 ms，allocated peak 均 4133.37 MiB、reserved peak 4538 MiB、设备边界快照峰值 5685.56 MiB。
+- FP32 共存：7 个不同配置完成（补测产生 2 个重复配置运行）；C=32/L=512/batch=32 超过 300 s 仍无完整配置结果，在显存压力下手动中止；4 个较大 batch 配置未执行。没有把未知部分样本用于 p50/p95，没有将中止计为通过。
+- FP32 batch=8 共存补测覆盖 C8/16/32、L512/1024；C=32/L=1024 p95=3916.91 ms，但 device 快照仍曾 free=0，不据此承诺安全。
+- 总计 67 个不同完整配置、69 次完整配置运行、1380 个 warm 样本；CUDA OOM exception=0，不等于所有配置都安全。详细 allocated/reserved/device 数据及中止记录在报告中。
+- 每完整配置 warm n=20；同配置最大重复 drift=0，排序稳定。FP16/BF16 相对 FP32 最大分差约 0.00703/0.07966；FP16 独立运行 Top8 为 12/12 一致，BF16 为 9/12。Runtime sanity 不是 M4 gold，不据此冻结 dtype。
+- Embedding-only allocated peak=2289.28 MiB，warm query p50/p95=40.83/47.52 ms。共存始终持有一个实际 provider 实例，不卸载 Embedding。真实 factory 每次创建新实例，因此不能外推为生产 RAG 并发显存结论。
+- Cold 是新进程模型加载，不含 import，文件 hash 读取已预热 OS cache；设备峰值是边界采样，非连续监控。温度/其他 GPU workload 未隔离。
+
+负责人本轮明确收窄 M0 为候选模拟：**没有运行 Hybrid/RAG、没有实现 worker/admission/Future timeout/late-result**。因此本文早先列出的真实 retrieval incremental、busy、timeout latency 本轮均未测，留待相应实现里验证；不把 forward 数据当作这些路径的实测。
+
+### 4. SLO owner decisions：仍待确认
+
+报告提出的待审预算为：warm p95 ≤2000 ms；retrieval incremental ≤2200 ms（200 ms 编排余量是假设）；busy ≤50 ms（未测工程目标）；候选 timeout=5000 ms、返回≤deadline+100 ms（未实现/未测）；device 采样使用量≤6500 MiB（仍需更完整资源测量）。**均未冻结，不是已通过的生产 SLO。**
+
+M1 优先工程验证 FP16，BF16 对照、FP32 数值参考；C8/16/32、L512/1024、micro-batch8/16 为实验范围。生产 C/dtype/batch/max_length 仍由后续独立人工 gold 与 M5 Gate 决定。K>C RRF fallback、no second Hybrid、fail-open 及 Delete/Context/Citation/Graph 边界不变。
+
+未出现“所有合理共存配置均不可运行”或必须引入新依赖/量化/生产修改的 scope conflict；FP32 压力边界及未执行项需负责人明确 Review。M1 未授权。
+
+M0 只更新已存在 canonical docs 的证据和待决事项；不首次创建 Design/Plan，不混入 Planning Baseline commit。本轮未 commit/push。
+
+当前状态：`AWAITING_PROJECT_OWNER_PHASE12_M0_REVIEW`。

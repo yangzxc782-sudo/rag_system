@@ -1,5 +1,7 @@
 # Phase 12：BAAI/bge-reranker-v2-m3 设计与实施计划 — Implementation Plan
 
+> 2026-09-15 M0 evidence 更新：真实探针和回归已结束，当前为 `AWAITING_PROJECT_OWNER_PHASE12_M0_REVIEW`；未开始 M1、未 commit/push。第六节记录本次授权收窄、Graph baseline 解决和实测限制。前文保留已提交 Planning Baseline 与 M0—M7 的 12 项计划结构。
+
 ## 一、Planning Baseline 与授权边界
 
 - 状态：`PHASE12_BGE_PLAN_ACCEPTED`。
@@ -22,7 +24,7 @@ docs: freeze phase 12 bge reranker design
 
 ## 二、M0 前独立 baseline blocker
 
-当前已存在 Phase 11 / Graph baseline mismatch：
+Planning 时点记录了以下 Phase 11 / Graph baseline mismatch；现已在 M0 前由独立提交 `4fc3412` 解决，以下保留原审计事实：
 
 ```text
 backend/app/core/config.py:
@@ -35,7 +37,7 @@ test_graph_budget_setting_is_independent:
   规划审计已复现 1 failed
 ```
 
-该问题不属于 Phase 12 reranker。**M0 开始前必须由负责人在独立边界解决。** Phase 12 不得借机修改 Graph budget，不得改写断言或新增 skip/xfail 绕过该失败。
+该问题不属于 Phase 12 reranker。**M0 前独立解决条件已满足。** Phase 12 不得借机修改 Graph budget；本轮 M0 未修改该测试，也未新增 skip/xfail。
 
 旧 Phase 12 `.pyc` 缓存的限定清理已有负责人授权，但本次 Planning Baseline 不执行清理；后续执行仅可在已批准范围内处理，不读取、复用旧 probe 结论，不删除 `.py` 或 fixtures。
 
@@ -369,19 +371,58 @@ M0 完整报告必须包含：
 | M0 不再首次创建 Design/Plan | 是 |
 | M0 文档更新仅限真实 probe 后的证据、结果和 SLO 决议 | 是 |
 | Planning Baseline commit 不与 M0 commit 混合 | 是 |
-| 独立 Graph baseline mismatch 在 M0 前解决 | 必须 |
+| 独立 Graph baseline mismatch 在 M0 前解决 | 已由 `4fc3412` 独立解决 |
 | 未带入旧 Ollama reranker 设计 | 是 |
 
 ## 六、M0 后 canonical 更新位置
 
-Planning Baseline 中以下内容尚无真实结果：
+### 1. M0 本次执行边界与 baseline
 
-- Runtime evidence：待 M0 明确授权并完成真实 BGE probe 后更新。
-- Benchmark results：待完成 M0 矩阵和真实检索/共存测量后更新。
-- SLO owner decisions：待负责人在 M0 Review 基于实测正式冻结数值后更新。
+- Planning Baseline：`559087f42816859a2c255750d1b6613bc228d845`；Graph 测试 baseline 独立修复：`4fc3412f7a20efbac21032b44a8964debed12fd2`，生产默认 50000 不变。
+- M0 从 `phase12-bge-reranker` / `4fc3412` 的 clean 工作区开始；没有改 Graph budget。
+- 本轮负责人授权模型下载/真实 CUDA/benchmark/单 Embedding 持有者共存，允许 test-only report 和脱敏 JSON。
+- 本次授权优先于前文旧 M0 测量条目：只模拟 C8/16/32，**不执行真实 Hybrid/RAG、不实现 worker/busy/timeout**；不因缺少这些本轮禁止的实测而擅自进入 M1/M2。
+- test-only CLI 默认 disabled，精确 `PHASE12_BGE_PROBE_ENABLED=1` 才运行；普通 unit tests 与真实模式隔离。本次不需要 pytest marker 或依赖变化，pyproject 未修改。
+- 创建测试工具、unit tests、synthetic fixture、[M0 Report](../../phase-12-m0-bge-probe.md)和脱敏结果；Design/Plan 是已有文件的 evidence 更新，不是 M0 首次创建文件。
 
-这些是已有 canonical docs 的后续更新位置，不是新的初始文档创建任务。M0 前须先解决独立 Graph baseline blocker，取得负责人明确授权。
+### 2. Runtime evidence / benchmark results
 
-当前状态：`PHASE12_BGE_PLAN_ACCEPTED`。
+| 项目 | 当前结果 |
+|---|---|
+| 模型 revision | BAAI/bge-reranker-v2-m3 / `953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e` |
+| 模型身份 | [model-identity.json](../../phase-12-m0-results/model-identity.json)：六文件大小/hash；下载路径按当前 Settings，精确忽略模型目录 |
+| Runtime | Python 3.13.9、torch 2.11.0+cu128、Transformers 4.57.6、sentence-transformers 5.6.0、CUDA 12.8 |
+| Hardware | RTX 5060 Laptop、capability 12.0、BF16 支持、CUDA total 8150.56 MiB |
+| Direct runtime | 三 dtype 均加载；local-only，无 remote code、新依赖或量化；logits=[N,1] |
+| 输入 | paired tokenizer、only_second；query 完整；512/1024；长段落/Markdown 表格均有有限分数 |
+| Reranker-only | 三 dtype 共 36 配置全部完成 |
+| FP16/BF16 coexist | 24 配置全部完成；各场景最慢完整 warm p95=1163.39/1098.38 ms |
+| 半精度共存显存 | allocated peak=4133.37 MiB，reserved peak=4538 MiB，device 边界快照 peak=5685.56 MiB |
+| FP32 coexist | 7 个不同配置完成；1 个整 batch 配置在显存压力下中止、4 个未执行；补测保持 Embedding loaded、显式 batch=8 |
+| 总计 | 67 个不同完整配置、69 次完整配置运行、1380 warm 样本；不完整项不计为通过 |
+| 稳定性 | 同配置 repeated drift=0、排序稳定；跨 dtype 有真实分差/顺序变化，不是正式 gold 质量验收 |
+| Lifecycle | 实验持续持有一个 Embedding；实际 factory 非 singleton，不能外推生产多请求显存 |
 
-下一授权边界：`AWAITING_PROJECT_OWNER_PHASE12_M0_AUTHORIZATION`。
+FP32 C32/L512/batch32 在上一完成检查点后超过 300 s 仍无完整配置报告，被手动中止。这个下界不是单次 forward 或 p95。没有捕获 CUDA OOM exception；显存压力和 incomplete 必须单独列出。FP32 batch8/L1024/C32 补测 p95=3916.91 ms，device 快照仍曾 free=0；不作为 M1 优先档位。
+
+全部 cold 分段、warm p50/p95、逐配置 peak、truncation、sanity raw scores、跨 dtype 比较、失败边界和复现命令见 [M0 Report](../../phase-12-m0-bge-probe.md)。真实 retrieval、busy fallback、timeout fallback **未测**；没有实现生产 Provider。
+
+### 3. Regression 与 acceptance 状态
+
+- Probe helper 先 RED→GREEN；batch 筛选补测接口也先 5 RED→GREEN。最终 51 passed。
+- 模型调用前 Backend baseline：1335 passed、28 deselected、0 FAIL。
+- 模型调用后 Search/Embedding：171 passed；Backend full：1386 passed、28 deselected、0 FAIL。
+- 既有 Starlette/httpx warning 保留，不安装依赖消除；真实 BGE 数据与 pytest 数量分开统计。
+- 未出现必须新依赖/remote code/量化/卸载或修改 Embedding 才能得到合理运行配置的 scope conflict。FP32 压力配置和未执行项仍需 Owner Review。
+
+### 4. SLO owner decisions / 下一边界
+
+待审建议：warm p95≤2000 ms；retrieval incremental≤2200 ms（编排余量是假设）；busy≤50 ms（未测目标）；timeout 候选 5000 ms、返回≤deadline+100 ms（未实现/未测）；device 采样预算≤6500 MiB（需更完整资源监测）。**这些不是已冻结 SLO。**
+
+推荐 M1 工程验证以 FP16 优先、BF16 对照、FP32 参考，C8/16/32、L512/1024、micro-batch8/16。不得自动设为生产默认；C、dtype、batch、max_length 最终仍由三集合隔离的 M4/M5 决定。
+
+负责人需要明确接受 FP32 未完成边界、SLO/未测预算和资源约束，再授权 M1。生产 K>C 请求级 RRF fallback、no second Hybrid、all-or-nothing/fail-open、Delete/Context/Citation/Graph 边界均未改变。
+
+M0 commit 继续与 Planning Baseline 分离，但**本轮未 commit/push**。M1—M7 没有执行。
+
+当前状态：`AWAITING_PROJECT_OWNER_PHASE12_M0_REVIEW`。

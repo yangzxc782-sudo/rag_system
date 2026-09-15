@@ -1,0 +1,108 @@
+{
+  "status": "ok",
+  "model_id": "BAAI/bge-reranker-v2-m3",
+  "revision": "953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e",
+  "mode": "embedding",
+  "dtype": "float32",
+  "samples_per_cell": 20,
+  "warmups_per_cell": 3,
+  "runtime": {
+    "python": "3.13.9",
+    "versions": {
+      "torch": "2.11.0+cu128",
+      "transformers": "4.57.6",
+      "sentence-transformers": "5.6.0",
+      "tokenizers": "0.22.2",
+      "safetensors": "0.8.0",
+      "huggingface-hub": "0.36.2"
+    },
+    "cuda_build": "12.8",
+    "gpu": "NVIDIA GeForce RTX 5060 Laptop GPU",
+    "capability": [
+      12,
+      0
+    ],
+    "bf16_supported": true,
+    "torch_float32_matmul_precision": "highest",
+    "tf32_matmul_allowed": false,
+    "head": "4fc3412f7a20efbac21032b44a8964debed12fd2",
+    "probe_sha256": "f12da1d2f37c206fd6d845fda565e567d2b2379e3fb46e2176c0159ad84bf860",
+    "fixture_sha256": "21ded947dc8f14678e9e46160c9dc78017a8ed74ecd0509a35fd24ea384f8e0f"
+  },
+  "started_at_utc": "2026-09-15T08:36:11.432916+00:00",
+  "gpu_initial": {
+    "allocated_bytes": 0,
+    "reserved_bytes": 0,
+    "allocated_peak_bytes": 0,
+    "reserved_peak_bytes": 0,
+    "device_total_bytes": 8546484224,
+    "device_free_bytes": 7374635008,
+    "device_used_bytes": 1171849216
+  },
+  "retrieval_integration": "not_measured_M0_candidate_simulation_only",
+  "busy_timeout": "not_implemented_M1_scope",
+  "cells": [],
+  "embedding": {
+    "model_id": "Qwen3-Embedding-0.6B",
+    "embedding_dim": 1024,
+    "device": "cuda:0",
+    "factory_creates_new_instance": true,
+    "lifecycle": "one_explicitly_held_instance_not_production_RAG_lifecycle",
+    "cold_load_and_first_query_ms": 4702.1593999816105,
+    "warm_query": {
+      "sample_count": 20,
+      "p50_ms": 40.831649996107444,
+      "p95_ms": 47.52106500964146,
+      "fail_count": 0
+    },
+    "warm_query_samples_ms": [
+      49.464100040495396,
+      47.41880000801757,
+      40.73659999994561,
+      42.33570001088083,
+      40.00639996957034,
+      38.38949999772012,
+      39.48360000504181,
+      40.58219998842105,
+      45.77959998277947,
+      42.76110004866496,
+      37.39420004421845,
+      38.64739998243749,
+      42.902200017124414,
+      43.165899987798184,
+      39.86700001405552,
+      40.92669999226928,
+      41.211800009477884,
+      40.672300034202635,
+      41.36019997531548,
+      39.851600013207644
+    ],
+    "gpu_before": {
+      "allocated_bytes": 0,
+      "reserved_bytes": 0,
+      "allocated_peak_bytes": 0,
+      "reserved_peak_bytes": 0,
+      "device_total_bytes": 8546484224,
+      "device_free_bytes": 7374635008,
+      "device_used_bytes": 1171849216
+    },
+    "gpu_after": {
+      "allocated_bytes": 2391626240,
+      "reserved_bytes": 2415919104,
+      "allocated_peak_bytes": 2400486912,
+      "reserved_peak_bytes": 2415919104,
+      "device_total_bytes": 8546484224,
+      "device_free_bytes": 4927258624,
+      "device_used_bytes": 3619225600
+    }
+  },
+  "gpu_final": {
+    "allocated_bytes": 2391626240,
+    "reserved_bytes": 2415919104,
+    "allocated_peak_bytes": 2400486912,
+    "reserved_peak_bytes": 2415919104,
+    "device_total_bytes": 8546484224,
+    "device_free_bytes": 4927258624,
+    "device_used_bytes": 3619225600
+  }
+}
