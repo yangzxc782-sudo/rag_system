@@ -96,8 +96,8 @@ Reranker 预留配置：
 ```env
 RERANKER_ENABLED=false
 RERANKER_PROVIDER=local_qwen3
-RERANKER_MODEL=Qwen3-Reranker-0.6B
-RERANKER_MODEL_PATH=D:/rag_system/models/Qwen3-Reranker-0.6B
+RERANKER_MODEL=bge-reranker-v2-m3
+RERANKER_MODEL_PATH=D:/rag_system/models/bge-reranker-v2-m3
 RERANKER_TOP_K=8
 ```
 

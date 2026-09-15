@@ -143,8 +143,8 @@ class Settings(BaseSettings):
 
     reranker_enabled: bool = False
     reranker_provider: str = "local_qwen3"
-    reranker_model: str = "Qwen3-Reranker-0.6B"
-    reranker_model_path: str = "D:/rag_system/models/Qwen3-Reranker-0.6B"
+    reranker_model: str = "bge-reranker-v2-m3"
+    reranker_model_path: str = "D:/rag_system/models/bge-reranker-v2-m3"
     reranker_top_k: int = 8
 
     @field_validator("neo4j_uri")
