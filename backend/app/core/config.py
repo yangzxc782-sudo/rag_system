@@ -142,10 +142,20 @@ class Settings(BaseSettings):
     knowledge_extraction_default_status: str = "draft"
 
     reranker_enabled: bool = False
-    reranker_provider: str = "local_qwen3"
-    reranker_model: str = "bge-reranker-v2-m3"
-    reranker_model_path: str = "D:/rag_system/models/bge-reranker-v2-m3"
+    reranker_provider: str = "local_transformers"
+    reranker_model: str = "BAAI/bge-reranker-v2-m3"
+    reranker_model_path: str = Field(
+        default="D:/rag_system/models/bge-reranker-v2-m3", repr=False,
+    )
+    # Deprecated compatibility input; never used for candidate/result counts.
     reranker_top_k: int = 8
+    reranker_device: str = "cuda"
+    reranker_dtype: str = "fp16"
+    # M5 selects the production profile. Missing values keep the provider unavailable.
+    reranker_candidate_limit: int | None = Field(default=None, gt=0)
+    reranker_batch_size: int | None = Field(default=None, gt=0)
+    reranker_max_length: int | None = Field(default=None, gt=0)
+    reranker_timeout_seconds: float | None = Field(default=None, gt=0, allow_inf_nan=False)
 
     @field_validator("neo4j_uri")
     @classmethod
@@ -234,8 +244,6 @@ class Settings(BaseSettings):
             raise ValueError(
                 "document_deletion_heartbeat_object_interval must be greater than 0"
             )
-        if self.reranker_top_k <= 0:
-            raise ValueError("reranker_top_k must be greater than 0")
         return self
 
     @property
