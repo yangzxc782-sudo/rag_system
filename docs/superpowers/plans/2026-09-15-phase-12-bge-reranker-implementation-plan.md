@@ -1,0 +1,387 @@
+# Phase 12：BAAI/bge-reranker-v2-m3 设计与实施计划 — Implementation Plan
+
+## 一、Planning Baseline 与授权边界
+
+- 状态：`PHASE12_BGE_PLAN_ACCEPTED`。
+- 日期：2026-09-15。
+- 项目目录：`D:\rag_system`。
+- Planning Baseline 提交前分支：`phase12-bge-reranker`。
+- Planning Baseline 提交前 HEAD：`9fb2d8cf7be05eca8351076e7eced8af3ba5be12`。
+- Canonical Design：[2026-09-15-phase-12-bge-reranker-design.md](../specs/2026-09-15-phase-12-bge-reranker-design.md)。
+- Canonical Plan：本文。
+
+本文与 Design 在 M0 前独立存在，Planning Baseline 使用独立提交：
+
+```text
+docs: freeze phase 12 bge reranker design
+```
+
+初始 Design/Plan 的创建与提交不属于 M0。M0 不再首次创建两份 canonical docs；其 canonical 文档职责仅为真实 BGE probe 后，更新已有文档中的 runtime evidence、benchmark results、SLO owner decisions。M0 commit 不得混入初始规划提交。
+
+本次只落盘并提交 Planning Baseline。以下 milestone 的文件清单、模型操作、测试和提交均为未来计划，不构成本次执行授权。不得开始 M0、下载模型、调用 `from_pretrained()`、运行 BGE、执行 benchmark、修改生产代码或 tests；不得 push。
+
+## 二、M0 前独立 baseline blocker
+
+当前已存在 Phase 11 / Graph baseline mismatch：
+
+```text
+backend/app/core/config.py:
+  rag_graph_context_max_chars = 50000
+
+backend/tests/test_graph_context.py:
+  existing test expected = 6000
+
+test_graph_budget_setting_is_independent:
+  规划审计已复现 1 failed
+```
+
+该问题不属于 Phase 12 reranker。**M0 开始前必须由负责人在独立边界解决。** Phase 12 不得借机修改 Graph budget，不得改写断言或新增 skip/xfail 绕过该失败。
+
+旧 Phase 12 `.pyc` 缓存的限定清理已有负责人授权，但本次 Planning Baseline 不执行清理；后续执行仅可在已批准范围内处理，不读取、复用旧 probe 结论，不删除 `.py` 或 fixtures。
+
+## 三、全程冻结的技术 contract
+
+### 1. 模型、runtime 与职责
+
+- 模型：`BAAI/bge-reranker-v2-m3`。
+- 推荐 runtime：直接 Transformers，`AutoTokenizer` + `AutoModelForSequenceClassification`。
+- runtime 选择依据当前仓库依赖、安装版本和官方接口审计；具体证据见 canonical Design。
+- Hybrid Search = Recall stage；BGE Reranker = Precision stage。
+- 不使用旧 Ollama reranker 设计，不以 chat/LLM score 代替 Cross-Encoder logits。
+- 不新增重量依赖作为默认方案；需要变更依赖时停止并独立评审。
+
+### 2. Candidate capacity 与 public K
+
+`K` 是 public final limit，`C = RERANKER_CANDIDATE_LIMIT` 是经过 benchmark 验证的最大生产 rerank capacity。
+
+```text
+disabled:
+  Hybrid(K) → 原 RRF Top K
+
+enabled, K <= C:
+  Hybrid(C) → BGE Reranker → Top K
+
+enabled, K > C:
+  Hybrid(K) → skip Reranker → 原 RRF Top K
+  fallback_reason = public_limit_exceeds_reranker_capacity
+```
+
+- 禁止 `C_effective=max(C,K)`。
+- 将来 K=50 要使用 reranker，必须先在 M5 验证相应容量，再提升 C。
+- 已取得 Hybrid(C) 后发生失败：使用原始 C candidates `[:K]`。
+- no second Hybrid：不得再调用 Hybrid(K)；一个 RAG 请求最多一次 Hybrid。
+- `RERANKER_TOP_K` 标记 deprecated / ignored，运行时不参与最终 K 或 C 选择。
+- Planning 阶段不冻结 8、16、24、32 等数值为生产 C 默认。
+
+### 3. 输入、评分、生命周期与失败
+
+- 模型输入仅 query 与 chunk.content；不拼 Graph、KGRefs、ID、Embedding、RRF score 或 section title。
+- raw relevance logit DESC，tie-break 为 original hybrid rank ASC、chunk_id ASC。
+- 不使用 Sigmoid 排序、不设 threshold、不做 RRF fusion 或分数校准。
+- tokenizer 实际计数，完整保留 query，只截 passage；不修改数据库 chunk 正文。
+- 单进程一个 lazy reranker 实例、一个 worker；startup/disabled 不加载模型。
+- 单进程最多一个 reranker CUDA forward；busy 立即 fallback，不设无限队列。
+- bounded wait 覆盖加载、tokenization、inference；timeout 后当前请求 fallback，运行中 forward 自然结束，晚到结果丢弃，结束前保持 busy。
+- N input candidates 必须恰好得到 N 个有限且身份匹配的分数，才应用 rerank。
+- load failure、OOM、timeout、exception、NaN/Inf、shape/count/identity mismatch 均 all-or-nothing fail-open。
+- 不通过卸载 Embedding、自动切设备、自动缩 batch 或采用部分结果掩盖失败。
+- Hybrid 与 LLM 自身错误保留现有 contract。
+
+### 4. Delete / Context / Citation / Graph / public API
+
+```text
+BM25 + Vector
+  → deletion-safe hits
+  → RRF
+  → Candidate Pool
+  → Reranker
+  → final Text candidates
+  → Context budget + Citation IDs
+  → final Text Context 的 kg_refs
+  → optional Graph
+  → LLM
+```
+
+- 当前 PostgreSQL deletion-status filtering 在 RRF 与 reranker 前；非 normal、缺失或非法 document_id 的候选不进入模型。
+- 删除过滤后的实际候选可少于 C，不补查、不补齐。
+- Context Builder 增加内部 `preserve_order=False`；rerank 成功才传 True；fallback/disabled 保留原行为。
+- 不把 reranker score 写进 `hybrid_score`。
+- Citation 与 Prompt 使用同一最终 Text Context，编号跟随最终保留顺序。
+- 被 reranker 或 Context budget 淘汰的 chunk 不触发 Graph。
+- 不修改 Graph Cypher、Repository、budget、Evidence API 或前端；不增加第二次 Graph 查询。
+- Qwen3-Embedding-0.6B、1024 维向量、OpenSearch mapping、DB schema 不变。
+- Search API、RAG response schema、Citation API、Graph Evidence API 不变；diagnostics 仅内部使用。
+
+### 5. Evaluation 与 Gate
+
+三个隔离集合：
+
+| 集合 | 用途 |
+|---|---|
+| Development set | 开发、debug、初步参数探索 |
+| Selection validation set | M5 参数选择，应用质量 Gate 与已冻结性能 SLO |
+| Final held-out set | M7 冻结全部参数后最终一次验收 |
+
+禁止同文档/主题近重复问题跨 selection/final 泄漏。八类问题、人工 gold 0/1/2、每集合每类至少 5 条及指标定义沿用 canonical Design。无答案查询另列健壮性集合，不混入有答案质量指标的分母。
+
+Baseline 为同 candidate pool 的 Hybrid RRF；variant 对该同一候选快照进行 BGE 重排，不用 RAG 答案质量替代 ranking 评测。
+
+Primary quality gates：
+
+```text
+nDCG@8 > baseline
+MRR@8 > baseline
+```
+
+Non-regression gates：
+
+```text
+HitRate@1 >= baseline
+HitRate@3 >= baseline
+Recall@8 >= baseline
+```
+
+总体与八类 per-category metrics 均必须输出。任何类别指标下降标记审查，明显退化必须提交负责人，不得用总体均值覆盖。
+
+Planning 阶段不设毫秒级 SLO。M0 实测后由负责人冻结 warm rerank p95、retrieval p95 incremental、fallback tail latency、GPU/显存安全边界。只有数值 SLO 经负责人冻结后，M5 才允许选参；M5 不得改通过线。
+
+M5 只从质量、类别审查、性能 Gate 同时通过的组合中选择，优先资源和延迟成本更低者；具体成本排序按 canonical Design。M7 使用冻结模型、C、batch、max_length、dtype、device、timeout、runtime 与数据指纹只验收一次。
+
+任一最终质量或性能 Gate 失败，保持 `RERANKER_ENABLED=false`，不得宣布 Phase 12 完成。M7 失败后进入新的设计/参数评审周期，不得针对同一 Final held-out 调参重测。
+
+## 四、共同执行与回归规则
+
+所有实现 milestone：
+
+```text
+RED → GREEN → REGRESSION → Acceptance → 独立 commit
+```
+
+M0：
+
+```text
+独立 Graph baseline blocker 已解决
+  → 负责人授权开始 M0
+  → 探针工具 RED/GREEN
+  → 负责人明确授权模型下载与真实推理
+  → 实测
+  → 更新既有 canonical docs 的证据与 SLO 决议
+  → Review
+  → M0 独立 commit
+```
+
+本次不执行上述 milestone 或其提交。Planning Baseline commit 与 M0 commit 分离。
+
+回归集合按当前实际测试组织：
+
+- **Search**：Embedding、document embedding、OpenSearch、index、Hybrid、vector search、KGRef propagation。
+- **RAG**：service、context、API、graph fusion、graph response。
+- **Lifecycle**：LLM Provider/startup、Graph Repository，以及新 reranker 生命周期测试。
+- **Deletion**：现有 deletion、operation guard 单元测试；真实存储测试继续使用独立授权 Gate。
+- **Full**：完整安全单元回归；真实集成与负责人已确认的 deferred 项分开计数，不能把未运行项计为通过。
+
+真实存储写入、清理和删除继续遵守项目已有逐项授权与备份要求。已有 deferred 项保持原审批边界，不通过修改 skip/xfail 宣称全量通过。
+
+以下 M0—M7 每个 milestone 均包含 12 项。
+
+## M0 — Repository Audit + BGE Runtime/Hardware Probe
+
+| 必需项 | 计划 |
+|---|---|
+| 1. Goal | 验证本机直接 Transformers 的模型 contract、性能、显存与 Embedding 共存，提供负责人冻结 SLO 的数据 |
+| 2. Non-goals | 不实现生产 Provider，不修改检索算法，不选定未经质量验证的生产 C；不首次创建或提交 Planning Baseline Design/Plan |
+| 3. Read-before-code | 根规则；已独立存在的 canonical Design/Plan；当前 Embedding、Hybrid、config、pyproject；官方模型卡、tokenizer/config；确认独立 Graph baseline blocker 已解决 |
+| 4. Files expected to create | `D:\rag_system\backend\tests\phase12_local\bge_probe.py`；`D:\rag_system\backend\tests\test_bge_probe.py`；`D:\rag_system\backend\tests\fixtures\phase12\bge_probe_cases.json`；不包含任何首次创建的 Design/Plan |
+| 5. Files expected to modify | `D:\rag_system\.gitignore`：精确忽略 BGE 权重及生成报告目录；`D:\rag_system\backend\pyproject.toml`：仅注册必要测试 marker，不安装依赖；真实 probe 后仅更新已有 canonical Design/Plan 中的 runtime evidence、benchmark results、SLO owner decisions |
+| 6. Interfaces | test-only CLI，默认 synthetic；真实模型模式须显式启用，模型路径和实验参数显式传入；输出脱敏 JSON 报告 |
+| 7. RED tests | 默认不下载/不加载；输出 shape、数量、身份和 finite 验证；token budget；只截 passage；计时/显存统计；busy/timeout；脱敏 |
+| 8. Minimal implementation steps | baseline 独立解决并获 M0 授权后，完成已授权缓存清理并重验 Git；先实现测试工具；下载前确认精确路径和忽略规则；获得模型下载/推理授权；记录模型 revision/指纹；执行 FP32/FP16/可行 BF16 × C8/16/32 × 长度512/1024 × full/micro-batch 矩阵；将真实证据和负责人 SLO 决议更新到既有 canonical docs |
+| 9. Regression suite | 探针单元测试、Search 相关安全回归；不运行未经授权的真实存储测试 |
+| 10. Acceptance criteria | 完整报告 shape、raw logits、ranking sanity、分数与排序稳定性；包含长段落/长表格/超长 query；报告全部要求的延迟和 GPU peak；Embedding 共存实测；负责人完成 SLO Review |
+| 11. Scope stop conditions | baseline 未独立解决；M0 或下载/推理未授权；模型或依赖 contract 不符；需要卸载/修改 Embedding 才能运行；需要量化；所有合理配置均 OOM；真实 retrieval 数据不足 |
+| 12. Git commit boundary | 单独提交 probe 工具、测试、必要测试配置与真实 probe 后对既有 canonical docs 的证据/SLO 更新；不得包含生产 Provider、权重或初始 Design/Plan 创建提交 |
+
+### M0 测量方法与必须报告的内容
+
+- 冷加载在独立进程重复测量，并说明文件缓存状态。
+- 可行矩阵先 warmup，再进行固定次数重复测量，报告 p50/p95、样本数和失败数。
+- CUDA 计时明确同步边界；记录 allocated/reserved peak 及设备全局快照。
+- 分别测 Embedding-only、reranker-only、同进程共存。
+- 共存测量期间持续持有已加载 Embedding，不通过卸载它降低显存。
+- 真实检索基线与 reranker-on 采用相同查询、语料和环境，分别计量 Hybrid 与重排增量；每次模拟请求最多一次 Hybrid。
+- 不调用 LLM，也不将 synthetic 检索计时报告为真实 retrieval 性能。
+
+M0 完整报告必须包含：
+
+1. dependency 与模型 revision/指纹，重新读取的 GPU/runtime evidence。
+2. model load、score shape、raw logits、ranking sanity。
+3. repeated-score 稳定性与跨 FP32/FP16/可行 BF16 的分差、排序一致性。
+4. cold model load time。
+5. warm rerank p50/p95。
+6. C=8/16/32 latency。
+7. max_length=512/1024 latency，以及长段落、长 Markdown 表格、超长 query 行为。
+8. 实际可行 dtype、full batch 与 micro-batch 表现。
+9. retrieval baseline 与 reranker-on p50/p95。
+10. incremental retrieval latency。
+11. busy fallback latency。
+12. timeout fallback latency。
+13. reranker-only GPU peak。
+14. embedding-only GPU peak。
+15. embedding + reranker coexist GPU peak。
+16. OOM/fallback 情况，区分真实发生与故障注入。
+
+负责人据此冻结四类数值门槛：warm rerank p95 SLO、retrieval p95 incremental SLO、fallback tail latency SLO、GPU/显存安全边界。SLO owner decisions 记录在既有 canonical docs，不创建新的初始规划文档，不将 baseline commit 并入 M0。
+
+## M1 — Local Cross-Encoder Provider
+
+| 必需项 | 计划 |
+|---|---|
+| 1. Goal | 实现本地评分、lazy singleton、单 worker、bounded wait 和完整输出校验 |
+| 2. Non-goals | 不接入 public API，不修改 Hybrid、Embedding 或 Graph |
+| 3. Read-before-code | 既有 canonical docs 中经批准的 M0 evidence/benchmark/SLO 决议；当前 `D:\rag_system\backend\app\retrieval\embeddings.py`、`D:\rag_system\backend\app\llm\provider.py`、`D:\rag_system\backend\app\core\config.py` |
+| 4. Files expected to create | `D:\rag_system\backend\app\retrieval\reranker.py`；`D:\rag_system\backend\app\retrieval\local_cross_encoder.py`；`D:\rag_system\backend\app\services\reranking.py`；`D:\rag_system\backend\tests\test_reranker_provider.py`；`D:\rag_system\backend\tests\test_reranker_runtime.py`；`D:\rag_system\backend\tests\test_reranker_config.py` |
+| 5. Files expected to modify | `D:\rag_system\backend\app\core\config.py`；`D:\rag_system\backend\.env.example`；`D:\rag_system\.env.example`，复用原键并说明 deprecated TOP_K |
+| 6. Interfaces | 不可变 request/candidate/score；可注入 tokenizer/model loader；评分 protocol；进程缓存、非排队 admission、关闭接口 |
+| 7. RED tests | disabled 不 import/load；并发首次请求只加载一次；N=0/1；raw logits；非法 shape/NaN/Inf/身份；query 保留；micro-batch 全败回退；busy、timeout、晚到结果、关闭 |
+| 8. Minimal implementation steps | 定义轻量类型；实现 lazy local-only loader；明确 eval/无梯度；paired tokenizer；CPU finite scores；实现单 worker 与状态机；限定重试和关闭行为 |
+| 9. Regression suite | 新 Provider/runtime/config 测试；Embedding 与 LLM 生命周期回归 |
+| 10. Acceptance criteria | 模型只加载一次；单进程最多一个 reranker forward；无无限队列；timeout 后不会使用晚到结果；不需要真实模型的测试全部通过 |
+| 11. Scope stop conditions | 需要新重量依赖、独立推理进程、量化、Embedding 生命周期修改，或需放宽 M0 已批准约束 |
+| 12. Git commit boundary | 单独提交 Provider/runtime/config 与测试；不包含 RAG 接入 |
+
+## M2 — Candidate Pool + RAG Integration
+
+| 必需项 | 计划 |
+|---|---|
+| 1. Goal | 接入一次 Hybrid 的 K/C 分支，保留成功重排顺序及现有公共结构 |
+| 2. Non-goals | 不修改 Hybrid 算法、公共 DTO、Graph 实现或数据库 |
+| 3. Read-before-code | 当前 `D:\rag_system\backend\app\services\rag.py`、`D:\rag_system\backend\app\rag\context_builder.py`、RAG schema/citation/Graph fusion 测试 |
+| 4. Files expected to create | `D:\rag_system\backend\tests\test_rag_reranking.py` |
+| 5. Files expected to modify | `D:\rag_system\backend\app\services\rag.py`；`D:\rag_system\backend\app\rag\context_builder.py`；`D:\rag_system\backend\app\main.py`；现有 RAG service/context/API/startup 测试 |
+| 6. Interfaces | 复用 `optional_rerank_chunks()`；内部返回 applied/selected items；`preserve_order=False`；RAG 测试注入 reranking service；lifespan 关闭缓存 |
+| 7. RED tests | K<C、K=C、K>C；精确 capacity 原因；各分支最多一次 Hybrid；C 失败回退原对象排序；Context 不覆盖新顺序；public retrieval 不泄漏 C/score；no_context 不加载 |
+| 8. Minimal implementation steps | 在检索前选择 K/C；取得候选后调用内部重排；构造最终 K 结果；成功时 preserve order；沿原链生成 Context/Citation/Graph/LLM；接入关闭逻辑 |
+| 9. Regression suite | Search、RAG、Lifecycle、Deletion 单元回归 |
+| 10. Acceptance criteria | 一次 Hybrid；K>C 无模型调用；score 不覆盖 hybrid_score；Citation 与 Prompt chunk 顺序一致；淘汰 chunk 不触发 Graph |
+| 11. Scope stop conditions | 需要第二次 Hybrid；需要改公共 schema、Graph budget、mapping 或删除策略；出现非本范围 baseline 失败 |
+| 12. Git commit boundary | 单独提交 RAG 接入、Context 顺序控制及对应回归 |
+
+## M3 — Real Local Smoke + Failure Recovery
+
+| 必需项 | 计划 |
+|---|---|
+| 1. Goal | 用真实 BGE 验证生产组件加载、重复调用、超时、busy 与恢复行为 |
+| 2. Non-goals | 不进行最终质量选参；不把 mocked Hybrid/LLM 视为真实 RAG 验收 |
+| 3. Read-before-code | canonical docs 中的 M0 证据与 M1/M2 结果、单 worker 状态机及现有启动/关闭行为 |
+| 4. Files expected to create | `D:\rag_system\backend\tests\phase12_local\bge_smoke.py`；`D:\rag_system\backend\tests\test_bge_smoke.py`；`D:\rag_system\docs\phase-12-m3-local-smoke.md` |
+| 5. Files expected to modify | M1/M2 新增的 reranker 组件及其测试，仅限本 milestone 暴露的缺陷 |
+| 6. Interfaces | 显式 real-model smoke；固定参数；运行标识与脱敏结果；故障注入独立标记 |
+| 7. RED tests | load failure 后恢复；busy 不排队；timeout 后状态保持 busy；晚到结果作废；下一正常请求恢复；关闭时无第二 worker |
+| 8. Minimal implementation steps | 跑真实连续评分；验证加载次数与显存；制造受控 deadline/busy；验证恢复；对 OOM/异常分别注明真实发生或注入；持续保留 Embedding 共存条件 |
+| 9. Regression suite | 新 smoke 工具单元测试、Provider/runtime、RAG、Lifecycle |
+| 10. Acceptance criteria | 真实分数符合 contract；默认进程生命周期无重复加载；超时/busy 能继续 RRF；恢复后请求不使用旧结果；无逐请求 GPU 内存持续增长 |
+| 11. Scope stop conditions | CUDA 卡死、无法恢复的资源泄漏、需要卸载 Embedding，或线程方案无法满足已冻结 SLO |
+| 12. Git commit boundary | 单独提交 smoke 工具、证据及必要的最小修复 |
+
+## M4 — Golden Dataset + Evaluation Harness
+
+| 必需项 | 计划 |
+|---|---|
+| 1. Goal | 建立人工 gold、三套隔离数据及可复现 ranking 评测 |
+| 2. Non-goals | 不用 LLM 自动答案质量替代 gold；不使用 final set 调试 |
+| 3. Read-before-code | Hybrid contract、source metadata、删除过滤、M0 probe 输出，以及 canonical Design 的指标与数据划分规则 |
+| 4. Files expected to create | `D:\rag_system\backend\tests\phase12_local\evaluation.py`；`D:\rag_system\backend\tests\phase12_local\metrics.py`；`D:\rag_system\backend\tests\test_reranker_evaluation.py`；`D:\rag_system\backend\tests\fixtures\phase12\golden_manifest.json`；`D:\rag_system\docs\phase-12-evaluation-protocol.md` |
+| 5. Files expected to modify | 必要的 test-only probe 结果适配；不修改生产检索 |
+| 6. Interfaces | query ID、split、category、group ID、候选/内容指纹、graded qrels；单候选快照双排序；总体与分类报告 |
+| 7. RED tests | 手算五项指标；无相关结果、少于8条、重复候选、同分；gold 在 C 外；split 泄漏检测；同候选池约束；final 默认不可执行 |
+| 8. Minimal implementation steps | 人工选题标注；按文档/主题分组划分；负责人复核；冻结 manifest；实现指标和候选快照；独立封存 final 集；禁止日志含正文 |
+| 9. Regression suite | metrics/evaluation 工具测试、Hybrid 与 reranker 排序测试 |
+| 10. Acceptance criteria | 三集合与八类覆盖满足要求；人工 gold 可追溯；无 selection/final 近重复泄漏；手算结果一致；final 未参与开发 |
+| 11. Scope stop conditions | 数据不足、gold 不完整、跨集合泄漏、只有模型生成标签、需要用 final 修复工具 |
+| 12. Git commit boundary | 单独提交评测工具、协议和允许版本化的数据/manifest；封存材料不混入运行日志 |
+
+## M5 — Parameter Selection
+
+| 必需项 | 计划 |
+|---|---|
+| 1. Goal | 在 Selection validation 上选出同时通过质量与已冻结性能 SLO 的完整生产参数组合 |
+| 2. Non-goals | 不访问 Final held-out；不修改 SLO；不默认启用 |
+| 3. Read-before-code | canonical docs 中的 M0 负责人 SLO 决议、M3 smoke、M4 manifest 与质量 Gate |
+| 4. Files expected to create | `D:\rag_system\backend\tests\phase12_local\parameter_selection.py`；`D:\rag_system\backend\tests\test_reranker_parameter_selection.py`；`D:\rag_system\docs\phase-12-m5-parameter-selection.md` |
+| 5. Files expected to modify | `D:\rag_system\backend\app\core\config.py` 与两份现有 `.env.example`，仅写入批准参数和说明；enabled 仍为 false |
+| 6. Interfaces | 输入冻结 SLO、validation manifest、候选参数矩阵；输出每项 Gate、类别审查状态、成本排序及选中 profile 指纹 |
+| 7. RED tests | 任一主指标不提升则淘汰；任一非退化指标下降则淘汰；SLO 未冻结拒绝选参；final 输入拒绝；类别风险不可隐藏；无可行组合保持关闭 |
+| 8. Minimal implementation steps | 先固定 SLO；跑经过 M0 验证的配置；同池计算 baseline/variant；应用全部 Gate；审查类别退化；按成本规则选择；负责人批准参数包 |
+| 9. Regression suite | 参数选择/metrics 测试、Provider/runtime、RAG；选中参数的真实本地复测 |
+| 10. Acceptance criteria | 质量、类别审查、性能均通过；C 确为所选 profile 的已验证容量；完整参数和版本冻结；没有访问 final |
+| 11. Scope stop conditions | 无组合通过、SLO 未批准、需要扩大 C 到未验证值、需要量化或修改 Embedding |
+| 12. Git commit boundary | 单独提交选参工具、报告、批准默认参数；不包含启用动作 |
+
+## M6 — Real RAG / Citation / Graph / Deletion Regression
+
+| 必需项 | 计划 |
+|---|---|
+| 1. Goal | 验证真实 RAG 链中重排、Citation、Graph 与删除隔离兼容 |
+| 2. Non-goals | 不修改 Graph Retrieval、UI、mapping、数据库结构或既有删除实现 |
+| 3. Read-before-code | 当前 RAG/Graph/Deletion 实现及测试；Phase 10 dedicated-target 授权 Gate；M5 冻结 profile |
+| 4. Files expected to create | `D:\rag_system\backend\tests\phase12_integration\test_rag_reranker_acceptance.py`；`D:\rag_system\docs\phase-12-m6-real-regression.md` |
+| 5. Files expected to modify | 必要的新测试辅助文件与 marker；生产修复仅限已批准 Phase 12 组件，其他范围停止评审 |
+| 6. Interfaces | 显式真实环境模式；资源标识、授权与 profile 指纹；区分真实 OpenSearch/DB/Graph/LLM 和替身 |
+| 7. RED tests | rerank 后 Prompt/Citation 顺序；淘汰 chunk 不触发 Graph；字符预算淘汰同样不触发；stale deleting/delete_failed/missing Document 在模型前排除；全路径一次 Hybrid |
+| 8. Minimal implementation steps | 先通过 mocked contract；核验真实环境与必要授权；使用 dedicated 测试目标；跑 Graph on/off、K<=C/K>C、fallback、无 Context、删除场景；保留请求级证据 |
+| 9. Regression suite | Search、RAG、Lifecycle、Deletion；获授权的真实存储回归与真实 RAG 验收 |
+| 10. Acceptance criteria | 删除隔离、Citation 顺序和 Graph provenance 均通过；公共 schema 无新增字段；真实与 mocked 证据分列；原 Hybrid/LLM 错误语义保留 |
+| 11. Scope stop conditions | 需要共享资源写入或未授权删除；出现现有 Knowledge blocker；需要改 Graph/DB/mapping；真实链不可用 |
+| 12. Git commit boundary | 单独提交集成测试与验收报告；不混入范围外修复 |
+
+## M7 — Final Evaluation / Documentation
+
+| 必需项 | 计划 |
+|---|---|
+| 1. Goal | 使用冻结参数完成 Final held-out 最终一次验收并形成完整交接 |
+| 2. Non-goals | 不调参，不反复运行原 final set，不在失败时宣布完成 |
+| 3. Read-before-code | M0 SLO 决议、M5 参数指纹、M6 验收、封存 final manifest、全部停止条件 |
+| 4. Files expected to create | `D:\rag_system\docs\phase-12-finished.md`；`D:\rag_system\docs\phase-12-handoff.md`；`D:\rag_system\docs\phase-12-final-evaluation.md` |
+| 5. Files expected to modify | 两份 Phase 12 canonical Design/Plan 的最终状态；必要的运行说明；不修改参数或质量通过线 |
+| 6. Interfaces | 参数、模型、代码与数据指纹必须匹配；最终一次运行输出总体/分类质量 Gate 与性能 Gate |
+| 7. RED tests | 参数漂移拒绝验收；final 重复调参运行被阻止；任一 Gate 失败不能生成 completed 状态；缺少真实验收证据不能通过 |
+| 8. Minimal implementation steps | 先检查全部指纹与 M6；锁定 final run；执行一次评测；审查类别退化；汇总真实/模拟/未完成项；形成启用、关闭和恢复说明 |
+| 9. Regression suite | Full 安全单元回归、已授权集成回归；冻结参数下最终性能与 Final held-out 验收 |
+| 10. Acceptance criteria | final nDCG@8、MRR@8 均严格提升；其余三项不退化；类别审查通过；所有性能 Gate 通过；证据完整 |
+| 11. Scope stop conditions | 任一质量/性能 Gate 失败、参数漂移、final 泄漏、需要针对同一 final set 调参。保持 enabled=false，进入新评审周期 |
+| 12. Git commit boundary | 单独提交最终评测、完成记录和交接；只有全部 Gate 通过才能标记 Phase 12 完成 |
+
+## 五、Planning Baseline Self-review
+
+| 检查 | 冻结结果 |
+|---|---|
+| 模型为 BAAI/bge-reranker-v2-m3 | 是 |
+| runtime 推荐为直接 Transformers | 是；真实依赖与官方 contract 依据在 canonical Design |
+| M0—M7 完整且每个包含 12 项 | 是 |
+| public K 与 validated capacity C 分离 | 是 |
+| K > C 使用 RRF fallback 与指定原因 | 是 |
+| no second Hybrid、all-or-nothing、fail-open | 是 |
+| Context 顺序、Citation、Graph、Delete 边界 | 是 |
+| Embedding、mapping、DB schema、public API 不变 | 是 |
+| Development / Selection validation / Final held-out 隔离 | 是 |
+| M5 不改 SLO，M7 final 不反复调参 | 是 |
+| 各 milestone 独立 commit | 是 |
+| M0 不再首次创建 Design/Plan | 是 |
+| M0 文档更新仅限真实 probe 后的证据、结果和 SLO 决议 | 是 |
+| Planning Baseline commit 不与 M0 commit 混合 | 是 |
+| 独立 Graph baseline mismatch 在 M0 前解决 | 必须 |
+| 未带入旧 Ollama reranker 设计 | 是 |
+
+## 六、M0 后 canonical 更新位置
+
+Planning Baseline 中以下内容尚无真实结果：
+
+- Runtime evidence：待 M0 明确授权并完成真实 BGE probe 后更新。
+- Benchmark results：待完成 M0 矩阵和真实检索/共存测量后更新。
+- SLO owner decisions：待负责人在 M0 Review 基于实测正式冻结数值后更新。
+
+这些是已有 canonical docs 的后续更新位置，不是新的初始文档创建任务。M0 前须先解决独立 Graph baseline blocker，取得负责人明确授权。
+
+当前状态：`PHASE12_BGE_PLAN_ACCEPTED`。
+
+下一授权边界：`AWAITING_PROJECT_OWNER_PHASE12_M0_AUTHORIZATION`。
