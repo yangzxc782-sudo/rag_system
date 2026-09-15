@@ -34,13 +34,16 @@ class RagContext:
     total_chars: int
 
 
-def build_rag_context(question: str, search_result: Any, settings: Any) -> RagContext:
+def build_rag_context(
+    question: str, search_result: Any, settings: Any, *, preserve_order: bool = False,
+) -> RagContext:
     max_chars = int(getattr(settings, "rag_context_max_chars", 12000))
-    sorted_items = sorted(
-        list(getattr(search_result, "items", []) or []),
-        key=lambda item: float(getattr(item, "hybrid_score", 0.0) or 0.0),
-        reverse=True,
-    )
+    sorted_items = list(getattr(search_result, "items", []) or [])
+    if not preserve_order:
+        sorted_items.sort(
+            key=lambda item: float(getattr(item, "hybrid_score", 0.0) or 0.0),
+            reverse=True,
+        )
 
     if not sorted_items:
         return RagContext(

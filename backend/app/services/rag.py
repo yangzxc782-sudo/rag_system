@@ -4,9 +4,10 @@ from dataclasses import dataclass, replace
 from copy import deepcopy
 import logging
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import app.services.hybrid_search as hybrid_search_service
+import app.services.reranking as reranking_service
 from app.core.config import get_settings
 from app.core.errors import (
     LLM_GENERATION_FAILED,
@@ -30,6 +31,11 @@ from app.rag.graph_context_builder import GraphContext, build_graph_context
 from app.rag.prompt import build_rag_prompt, build_user_prompt
 from app.services.graph_retrieval import GraphRetrievalService
 from app.services.hybrid_search import HybridSearchResult
+from app.retrieval.reranker import (
+    FAILURE_REASONS, RerankCandidate, RerankError, RerankerConfig, RerankRequest,
+    validate_request as validate_rerank_request,
+    validate_result as validate_rerank_result,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -82,20 +88,92 @@ def retrieve_chunks(
         ) from exc
 
 
-def optional_rerank_chunks(question: str, search_result: HybridSearchResult, settings: Any) -> HybridSearchResult:
-    del question
-    if bool(getattr(settings, "reranker_enabled", False)):
-        raise BusinessError(
-            RAG_CONFIG_INVALID,
-            "Reranker is reserved but not implemented in phase 6 minimal RAG.",
-            status_code=400,
-        )
-    return search_result
+@dataclass(frozen=True)
+class _RerankPlan:
+    hybrid_limit: int
+    candidate_limit: int | None = None
+    fallback_reason: str | None = None
 
 
-def build_context(question: str, search_result: HybridSearchResult, settings: Any) -> RagContext:
+@dataclass(frozen=True)
+class RagRerankOutcome:
+    """Internal selection only. Public retrieval fields retain their RRF meanings."""
+
+    search_result: HybridSearchResult
+    applied: bool
+    fallback_reason: str | None
+
+
+def _plan_rerank(limit: int, settings: Any) -> _RerankPlan:
+    if not bool(getattr(settings, "reranker_enabled", False)):
+        return _RerankPlan(limit, fallback_reason="disabled")
     try:
-        return build_rag_context(question, search_result, settings)
+        config = RerankerConfig.from_settings(settings)
+        # Capacity must be reachable with the unchanged Hybrid contract. This is
+        # validation only, with no model/Embedding/client construction or search.
+        hybrid_search_service._validate_hybrid_config(settings, config.candidate_limit)
+    except (RerankError, BusinessError, AttributeError, TypeError, ValueError):
+        return _RerankPlan(limit, fallback_reason="configuration_invalid")
+    if limit > config.candidate_limit:
+        return _RerankPlan(limit, config.candidate_limit, "public_limit_exceeds_reranker_capacity")
+    return _RerankPlan(config.candidate_limit, config.candidate_limit)
+
+
+def optional_rerank_chunks(
+    question: str, search_result: HybridSearchResult, settings: Any, *,
+    limit: int | None = None, plan: _RerankPlan | None = None,
+) -> RagRerankOutcome:
+    final_limit = search_result.limit if limit is None else limit
+    plan = plan or _plan_rerank(final_limit, settings)
+    original_items = tuple(search_result.items)
+    selected = original_items[:final_limit]
+    applied = False
+    reason = plan.fallback_reason
+
+    if reason is None and not original_items:
+        reason = "no_candidates"
+    if reason is None and (plan.candidate_limit is None or len(original_items) > plan.candidate_limit):
+        # An out-of-contract upstream result must never expand validated GPU capacity.
+        reason = "invalid_output"
+    if reason is None:
+        try:
+            request = RerankRequest(
+                request_id=uuid4().hex, query=question,
+                candidates=tuple(RerankCandidate(item.chunk_id, rank, item.content)
+                                 for rank, item in enumerate(original_items, start=1)),
+            )
+            validate_rerank_request(request)
+            result = reranking_service.get_reranking_service(settings).rerank(request)
+            if result.failure_reason is not None:
+                reason = result.failure_reason if result.failure_reason in FAILURE_REASONS else "invalid_output"
+            else:
+                # Do not apply even one promoted item until all identities/scores validate.
+                validate_rerank_result(request, result)
+                by_id = {item.chunk_id: item for item in original_items}
+                selected = tuple(by_id[score.chunk_id] for score in result.scores)[:final_limit]
+                applied = True
+        except RerankError as exc:
+            reason = exc.reason
+        except Exception:
+            reason = "inference_exception"
+
+    if not applied:
+        selected = original_items[:final_limit]
+    final_result = HybridSearchResult(
+        query=search_result.query, limit=final_limit, total=len(selected), items=list(selected),
+    )
+    logger.info(
+        "RAG reranker applied=%s fallback_reason=%s K=%d C=%s candidate_count=%d",
+        applied, reason, final_limit, plan.candidate_limit, len(original_items),
+    )
+    return RagRerankOutcome(final_result, applied, reason)
+
+
+def build_context(
+    question: str, search_result: HybridSearchResult, settings: Any, *, preserve_order: bool = False,
+) -> RagContext:
+    try:
+        return build_rag_context(question, search_result, settings, preserve_order=preserve_order)
     except BusinessError:
         raise
     except Exception as exc:
@@ -230,16 +308,20 @@ def answer_question(
     settings = settings or get_settings()
     normalized_question = _normalize_question(question)
     normalized_limit = _normalize_limit(limit, settings)
+    rerank_plan = _plan_rerank(normalized_limit, settings)
 
     search_result = retrieve_chunks(
         db,
         normalized_question,
-        normalized_limit,
+        rerank_plan.hybrid_limit,
         document_id,
         settings=settings,
     )
-    search_result = optional_rerank_chunks(normalized_question, search_result, settings)
-    context = build_context(normalized_question, search_result, settings)
+    reranked = optional_rerank_chunks(
+        normalized_question, search_result, settings, limit=normalized_limit, plan=rerank_plan,
+    )
+    search_result = reranked.search_result
+    context = build_context(normalized_question, search_result, settings, preserve_order=reranked.applied)
 
     if context.context_status == "no_context":
         active_llm = resolve_active_llm_metadata(settings)

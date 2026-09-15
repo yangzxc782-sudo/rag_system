@@ -511,14 +511,15 @@ def test_optional_rerank_chunks_is_noop_when_disabled() -> None:
 
     reranked = rag_service.optional_rerank_chunks("question", result, make_settings(reranker_enabled=False))
 
-    assert reranked is result
+    assert reranked.search_result.items == result.items
+    assert reranked.applied is False
 
 
-def test_optional_rerank_chunks_rejects_enabled_reranker() -> None:
-    with pytest.raises(BusinessError) as exc_info:
-        rag_service.optional_rerank_chunks("question", make_result(), make_settings(reranker_enabled=True))
-
-    assert exc_info.value.code == RAG_CONFIG_INVALID
+def test_optional_rerank_chunks_falls_back_for_incomplete_enabled_configuration() -> None:
+    result = make_result(items=[make_item()])
+    reranked = rag_service.optional_rerank_chunks("question", result, make_settings(reranker_enabled=True))
+    assert reranked.search_result.items == result.items
+    assert not reranked.applied and reranked.fallback_reason == "configuration_invalid"
 
 
 @pytest.mark.parametrize("error_code", [LLM_UNAVAILABLE, LLM_TIMEOUT, LLM_GENERATION_FAILED])

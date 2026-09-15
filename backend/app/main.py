@@ -10,6 +10,7 @@ from app.graph.repository import Neo4jRepository
 from app.llm.configuration import validate_active_llm_configuration
 from app.llm.provider import clear_llm_provider_cache
 from app.services.graph_retrieval import GraphRetrievalService
+from app.services.reranking import close_reranking_service
 from app.tasks.document_deletion_executor import DocumentDeletionExecutor
 
 
@@ -39,7 +40,10 @@ def _lifespan(settings: Settings):
                 try:
                     clear_llm_provider_cache()
                 finally:
-                    graph_repository.close()
+                    try:
+                        close_reranking_service()
+                    finally:
+                        graph_repository.close()
 
     return lifespan
 

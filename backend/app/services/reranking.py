@@ -205,9 +205,15 @@ def get_reranking_service(settings: Settings | None = None) -> RerankingService:
 
 
 def close_reranking_service() -> None:
+    global _service_cache
     with _cache_lock:
         service = _service_cache
     if service is not None:
+        # Keep the old object visible while close joins the worker. Concurrent
+        # getters receive that closing instance, never a second live model.
         service.close()
-    # Retain the closed singleton: even a concurrent getter cannot create a second runtime.
-    # Config reload/retry after terminal failure requires application restart.
+        if service.wait_closed(0):
+            with _cache_lock:
+                # A second closer must not erase a later lifespan's new instance.
+                if _service_cache is service:
+                    _service_cache = None

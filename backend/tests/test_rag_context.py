@@ -73,6 +73,16 @@ def test_context_uses_hybrid_score_order_and_stable_citation_ids() -> None:
     assert validate_citation_ids(context)
 
 
+def test_preserve_order_is_explicit_and_keeps_citation_order_without_changing_scores():
+    sources = [make_item("C", hybrid_score=0.1, content="promoted"),
+               make_item("A", hybrid_score=0.9, content="original first")]
+    context = build_rag_context("question", make_result(sources), make_settings(), preserve_order=True)
+    assert [c.chunk_id for c in context.chunks] == ["C", "A"]
+    assert [c.hybrid_score for c in context.chunks] == [0.1, 0.9]
+    assert [c.citation_id for c in build_citations(context)] == [1, 2]
+    assert format_context_for_prompt(context).index("chunk_id: C") < format_context_for_prompt(context).index("chunk_id: A")
+
+
 def test_citations_keep_source_and_scores_from_chunks() -> None:
     item = make_item("chunk-a", hybrid_score=0.42, content="冒口应服务于热节补缩", chunk_index=3)
     context = build_rag_context("问题", make_result([item]), make_settings())

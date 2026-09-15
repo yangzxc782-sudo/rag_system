@@ -195,7 +195,7 @@ def test_close_during_task_stops_admission_waits_and_is_idempotent():
     assert fake.closed == 1 and svc.wait_closed(0)
 
 
-def test_cached_singleton_is_retained_after_close(monkeypatch):
+def test_cached_singleton_is_cleared_after_close_for_next_lifespan(monkeypatch):
     module = import_module("app.services.reranking")
     monkeypatch.setattr(module, "_service_cache", None)
     with ThreadPoolExecutor(max_workers=8) as pool:
@@ -203,8 +203,11 @@ def test_cached_singleton_is_retained_after_close(monkeypatch):
     assert all(item is providers[0] for item in providers)
     module.close_reranking_service()
     module.close_reranking_service()
-    assert module.get_reranking_service(settings()) is providers[0]
     assert providers[0].rerank(request()).failure_reason == "closed"
+    assert module._service_cache is None
+    fresh = module.get_reranking_service(settings())
+    assert fresh is not providers[0]
+    module.close_reranking_service()
 
 
 def test_factory_exception_is_unavailable_and_never_retried():
