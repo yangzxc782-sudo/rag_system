@@ -1,6 +1,6 @@
 # Phase 12：BAAI/bge-reranker-v2-m3 设计与实施计划 — Design
 
-> 2026-09-15 M3 evidence 更新：M0/M1/M2 已经负责人验收并独立提交；M3 真实 production-provider smoke 已完成，当前为 `AWAITING_PROJECT_OWNER_PHASE12_M3_REVIEW`。最新 Owner 决议与结果见第十二节；前文保留 Planning/M0 时点事实，不代替当前实现或本次实测。
+> 2026-09-16 M4 更新：M0—M3 已由负责人验收并独立提交，当前 HEAD `97bf603`。新语料审计、token-only audit、评测工具和120道质量题草案完成；全部人工Gold待审，未冻结、未评测。当前 `AWAITING_PROJECT_OWNER_PHASE12_GOLDEN_REVIEW`。最新 Owner A/B 决议见第十三节；此前 Planning/M0/M3 的数据与待审状态保留为历史时点。
 
 ## 文档状态与边界
 
@@ -586,7 +586,7 @@ batch_size
 4. 数值、范围与单位约束。
 5. 多条件工艺问题。
 6. 长段落中的相关证据。
-7. 长 Markdown 表格。
+7. 长结构化表格（Structured Long Table）：Markdown Table 与 MinerU HTML Table 均合法，题目必须真正依赖表头/行列/单元格/单位/范围/条件，记录 table_format 与证据定位。
 8. 易混淆概念与困难负例。
 
 每个集合每类至少 5 条人工标注问题，形成最低覆盖要求；语料不足以满足独立分组时，M4 停止并提交负责人调整评测设计。无答案查询另列健壮性集合，不混入有相关答案的质量指标分母。
@@ -612,6 +612,7 @@ batch_size
 - 候选池覆盖率/可达到的 Recall 上限。
 - latency、VRAM、fallback。
 - 总体与八类 per-category metrics。
+- structured_table overall / markdown / html 与 long_paragraph 独立 slice；无该格式样本时count=0、metrics=null，不拆同源文档凑覆盖。
 
 gold 中未进入 C 的相关 chunk 仍计入召回分母。不能只标注进入当前候选池的结果，再将其解释为全库召回。不用 RAG 答案质量替代 ranking 评测。
 
@@ -677,6 +678,8 @@ Planning 阶段不设毫秒值。M0 必须报告：
 冻结完整参数包：模型 revision、runtime 版本、device、dtype、C、batch、max_length、timeout、数据及配置指纹。
 
 M7 使用该参数包只运行一次 Final held-out。失败后保持 `RERANKER_ENABLED=false`，进入新设计/参数评审周期；不能针对原 final set 调参重测。任一质量或性能 Gate 未通过，不得宣布 Phase 12 完成或默认启用 reranker。
+
+M5 当前候选范围由2026-09-16 Owner Decision B修订：dtype=[FP16,BF16]，FP32仅numerical reference；max_length=[1024,2048,4096]，C=[8,16,32]。8192为 `EXCLUDED_FROM_PHASE12_V1`，tokenizer历史声明上限不是候选值。至少六个dtype×length组合先做hardware/SLO feasibility screening，再进入Selection质量比较。M4只做token长度与预期truncation审计，不选最终profile。
 
 ## 十、Non-goals 与评审确认
 
@@ -799,4 +802,54 @@ Harness 先 RED→GREEN，最终32个单元测试；M1/M2/RAG/lifecycle/Embeddin
 
 本次无生产代码 diff，无需扩大 scope；未进入 M4，未创建 Golden Dataset，未安装依赖/下载模型，未 commit/push。三集合隔离、M5 选参、Delete/Citation/Graph/Public API 边界继续不变。
 
-当前状态：`AWAITING_PROJECT_OWNER_PHASE12_M3_REVIEW`。
+当前状态（M3记录时点）：`AWAITING_PROJECT_OWNER_PHASE12_M3_REVIEW`。
+
+## 十三、M4 Owner decisions 与待审证据
+
+### 当前Owner A/B合同（覆盖先前评测类别与M5候选范围）
+
+- 第7类为Structured Long Table，Markdown与HTML均合法；逐题记录table_format与实际表格证据依赖。整体包含两种格式，单一source不跨Selection/Final；空格式slice报告0/null。
+- M5_MAX_LENGTH_CANDIDATES=[1024,2048,4096]；8192=EXCLUDED_FROM_PHASE12_V1。M0/M3历史512/1024数据保留，不代表新的生产候选矩阵。
+- M5 dtype=[FP16,BF16]；FP32仅numerical reference。六个dtype×length组合先筛hardware/SLO，再做Selection质量比较。C仍8/16/32，batch与最终timeout未选。
+- M0 Owner SLO不变：warm p95≤2000ms、retrieval incremental≤2200ms、busy≤50ms、timeout≤deadline+100ms、coexist device peak≤6500MiB。
+- M4只允许真实local-only tokenizer审计，不运行BGE forward或选择profile。当前生产长度validator仍512/1024，2048/4096扩展是未来授权/可行性验证事项，M4未修改它。
+
+### 2026-09-16 M4 draft evidence（历史，收口状态见末节）
+
+Git Gate：phase12-bge-reranker / 97bf6031292853c334d68fe926270ddd344410c1，起点clean。
+Planning559087f、M006aa95f、M10b327c0、M240c54e0、M397bf603均独立提交；用户已验收M3。
+
+重新盘点8真实文档423chunks，全部normal、Qwen3-Embedding-0.6B/1024已完成且lexical/vector可查。索引逐chunk身份核验零差异。
+Markdown1source/6chunks；HTML7sources/56chunks。CORPUS_READINESS=PASS（草案可行，不等于人工Gold批准）。
+corpus fingerprint：c4e5ffcc12e119e8e3b36d3750ed80e1a0945cc4dfcb400cd8eb5b21762412c1。
+
+Tokenizer revision保持953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e，pair开销4，BGE forward=0。
+overall token p50=62、p95=731.5、max4096；HTML p50=648.5、p95=2772.75、max4096。
+1024/2048/4096的overall chunk-only覆盖410/416/423，HTML43/49/56；不含query+4special开销，不可直接视为pair覆盖。
+没有尝试8192，没有质量对比或参数冻结。
+
+120质量题草案（每split40，每类5）+3robustness；149 qrels（0/1/2分别11/12/126）。
+所有题目和qrel完整性都是OWNER_REVIEW_REQUIRED，approved=0。语料hash已经生成，Golden冻结hash未生成。
+40道Development草案真实Hybrid8/16/32前缀全部一致，120次只读调用，无BGE评分。
+工具支持独立C报告、五项质量指标、candidate coverage/Recall上限、table格式/long paragraph切片、stale/leakage与Final/人工审批门禁。
+
+最终M4 focused=96 passed；M1–M3/Search/RAG/Embedding/lifecycle回归403 passed；Backend full=1664 passed / 28 deselected / 0 FAIL。
+Development quality smoke尚未运行：按本次Owner指令，必须逐题审核后才能冻结并运行。Selection/Final均未运行。
+没有production diff、存储写入、依赖/权重下载、commit或push；没有进入M5。
+
+完整证据与逐题审核：[Corpus audit](../../phase-12-m4-corpus-audit.md)、[Golden review](../../phase-12-m4-golden-dataset.md)、[Evaluation protocol](../../phase-12-evaluation-protocol.md)。
+无当前M4实现scope conflict；人工Review是尚未完成的必要Gate，不得宣布M4 acceptance通过。
+
+当前状态：**AWAITING_PROJECT_OWNER_PHASE12_GOLDEN_REVIEW**。
+
+
+## M4 Finalization — 2026-09-16 Owner Approval
+
+**PHASE12_M4_ACCEPTED**。本节覆盖上面的M4草案待审状态（保留历史审计时间点）。Owner按当前canonical manifest原样批准120质量题+3robustness、全部query/split/category/group/qrel/grade/source/table format。
+仅更新审核metadata与冻结状态；实质字段完全不变。qrel_completeness_status=approved表示Phase12 frozen evaluation gold获批，不表示全知识库所有潜在相关证据已穷尽。
+CORPUS_FINGERPRINT=`c4e5ffcc12e119e8e3b36d3750ed80e1a0945cc4dfcb400cd8eb5b21762412c1`；FROZEN_GOLDEN_FINGERPRINT=`cdbe63039b4d9a674b2fca3ff7ab1bb3fe941c88c06bec557d165f21b4294c2a`。
+冻结前及smoke后实时只读核验8docs/423chunks/embedding/OpenSearch alias+UUID+mapping+逐chunk lexical/vector全部一致；identity/leakage/stale Gate PASS。
+Development真实smoke FP16/C8/batch8/1024/5s：41/41成功，load1；quality40+独立robustness1；HR1 .825→.95、HR3 .975→1、Recall8 .9875→.9875、MRR8 .8925→.970833、nDCG8 .912238→.973929。仅验证harness，不参与选参或宣称M5质量通过。
+Finalization补充TDD6项；M4 focused102、相关回归410+140、Backend full1670 passed /28 deselected /0 FAIL。详细限制与原始数据见[收口报告](../../phase-12-m4-golden-dataset.md)。
+M4 production diff0；独立commit边界 `test: freeze phase 12 reranker evaluation dataset`，提交且clean后才开始已授权M5。Selection/Final尚未运行，未选生产参数、未启用reranker、未push。
+M5维持FP16/BF16 × 1024/2048/4096 × C8/16/32，8192排除；先hardware/SLO再Selection，Final封存。完整候选profile必须Owner复核后才能写默认值。
