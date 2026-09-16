@@ -1,6 +1,6 @@
 # Phase 12：BAAI/bge-reranker-v2-m3 设计与实施计划 — Implementation Plan
 
-> 2026-09-15 M0 evidence 更新：真实探针和回归已结束，当前为 `AWAITING_PROJECT_OWNER_PHASE12_M0_REVIEW`；未开始 M1、未 commit/push。第六节记录本次授权收窄、Graph baseline 解决和实测限制。前文保留已提交 Planning Baseline 与 M0—M7 的 12 项计划结构。
+> 2026-09-15 M3 evidence 更新：M0/M1/M2 已验收并独立提交，M3 真实 smoke 已完成，当前为 `AWAITING_PROJECT_OWNER_PHASE12_M3_REVIEW`；本轮未 commit/push，未进入 M4。最新 Owner 决议和结果见第七节；前文保留 Planning Baseline 与 M0—M7 的 12 项计划结构。
 
 ## 一、Planning Baseline 与授权边界
 
@@ -426,3 +426,45 @@ FP32 C32/L512/batch32 在上一完成检查点后超过 300 s 仍无完整配置
 M0 commit 继续与 Planning Baseline 分离，但**本轮未 commit/push**。M1—M7 没有执行。
 
 当前状态：`AWAITING_PROJECT_OWNER_PHASE12_M0_REVIEW`。
+
+## 七、M3 执行证据与下一授权边界
+
+### 1. 当前 HEAD 与已冻结 Owner 决议
+
+- Branch：`phase12-bge-reranker`；M3 开始 HEAD：`40c54e0ae4cd85693dd56fdbf4f6285e7b5e9a28`，clean。
+- Planning `559087f`、Graph baseline `4fc3412`、M0 `06aa95f`、M1 `0b327c0`、M2 `40c54e0` 均独立提交；M0/M1/M2 已获负责人验收。
+- M0 Review 已冻结 FP16 主路径；BF16 后续质量对照，FP32 不进入当前生产候选优化。
+- 已冻结 SLO：warm p95≤2000 ms、retrieval incremental p95≤2200 ms、busy p95≤50 ms、timeout 返回≤deadline+100 ms、coexist device peak≤6500 MiB。
+- **C/batch/max_length/最终 timeout 未选为生产默认**，仍属于 M5；前文 M0“待审”是历史时点，以上是当前明确 Owner 决议。
+
+### 2. M3 结果
+
+详见[M3 Report](../../phase-12-m3-local-smoke.md)及[原始数据](../../phase-12-m3-results/local-smoke.json)。保持 M3 表中原有12项边界，只新增 test-only harness/report，未修改生产组件。
+
+固定模型 revision `953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e`，六文件 hash 已复核，未下载。既有 `PHASE12_BGE_PROBE_ENABLED=1` 为唯一 gate；默认 CLI 零 load，普通 pytest 不执行真实模型。
+
+显式 smoke profile 为 M0 已验证的 FP16/C8/batch8/512；5 s 正常实验 deadline、50 ms timeout 注入。32个 harness unit 全通过，先有对应 RED；最终 focused=409 passed；完整真实运行前 full=1568 passed / 28 deselected / 0 FAIL。
+
+| Acceptance | 实测 |
+|---|---|
+| Production loader / raw score | local-only Transformers、eval/inference_mode、[N,1]、N finite；四组 sanity 方向通过 |
+| Load once / repeated stability | 第一 lifespan load=1；固定20轮 drift=0、ranking stable |
+| Warm / incremental p95 | 113.96 / 114.51 ms，均 n=20，PASS |
+| Busy p95 | 0.337 ms，n=20，真实 forward 尚在执行，PASS |
+| Timeout / recovery | 50 ms deadline，返回max67.82 ms；20/20 timeout→B busy→A结束→C成功；迟到结果未污染 |
+| Worker | 最大1个active forward，未排队、未在timeout时提前idle |
+| GPU / memory | device sampled peak4673.56 MiB；allocated peak3465.05、reserved peak3518.00 MiB；20轮settled allocated增量0 |
+| Lifecycle | 实际TestClient close+clear；第二lifespan新对象lazy加载；shutdown等待真实in-flight自然结束 |
+| M2 wiring | deterministic Hybrid + real BGE + fake LLM；K>C零forward；fallback原RRF；每请求一次Hybrid；public API不变 |
+
+所有上述性能 Gate 在本次 smoke profile 下通过。设备采样最大间隔460.25 ms，报告明确其漏采瞬时峰值的限制；手工持有一个 Embedding 与生产非singleton factory边界分开，不外推真实RAG并发显存或完整服务SLO。真实OOM未制造，继续保留M1注入测试。
+
+### 3. 保留问题与后续停止点
+
+首轮真实运行因测试夹具 chunk ID 不满足既有 UUID schema 而终止；原始记录保留。仅将 test-only Hybrid identity 对齐，新增RED→GREEN并重新通过full；没有改 public DTO，最终真实完整运行通过。没有发现需要修改生产实现或扩大范围的 scope conflict。
+
+本轮已更新 existing canonical docs 的真实production-provider/busy/timeout/recovery/SLO证据；没有创建M4数据、访问selection/final集合或选择生产参数。未修改Embedding、Hybrid核心、Graph、OpenSearch、数据库、frontend或生产配置。未commit/push。
+
+M3 需负责人 Review；不得由本轮结果自动进入 M4 或启用生产 reranker。M4/M5/M7三集合隔离与Gate保持原计划。
+
+当前状态：`AWAITING_PROJECT_OWNER_PHASE12_M3_REVIEW`。

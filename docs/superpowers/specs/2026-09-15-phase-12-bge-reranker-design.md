@@ -1,6 +1,6 @@
 # Phase 12：BAAI/bge-reranker-v2-m3 设计与实施计划 — Design
 
-> 2026-09-15 M0 evidence 更新：真实探针与回归已结束，当前为 `AWAITING_PROJECT_OWNER_PHASE12_M0_REVIEW`。Graph baseline 已在独立提交解决；见本文第十一节。前文 Repository Audit 保留 Planning 时点事实，不以旧环境记录替代本次实测。
+> 2026-09-15 M3 evidence 更新：M0/M1/M2 已经负责人验收并独立提交；M3 真实 production-provider smoke 已完成，当前为 `AWAITING_PROJECT_OWNER_PHASE12_M3_REVIEW`。最新 Owner 决议与结果见第十二节；前文保留 Planning/M0 时点事实，不代替当前实现或本次实测。
 
 ## 文档状态与边界
 
@@ -757,3 +757,46 @@ M1 优先工程验证 FP16，BF16 对照、FP32 数值参考；C8/16/32、L512/1
 M0 只更新已存在 canonical docs 的证据和待决事项；不首次创建 Design/Plan，不混入 Planning Baseline commit。本轮未 commit/push。
 
 当前状态：`AWAITING_PROJECT_OWNER_PHASE12_M0_REVIEW`。
+
+## 十二、M3 真实 production-provider evidence 与当前 Owner 决议
+
+### 1. 当前基线与已批准约束
+
+Planning `559087f`、Graph baseline `4fc3412`、M0 `06aa95f`、M1 `0b327c0`、M2 `40c54e0` 均为独立提交。M3 从 `phase12-bge-reranker` / `40c54e0ae4cd85693dd56fdbf4f6285e7b5e9a28` 的 clean 工作区开始。
+
+负责人已接受 M0，并冻结 **FP16 主路径**；BF16 保留后续质量对照，FP32 不进入当前生产候选优化。已冻结 SLO：warm p95≤2000 ms、retrieval incremental p95≤2200 ms、busy p95≤50 ms、timeout 返回≤deadline+100 ms、GPU coexist device peak≤6500 MiB。前文“尚待 Owner 确认”的措辞是 M0 报告时点记录，已被本节的明确决议更新。
+
+**C、batch、max_length 和最终 timeout 仍未冻结为生产默认；M5 才选择完整 profile。** M1 当前运行 contract 为 RerankResult；生产 model load failure latch 至新的应用生命周期，不执行每请求重试。M2 已接入 close+clear cache、K/C 分支与 preserve_order；实际源码为准。
+
+### 2. M3 实测摘要
+
+[M3 完整报告](../../phase-12-m3-local-smoke.md)与[脱敏原始数据](../../phase-12-m3-results/local-smoke.json)。本轮仅使用已有模型，六文件大小/hash 与 M0 revision `953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e` 一致；runtime 仍为 Python 3.13.9 / torch 2.11.0+cu128 / Transformers 4.57.6 / sentence-transformers 5.6.0 / CUDA 12.8。
+
+显式 **M3 smoke profile**：FP16、cuda、C8、batch8、max_length512，来自 M0 已验证配置；正常测试 deadline=5 s，故障注入 deadline=50 ms。没有修改配置默认、Embedding 或 production runtime。
+
+| 项目 | 本次真实结果 |
+|---|---|
+| Lazy / model load | startup=0；lifespan #1 加载一次并复用；close+clear 后 lifespan #2 新实例再次 lazy load |
+| Score contract | 实际 [8,1]、sanity [2,1]；N finite raw logits，完整 identity 验证；20 次 drift=0、ranking stable |
+| Warm p50 / p95 | 111.73 / 113.96 ms，n=20，fail=0；PASS |
+| Retrieval incremental p50 / p95 | 112.73 / 114.51 ms，n=20；同 deterministic Hybrid fixture，计时排除 Graph/LLM；PASS |
+| Busy p50 / p95 | 0.215 / 0.337 ms，n=20；真实 forward in-flight，原 RRF fallback；PASS |
+| Timeout | deadline50 ms，返回 p95=65.07 ms、max=67.82 ms；全部≤150 ms；PASS |
+| 后台完成 | A completion p95=148.24 ms，与调用方返回时间分列；20/20 B-after-timeout busy、C recovery success |
+| Late result / concurrency | cancelled task result 为空、fallback 不变、新 token/request identity 正确；max_active_forward=1 |
+| Coexist peak | allocated=3465.05 MiB、reserved=3518.00 MiB、device sampled=4673.56 MiB；PASS |
+| 显存增长 | 20 次返回后 allocated 恒为3372.99 MiB，growth=0 bytes |
+| Shutdown in-flight | 停止 admission，等待真实 forward 自然结束后清理，模型 weakrefs 释放；没有第二模型 |
+| RAG wiring | K≤C 真实顺序生效；K>C 零 forward；busy/timeout/unavailable 精确原 RRF；一次 Hybrid；public schema 不变 |
+
+这是单个显式持有 Embedding 的 smoke，不是默认 Embedding factory 的生产并发模型，也不是 M6 真实存储/Graph/LLM 全链路。设备目标 10 ms 周期采样，1191 个样本，最大实际间隔460.25 ms；不保证采样间未观测设备瞬时峰值。没有主动制造 OOM，普通异常/OOM 继续由 M1 注入回归覆盖。
+
+### 3. 测试、限制与下一边界
+
+Harness 先 RED→GREEN，最终32个单元测试；M1/M2/RAG/lifecycle/Embedding 合并 focused=409 passed；真实完整运行前 Backend full=1568 passed / 28 deselected / 0 FAIL。真实 CLI 与普通 pytest 分开报告。
+
+首轮真实运行在 public DTO 序列化处因 synthetic chunk ID 非 UUID 终止；保留原始结果，补 RED 测试，仅修正 test fixture 为合法 UUID。现有 public API 未修改。随后 full 与完整真实 smoke 通过；没有通过改生产代码或调参规避 Gate。
+
+本次无生产代码 diff，无需扩大 scope；未进入 M4，未创建 Golden Dataset，未安装依赖/下载模型，未 commit/push。三集合隔离、M5 选参、Delete/Citation/Graph/Public API 边界继续不变。
+
+当前状态：`AWAITING_PROJECT_OWNER_PHASE12_M3_REVIEW`。
