@@ -1,0 +1,2 @@
+# Preserve immutable evidence bytes and their recorded SHA-256 across checkouts.
+*.json -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
