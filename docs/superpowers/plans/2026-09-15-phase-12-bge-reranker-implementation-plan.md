@@ -594,3 +594,35 @@ M5 commit为f6c1c01200ad859cd7555846a96da4b886333205；M6使用bf16-L1024-C32-B8
 结构化Owner waiver、原始evidence SHA见docs/phase-12-m6-results/owner-waiver-closure-20260920.json。两个Owner手工LLM诊断脚本保持原样归档入M6提交（未执行、未改写）；扫描没有真实凭据。
 
 M6 waiver closure验证：focused/regression组合167 passed（含M6 focused35），Backend full1775 passed/28 deselected/0 FAIL；实际env、原evidence、生产代码及冻结模型身份保持一致。git diff --check PASS。
+
+
+## M7 one-shot Final actual evidence — 2026-09-20
+
+M6独立commit为`df38c7bd8507601e63c5d9c7db515a4de1823a0b`，parent为M5 `f6c1c01200ad859cd7555846a96da4b886333205`，提交后clean才开始M7。随后Owner主动删除两个manual LLM诊断脚本并要求不暂停、继续M7；运行身份精确绑定这两个非评测脚本删除例外，其他tracked文件保持M6。
+
+M7当前 **AWAITING_PROJECT_OWNER_PHASE12_M7_REVIEW**。固定`bf16-L1024-C32-B8`和profile fingerprint `3c7efd44de1b2c7fece6b142ec58cc41d88f4dadf5160aef9cf439fcd565b5c7`；preflight通过后Final仅正式运行1次，41条全部有效（40质量+1健壮性）。Final manifest fingerprint=`aa8ad954940b6ad4b3443b663fc5e1a238db1e72fae9b0ec29e46ca1e0fc37e5`，运行身份=`7528fd5f8a7b21e2cf594df7adaa8863cc0fd4235b8551f8e4582ecd176de089`。消费锁不可删除或绕过，任何结果均不自动允许重跑。
+
+同候选池RRF -> BGE：HR1 0.875000 -> 0.975000；HR3 0.975000 -> 1.000000；Recall8 0.975000 -> 1.000000；MRR8 0.918750 -> 0.983333；nDCG8 0.927328 -> 0.982307。总体五项Gate PASS。唯一类别均值下降为multi_condition nDCG8 1.000000 -> 0.992788（-0.007212），**Owner category Review尚未完成**，不能用总体提升或M5 paraphrase风险接受覆盖。八类别、结构化表格/HTML、Markdown零样本null、长段落及单题下降详见[Final evaluation](../../phase-12-final-evaluation.md)。
+
+性能：41请求warm p95=908.43ms、incremental p95=908.70ms、共存device sampled peak=4953.56MiB。真实服务+mock provider的busy20次p95=0.003595ms、5s timeout单次返回5014.01ms；不声称本次制造过真实CUDA hang，M3既有真实生命周期证据沿用。冻结SLO全部PASS。
+
+M7 focused33；Backend full1808 passed/28 deselected/0 FAIL（普通测试real gate=0）。真实Final41次与unit分列；M6真实生成/Citation/Graph/K/fallback证据不重跑。模型/Corpus/Golden、env和生产代码身份前后保持；actual.env不变，RERANKER_ENABLED=false；没有生产代码改动、没有重跑M5/Selection、未push。
+
+M6真实destructive deletion继续 **NOT_RUN / OWNER_WAIVED_FOR_PHASE12_M6 / MANUAL_ACCEPTANCE_DEFERRED**，保留历史AUTHORIZATION_BLOCKED与mocked PASS。Project Owner must later execute/inspect the dedicated real destructive deletion acceptance.
+
+未创建M7 acceptance commit，未宣布Phase12完成。下一步仅Owner审查本次Final类别退化；不针对同一Final调参重测。完整[状态记录](../../phase-12-finished.md)与[交接/启停说明](../../phase-12-handoff.md)已生成。以上只记录实际证据和状态，不修改SLO、质量Gate或Final一次性规则。
+
+
+## M7 final Owner review and completion — 2026-09-20
+
+**PHASE12_M7_ACCEPTED / PHASE12_COMPLETE**。本节按最新Owner决议完成此前Final类别Review，覆盖历史AWAITING_PROJECT_OWNER_PHASE12_M7_REVIEW状态；原始评测、消费锁及历史待审证据原字节保留。
+
+Owner review result: **ACCEPTED**。Owner decision: **CATEGORY_REGRESSION_ACCEPTED_AS_KNOWN_RISK**。`multi_condition` nDCG@8仍为1.000000 -> 0.992788，delta=-0.007211913337，记为**ACCEPTED_KNOWN_RISK_FOR_PHASE12_V1**。`p12-fin-025`仍为baseline1.000000 / BGE0.963940 / delta=-0.036060。Owner接受风险，不改写下降事实、不重新判定单题无退化。
+
+Final was NOT rerun. Final run count remains 1（40 quality + 1 robustness）。未重算ranking/metrics，未生成新snapshot，未改run identity，未改参数/模型/Golden/qrels/Selection/Gate/SLO。M5 frozen profile与全部指纹保持；M6独立commit=df38c7bd8507601e63c5d9c7db515a4de1823a0b，M7独立提交，以新增本节的提交为M7 commit。
+
+既有总体五项quality Gate与性能SLO全部PASS；原warm p95=908.43ms、incremental p95=908.70ms、busy p95=0.003595ms、timeout=5014.01ms、GPU sampled peak=4953.56MiB保持不变。收口仅补充合成M7/profile安全unit **48 passed**（real gate=0，不访问真实Final）；原Backend full **1808 passed / 28 deselected / 0 FAIL**沿用，执行代码无变更。
+
+M5 Selection paraphrase历史风险继续保留，与M7 Final multi_condition风险为两个独立事实。M6真实destructive deletion仍为 **NOT_RUN / OWNER_WAIVED_FOR_PHASE12_M6 / MANUAL_ACCEPTANCE_DEFERRED**；不能声称所有真实测试已执行。Project Owner must later execute/inspect the dedicated real destructive deletion acceptance.
+
+**Completion is subject to recorded known risks and deferred manual deletion acceptance.** actual.env未修改，RERANKER_ENABLED=false，无生产代码改动，不push，不启动新Phase。最新独立metadata为docs/phase-12-m7-results/owner-review-acceptance.json；最终状态/启停说明见[finished](../../phase-12-finished.md)与[handoff](../../phase-12-handoff.md)。

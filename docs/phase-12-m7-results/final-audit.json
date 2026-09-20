@@ -1,0 +1,43 @@
+{
+  "status": "PASS",
+  "checked_at_utc": "2026-09-20T09:19:12.556687+00:00",
+  "branch": "phase12-bge-reranker",
+  "head": "df38c7bd8507601e63c5d9c7db515a4de1823a0b",
+  "m7_acceptance": "AWAITING_PROJECT_OWNER_PHASE12_M7_REVIEW",
+  "m7_commit": null,
+  "final_run_count": 1,
+  "final_requests_completed": 41,
+  "category_review_pending": [
+    "multi_condition"
+  ],
+  "historical_boundary_files_verified": 200,
+  "m6_evidence_files_verified": 7,
+  "code_identity_files_verified": 126,
+  "model_identity_checked_by_real_runner": true,
+  "corpus_golden_selection_unchanged": true,
+  "actual_env_unchanged": true,
+  "reranker_enabled": false,
+  "production_files_modified": [],
+  "diff_check": "PASS",
+  "new_artifact_whitespace_check": "PASS",
+  "secret_scan": "PASS (local values compared in memory; never output)",
+  "no_weights_or_cache_or_actual_env_added": true,
+  "owner_diagnostic_deletions_preserved": [
+    "manual_test_llm_api.py",
+    "manual_test_project_llm_provider.py"
+  ],
+  "m6_real_deletion": "NOT_RUN / OWNER_WAIVED_FOR_PHASE12_M6 / MANUAL_ACCEPTANCE_DEFERRED",
+  "artifact_sha256": {
+    "backend/tests/phase12_local/final_evaluation.py": "8c1877e1c67650efb3213b62f0fd3f96d0842c713d4c6c13cf84984564e4952a",
+    "backend/tests/test_phase12_m7_final.py": "6c71f52f000092018a368e011a622ab1fa390b4c5bad86a25373e49668e5fb50",
+    "docs/phase-12-final-evaluation.md": "62e8427b873f57c0d2b4aeff538bd847b058f3eab0706c8bfe96992dcea1169b",
+    "docs/phase-12-finished.md": "d1dd1cd41944f8b6dcdcd76dc1bcdb49a2a4daa70901a85deb4667d67e305826",
+    "docs/phase-12-handoff.md": "e03b3d025171cd506d9eff68072cbe4876c30f9057a0353292f9be7a6b2a737c",
+    "docs/phase-12-m7-results/evaluation.json": "99c1dbb59c60b4114e063a55cfbcb4beed0dca92d4360725c83bc2632483af96",
+    "docs/phase-12-m7-results/final-run-lock.json": "f1f7089dc3739353f7f0c4437f78837682913e93bf439e4e6a6fe249a6ce54a6",
+    "docs/phase-12-m7-results/preflight.json": "1e433dc8691f7ba556ecf1ef570e3aee344dafa3702981593ac1549051094fcc",
+    "docs/phase-12-m7-results/regression.json": "ddb42369e98705f4cdb40433bc3ee2380c24517db87cf3853da055e628b879c6",
+    "docs/superpowers/plans/2026-09-15-phase-12-bge-reranker-implementation-plan.md": "0dc8172f35b936106ea484a0167973480872a770134be5ea2c2ebad5a99bf9f8",
+    "docs/superpowers/specs/2026-09-15-phase-12-bge-reranker-design.md": "786d599ffbb81c1e3f5e5d7de8c502b17867b1ec80c2697b7f1a0a5d01d0c475"
+  }
+}
