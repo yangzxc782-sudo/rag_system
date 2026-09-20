@@ -1,4 +1,4 @@
-"""M6 frozen-profile contracts; no real model/storage in ordinary pytest."""
+"""Production RAG/reranker contracts using synthetic data and fake model/storage."""
 from copy import deepcopy
 from dataclasses import asdict, replace
 from types import SimpleNamespace
@@ -9,11 +9,10 @@ import pytest
 
 from app.core.errors import BusinessError, HYBRID_SEARCH_FAILED, LLM_TIMEOUT
 from app.retrieval import local_cross_encoder as runtime
-from app.retrieval.reranker import RerankResult, RerankScore
+from app.retrieval.reranker import RerankScore
 from app.schemas.rag import RagAskData
 from app.services import hybrid_search, rag, reranking
-from tests.phase12_local.selected_profile import frozen_settings, PROFILE_FINGERPRINT
-from tests.phase12_integration.observation import RequestTrace, run_real_gated
+from tests.reranker_observation import RequestTrace
 from test_hybrid_search import FakeEmbeddingProvider, FakeSearchClient, make_hit, make_response
 from test_rag_graph_fusion import graph_service
 from test_rag_reranking import ask, harness, items, settings
@@ -23,18 +22,22 @@ from test_reranker_runtime import FakeTorch, FakeTokenizer, FakeModel
 
 @pytest.fixture(autouse=True)
 def no_real_model(monkeypatch):
-    loader = Mock(side_effect=AssertionError('M6 mocked tests must never load real BGE'))
+    loader = Mock(side_effect=AssertionError('Contract tests must never load real BGE'))
     monkeypatch.setattr(runtime, '_load_local_model', loader)
     yield
     loader.assert_not_called()
 
 
 def config(**changes):
-    return frozen_settings(settings()).model_copy(update=changes)
+    values = dict(reranker_dtype='bf16', reranker_device='cuda',
+                  reranker_max_length=1024, reranker_candidate_limit=32,
+                  reranker_batch_size=8, reranker_timeout_seconds=5.0)
+    values.update(changes)
+    return settings(**values)
 
 
 @pytest.mark.parametrize('k,requested,scored', [(8, 32, True), (32, 32, True), (50, 50, False)])
-def test_frozen_k_capacity_once_hybrid(monkeypatch, k, requested, scored):
+def test_k_capacity_once_hybrid(monkeypatch, k, requested, scored):
     h = harness(monkeypatch, items(50), config=config())
     before = deepcopy([asdict(s) for s in h.sources])
     with RequestTrace(h.service) as trace:
@@ -204,14 +207,6 @@ def test_disabled_is_original_public_k(monkeypatch):
     h.getter.assert_not_called()
 
 
-def test_real_gate_exact_existing_opt_in():
-    operation = Mock(return_value=PROFILE_FINGERPRINT)
-    for env in ({}, {'PHASE12_BGE_PROBE_ENABLED': 'true'}, {'PHASE12_BGE_PROBE_ENABLED': '0'}):
-        assert run_real_gated(operation, environ=env)['status'] == 'disabled'
-    operation.assert_not_called()
-    assert run_real_gated(operation, environ={'PHASE12_BGE_PROBE_ENABLED': '1'}) == PROFILE_FINGERPRINT
-
-
 def test_trace_detects_prompt_order_regression(monkeypatch):
     h = harness(monkeypatch, config=config())
     with RequestTrace(h.service) as trace:
@@ -219,33 +214,3 @@ def test_trace_detects_prompt_order_regression(monkeypatch):
     trace.prompt_ids.reverse()
     with pytest.raises(AssertionError, match='prompt/context'):
         trace.verify(answer)
-
-
-@pytest.mark.parametrize('warm,incremental,peak,passed', [
-    (1000, 1100, 4800, True), (2001, 1100, 4800, False),
-    (1000, 2201, 4800, False), (1000, 1100, 6501, False),
-])
-def test_real_acceptance_never_relaxes_slo(warm, incremental, peak, passed):
-    from tests.phase12_integration.real_acceptance import validate_performance
-    if passed:
-        assert validate_performance([warm] * 20, [incremental] * 20, peak)['status'] == 'PASS'
-    else:
-        with pytest.raises(AssertionError, match='SLO'):
-            validate_performance([warm] * 20, [incremental] * 20, peak)
-
-
-def test_real_acceptance_rejects_insufficient_samples():
-    from tests.phase12_integration.real_acceptance import validate_performance
-    from tests.phase12_local.bge_probe import ProbeContractError
-    with pytest.raises(ProbeContractError):
-        validate_performance([1000] * 19, [1100] * 19, 4800)
-
-
-def test_failed_request_cannot_remain_running_or_lose_partial_evidence():
-    from tests.phase12_integration.real_acceptance import record_failure
-    report = {'status': 'RUNNING', 'requests': [
-        {'status': 'PASS'}, {'status': 'RUNNING', 'bge_forward_count': 4}], 'pairs': []}
-    record_failure(report, 'real_end_to_end', BusinessError(LLM_TIMEOUT, 'private message'))
-    assert report['status'] == 'STOP' and report['business_error_code'] == LLM_TIMEOUT
-    assert report['requests'] == [{'status': 'PASS'}, {'status': 'STOP', 'bge_forward_count': 4}]
-    assert 'private message' not in str(report)

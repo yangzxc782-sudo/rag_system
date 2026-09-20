@@ -1,9 +1,4 @@
-"""Request-level observations around production calls, without reimplementing them.
-
-M2 helpers supply fake dependencies; M3 observes CUDA. Neither links a live Hybrid
-filter to RAG/Context/Prompt/Graph in a single request. This small adapter does so.
-It stores only identities/counts/timings, never query, passage, prompt, or secrets.
-"""
+"""Observe production RAG calls in synthetic regression tests without replacing them."""
 from contextlib import ExitStack
 from dataclasses import asdict
 import re
@@ -11,14 +6,6 @@ from time import perf_counter
 from unittest.mock import patch
 
 from app.services import hybrid_search, rag
-from tests.phase12_local.bge_probe import ProbeDisabled, run_gated
-
-
-def run_real_gated(operation, *, environ=None):
-    try:
-        return run_gated(operation, environ=environ)
-    except ProbeDisabled:
-        return {'status': 'disabled', 'real_load_count': 0}
 
 
 class RequestTrace:
