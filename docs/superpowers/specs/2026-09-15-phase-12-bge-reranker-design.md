@@ -1,6 +1,6 @@
 # Phase 12：BAAI/bge-reranker-v2-m3 设计与实施计划 — Design
 
-> 当前状态：PHASE12_M5_ACCEPTED；最新Owner frozen profile与收口证据见文末 M5 Owner Closure。前文M0–M5状态是历史记录。
+> 当前状态：PHASE12_M6_ACCEPTED_WITH_OWNER_WAIVER；真实destructive deletion NOT_RUN / OWNER_WAIVED_FOR_PHASE12_M6 / MANUAL_ACCEPTANCE_DEFERRED，不再阻塞M7。此前blocker记录保留为历史；最新决议见文末。
 
 ## 文档状态与边界
 
@@ -889,3 +889,47 @@ selection policy = **owner quality-first decision**；不是自动成本排序wi
 M5 closure补充15项漂移/旧env隔离测试：15 RED（helper不存在）→GREEN。M5/config/Provider/runtime/RAG及M4 integrity组合321 passed。完整安全回归结果见下方收口验证记录。只提交M5与上下文交接文档，不含M6测试；独立commit后clean才进入M6。M7 Gate与SLO不变。
 
 收口验证：Backend full1740 passed/28 deselected/0 FAIL；actual .env、Golden、Selection、原始82份artifact及生产代码边界SHA不变，git diff --check通过。详细结果见M5报告。M6尚未开始。
+
+## M6 实际验收记录 — 2026-09-20
+
+M5 已独立提交 `f6c1c01200ad859cd7555846a96da4b886333205`，commit 后 clean，亦为 M6 start HEAD。M5 Owner profile 继续冻结 `bf16-L1024-C32-B8`，profile fingerprint=`3c7efd44de1b2c7fece6b142ec58cc41d88f4dadf5160aef9cf439fcd565b5c7`；owner quality-first decision 与 accepted known paraphrase risk 不变。
+
+M6 当前 **PHASE12_M6_BLOCKED / STOP_REAL_CHAIN_UNAVAILABLE**。29 focused tests 及 Backend full 1769 passed / 28 deselected / 0 FAIL。Mocked K8/32/50、once-Hybrid、fail-open、deletion-before-tokenizer/model、Prompt/Citation order、Context budget 和 Graph final-context provenance/on-off 均通过，生产修改0。
+
+1 次真实 RAG 尝试中，Hybrid(32) 一次、冻结 BGE 四个 batch 完成，rerank 992.57ms；在已配置 API LLM 处返回 `LLM_UNAVAILABLE`，0 个端到端完成。依 M6 真实链不可用条件停止；没有换配置救结果。此请求 final Context 无有效 kg_refs，真实 Graph success 尚未覆盖；未执行后续 K32/K50/on-off、paired performance，也不从单次观察宣称性能验收。
+
+Phase10 真实 destructive deletion 门禁未开启，明确 **AUTHORIZATION_BLOCKED**。不能把未执行项写成 PASS 或自行降低 M6 acceptance。只读实时 corpus 前后均为8文档/423chunks，200个受保护文件无变化，实际 .env 与生产 enabled=false不变，Final run count=0。
+
+完整证据与阻塞项见 [M6 report](../../phase-12-m6-real-regression.md)。M6 尚无 acceptance commit；测试/证据保留工作区。下一步先 Owner Review 真实 LLM 可用性与 dedicated deletion 授权前提，再继续 M6。M7 Gate、质量 Gate、SLO 未修改；未进入 M7、未 push。
+
+### M6 Owner 授权恢复结果 — 2026-09-20
+
+Owner完成独立LLM诊断后授权一次恢复，并补充明确授权向当前api.openai-proxy.org/v1发送本地检索内容。相同api/gpt-4o-mini/60s配置、SDK retries=0，同一Provider实例的最小preflight PASS（2049.01ms）及原RAG retry PASS（2308.01ms）。首次LLM_UNAVAILABLE按Owner要求归类 `TRANSIENT_REAL_LLM_CONNECTION_FAILURE_RECOVERED`；原失败JSON及SHA保留，没有证明底层故障根因。
+
+11次真实RAG生成与40次使用LLM替身的真实性能请求全部PASS；51/51 once-Hybrid、Context/Prompt/Citation一致。真实K8/32/50通过，K50 BGE forward=0；真实Graph on/off与final Context provenance通过，含rerank淘汰和Context budget淘汰的带refs chunk不触发Graph。20 warm样本rerank p95=817.74ms、20 paired增量p95=816.24ms，device sampled peak=4905.56MiB，冻结SLO通过。冻结profile/指纹、质量Gate与已知paraphrase风险不变。
+
+恢复focused35 passed（新增6项RED→GREEN），Backend full1775 passed/28 deselected/0 FAIL，生产修改0。205个受保护文件无变化，8文档/423chunks实时身份一致，Final run count0，actual.env不变，RERANKER_ENABLED=false。
+
+整体M6仍 **PHASE12_M6_BLOCKED / AUTHORIZATION_BLOCKED**，唯一剩余acceptance blocker为Owner未授权且未执行的dedicated真实destructive deletion；不能记PASS或豁免现行Gate。M6无commit，工作区保留历史与恢复证据，不push、不进入M7。详见[M6恢复报告](../../phase-12-m6-real-regression.md)及新增recovery JSON。下一步仅处理该子项既有dedicated target与授权前提。**AWAITING_PROJECT_OWNER_PHASE12_M6_REVIEW**。
+
+
+## M6 Owner waiver and closure — 2026-09-20
+
+最新Owner决议覆盖此前真实删除授权blocker：**PHASE12_M6_ACCEPTED_WITH_OWNER_WAIVER**。真实destructive deletion状态为 **NOT_RUN / OWNER_WAIVED_FOR_PHASE12_M6 / MANUAL_ACCEPTANCE_DEFERRED**。历史AUTHORIZATION_BLOCKED证据和mocked deletion-before-model PASS完整保留；没有实际执行删除，没有把未执行项改写为PASS。
+
+```yaml
+owner_waiver:
+  scope: real_destructive_deletion
+  reason: owner elected to defer manual acceptance
+  test_result: NOT_RUN
+  prior_status: AUTHORIZATION_BLOCKED
+  follow_up: MANUAL_ACCEPTANCE_DEFERRED
+```
+
+Manual follow-up: Project Owner must later execute/inspect the dedicated real destructive deletion acceptance. 此项不再阻塞进入M7，仅限M6这一明确豁免，不改变M7质量Gate、SLO、冻结profile或Final一次性约束。
+
+M5 commit为f6c1c01200ad859cd7555846a96da4b886333205；M6使用bf16-L1024-C32-B8、profile fingerprint 3c7efd44de1b2c7fece6b142ec58cc41d88f4dadf5160aef9cf439fcd565b5c7。LLM/Citation/Graph/K与真实51次请求证据沿用恢复run，无生产修改，不重复高成本真实链。独立M6 commit并确认clean后才进入M7；M7前Final run count=0、actual.env不变、RERANKER_ENABLED=false。
+
+结构化Owner waiver、原始evidence SHA见docs/phase-12-m6-results/owner-waiver-closure-20260920.json。两个Owner手工LLM诊断脚本保持原样归档入M6提交（未执行、未改写）；扫描没有真实凭据。
+
+M6 waiver closure验证：focused/regression组合167 passed（含M6 focused35），Backend full1775 passed/28 deselected/0 FAIL；实际env、原evidence、生产代码及冻结模型身份保持一致。git diff --check PASS。

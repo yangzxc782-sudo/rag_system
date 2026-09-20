@@ -1,0 +1,25 @@
+{
+  "checked_at_utc": "2026-09-20T07:47:50.028757+00:00",
+  "m6_start_head": "f6c1c01200ad859cd7555846a96da4b886333205",
+  "protected_file_count": 200,
+  "changed_protected_files": [],
+  "actual_env_unchanged": true,
+  "production_files_unchanged": true,
+  "golden_unchanged": true,
+  "selection_snapshot_unchanged": true,
+  "original_m5_evidence_unchanged": true,
+  "profile_fingerprint": "3c7efd44de1b2c7fece6b142ec58cc41d88f4dadf5160aef9cf439fcd565b5c7",
+  "live_audit_after_stop": {
+    "corpus_fingerprint": "c4e5ffcc12e119e8e3b36d3750ed80e1a0945cc4dfcb400cd8eb5b21762412c1",
+    "document_count": 8,
+    "chunk_count": 423,
+    "lexical_vector_count": 423,
+    "read_only_transaction_verified": true,
+    "integrity": "PASS",
+    "checked_at_utc": "2026-09-20T07:47:50.025048+00:00"
+  },
+  "production_reranker_enabled": false,
+  "final_run_count": 0,
+  "m5_experiments_rerun": 0,
+  "destructive_operations": 0
+}

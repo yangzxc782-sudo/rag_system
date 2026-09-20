@@ -1,0 +1,20 @@
+{
+  "recorded_at_utc": "2026-09-20T08:35:51.180894+00:00",
+  "stage": "Owner recovery helper regression before real calls",
+  "focused": {
+    "passed": 35,
+    "failed": 0,
+    "new_recovery_contracts": 6
+  },
+  "backend_full": {
+    "passed": 1775,
+    "deselected": 28,
+    "failed": 0,
+    "seconds": 19.356
+  },
+  "gate": "PHASE12_BGE_PROBE_ENABLED=0",
+  "full_command": "python -B -m pytest -q -p no:cacheprovider --basetemp M6-recovery-full-20260920.tmp --junitxml=M6-verification-20260920.tmp/recovery-full.xml -m 'not integration'",
+  "junit_sha256": "d433db6c2971febc1604bd9fa53f762e3441c54dabb0fbc6f7e9e5c1bc4c0320",
+  "production_files_modified": [],
+  "final_run_count": 0
+}
