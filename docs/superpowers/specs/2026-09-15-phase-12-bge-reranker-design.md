@@ -1,6 +1,6 @@
 # Phase 12：BAAI/bge-reranker-v2-m3 设计与实施计划 — Design
 
-> 2026-09-16 M4 更新：M0—M3 已由负责人验收并独立提交，当前 HEAD `97bf603`。新语料审计、token-only audit、评测工具和120道质量题草案完成；全部人工Gold待审，未冻结、未评测。当前 `AWAITING_PROJECT_OWNER_PHASE12_GOLDEN_REVIEW`。最新 Owner A/B 决议见第十三节；此前 Planning/M0/M3 的数据与待审状态保留为历史时点。
+> 当前状态：PHASE12_M5_ACCEPTED；最新Owner frozen profile与收口证据见文末 M5 Owner Closure。前文M0–M5状态是历史记录。
 
 ## 文档状态与边界
 
@@ -853,3 +853,39 @@ Development真实smoke FP16/C8/batch8/1024/5s：41/41成功，load1；quality40+
 Finalization补充TDD6项；M4 focused102、相关回归410+140、Backend full1670 passed /28 deselected /0 FAIL。详细限制与原始数据见[收口报告](../../phase-12-m4-golden-dataset.md)。
 M4 production diff0；独立commit边界 `test: freeze phase 12 reranker evaluation dataset`，提交且clean后才开始已授权M5。Selection/Final尚未运行，未选生产参数、未启用reranker、未push。
 M5维持FP16/BF16 × 1024/2048/4096 × C8/16/32，8192排除；先hardware/SLO再Selection，Final封存。完整候选profile必须Owner复核后才能写默认值。
+
+## M5 现有证据 — 2026-09-16 Owner停止剩余实验
+
+M4已独立提交`dbce60a07f6166c47b5f5a4e9e00ba274178381a`，提交后clean再开始M5。M5状态为**OWNER_STOPPED_PARTIAL / AWAITING_PROJECT_OWNER_CATEGORY_REVIEW**，未提交、未启用、未进入M6。
+
+Owner授权的2048/4096最小validator扩展实际位于`app/retrieval/reranker.py:RerankerConfig`；512保留兼容，8192继续拒绝。示例配置只改注释，C/batch/length/timeout没有写为生产默认。
+
+Selection40题Hybrid8/16/32的ID/顺序/score/rank前缀40/40一致；冻结C32并派生C8/C16，snapshot fingerprint=`f5e7830cf93a1f492e57aef8bf98794dd9f0ad0c1dd418ba1140813ee993f3b7`。Corpus/Golden沿用上节冻结身份，实验结束只读核验仍一致。
+
+Stage A固定54个profile：25 feasible、29 rejected；FP16 12/27，BF16 13/27。0 OOM，12项4096/C32 timeout，5秒deadline未扩大。Stage B现有24份处理记录：22份完整40题×2请求结果、2份实际Selection GPU超限拒绝。Owner要求停止BF16剩余2048/4096实验，调度停止且已启动子进程自然结束；BF16/4096/C8/B1未启动，不能当失败或补造数据。
+
+14个profile总体Gate通过但paraphrase退化，8个C16项Recall8 .9125→.8875而淘汰；暂无无需Owner类别审查即可接受的profile，不启动成本winner宣告。推荐profile=null。HTML5题与long paragraph5题分别报告，Markdown0/null；Selection robustness未执行，Final retrieval/score/metrics均0。
+
+Selection完整记录1760请求，重复score drift0、ranking稳定；跨batch存在1个query排序差异，明确记录。实际BF16/4096/C8/B8 device peak8150.56MiB被拒绝；FP16对应full batch也超6500但初始工具未持久化精确峰值/分数，保留失败而不重跑。合成Stage A通过不能覆盖真实Selection显存失败。
+
+Production仅长度validator一行；没有修改Hybrid/RAG/Context/Citation/Embedding/Graph/OpenSearch/DB/API。Backend full1725 passed、28 deselected、0 FAIL。设备采样不能保证捕获瞬时峰值；实验只持有一个Embedding实例，不外推生产多请求内存。
+
+完整指标、Gate、限制、未执行项与原始证据索引见[M5报告](../../phase-12-m5-parameter-selection.md)、[硬件](../../phase-12-m5-hardware-screen.md)、[质量切片](../../phase-12-m5-quality-results.md)。不修改frozen Gold、质量Gate、性能SLO，不把部分矩阵标记为M5 acceptance完成。
+
+## M5 Owner Closure — 2026-09-20
+
+**PHASE12_M5_ACCEPTED**。本节覆盖历史的 OWNER_STOPPED_PARTIAL / AWAITING_PROJECT_OWNER_CATEGORY_REVIEW；原始实验记录、自动Gate及失败证据完整保留，未重新计算Selection质量或执行模型实验。
+
+Owner-selected frozen profile：`bf16-L1024-C32-B8`。model=`BAAI/bge-reranker-v2-m3`，revision=`953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e`，provider=`local_transformers`，runtime=Transformers AutoTokenizer + AutoModelForSequenceClassification，local_files_only=true、trust_remote_code=false，dtype=BF16、device=CUDA、max_length=1024、C=32、batch=8、timeout=5.0s。5秒是fail-open safety deadline，不是正常请求延迟SLO。
+
+selection policy = **owner quality-first decision**；不是自动成本排序winner。paraphrase category degradation = **accepted known Phase 12 v1 risk**，必须持续披露；不修改Gold、query、qrel、质量Gate或性能SLO。`bf16-L4096-C8-B1=OWNER_STOPPED_NOT_RUN`，不补跑任何失败、缺失或停止profile，不重跑Selection，不刷新snapshot。Final run count=0，production RERANKER_ENABLED=false，actual .env保持原样。
+
+冻结记录：`backend/tests/fixtures/phase12/selected_profile.json`；test-only helper：`backend/tests/phase12_local/selected_profile.py`。复用既有`corpus_audit.fingerprint()`的sorted-key紧凑UTF-8 JSON/SHA-256格式，identity绑定全部运行参数、runtime/provider、model/revision和M0六个模型/tokenizer文件大小及SHA。确定性生成的profile fingerprint：
+
+`3c7efd44de1b2c7fece6b142ec58cc41d88f4dadf5160aef9cf439fcd565b5c7`
+
+原始结果索引/decision仍保留当时自动Gate状态，不覆盖或改写原始证据；本Owner决议与selected_profile为后续M6/M7依据。现有Settings默认值不据此自动启用；integration harness显式构造完整profile并验证指纹。
+
+M5 closure补充15项漂移/旧env隔离测试：15 RED（helper不存在）→GREEN。M5/config/Provider/runtime/RAG及M4 integrity组合321 passed。完整安全回归结果见下方收口验证记录。只提交M5与上下文交接文档，不含M6测试；独立commit后clean才进入M6。M7 Gate与SLO不变。
+
+收口验证：Backend full1740 passed/28 deselected/0 FAIL；actual .env、Golden、Selection、原始82份artifact及生产代码边界SHA不变，git diff --check通过。详细结果见M5报告。M6尚未开始。

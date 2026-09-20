@@ -61,11 +61,18 @@ def test_settings_reject_invalid_numeric_values(key, value):
 
 
 @pytest.mark.parametrize("dtype", ["fp16", "bf16"])
-@pytest.mark.parametrize("length", [512, 1024])
+@pytest.mark.parametrize("length", [512, 1024, 2048, 4096])
 def test_explicit_supported_dtype_and_length(dtype, length):
     value = config(reranker_dtype=dtype, reranker_max_length=length)
     assert value.dtype == dtype
     assert value.max_length == length
+
+
+@pytest.mark.parametrize("length", [1, 511, 513, 1536, 2049, 8192])
+def test_unapproved_max_lengths_rejected(length):
+    domain = import_module("app.retrieval.reranker")
+    with pytest.raises(domain.RerankError, match="configuration_invalid"):
+        config(reranker_max_length=length)
 
 
 def test_deprecated_top_k_does_not_change_runtime_configuration():

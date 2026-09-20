@@ -199,7 +199,7 @@ def aggregate(rows):
                              for fmt in ('markdown','html')}}
 
 
-def evaluate(manifest,corpus,snapshots,variants,*,split,phase='M4',owner_authorization=None):
+def evaluate(manifest,corpus,snapshots,variants,*,split,phase='M4',owner_authorization=None,quality_only=False):
     if split=='final':
         auth=owner_authorization or {}
         if (phase!='M7' or auth.get('phase')!='M7' or not auth.get('owner_reference')
@@ -210,8 +210,11 @@ def evaluate(manifest,corpus,snapshots,variants,*,split,phase='M4',owner_authori
         raise ValueError('Selection is reserved for M5')
     if split not in SPLITS:
         raise ValueError('invalid split')
+    if quality_only and (split!='selection' or phase!='M5'):
+        raise ValueError('quality_only is reserved for M5 Selection; robustness remains separate')
     validate_manifest(manifest,corpus,require_review=True)
-    queries={q['query_id']:q for q in manifest['queries'] if q['split']==split}
+    queries={q['query_id']:q for q in manifest['queries'] if q['split']==split
+             and (not quality_only or q['category']!='robustness')}
     pairs=[(s['query_id'],s['candidate_limit']) for s in snapshots]
     if len(set(pairs))!=len(pairs) or {s['query_id'] for s in snapshots}!=set(queries):
         raise ValueError('snapshots must cover exactly the requested split')

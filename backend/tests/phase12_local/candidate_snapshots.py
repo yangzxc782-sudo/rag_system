@@ -10,6 +10,11 @@ from tests.phase12_local.evaluation import baseline_ranking, unique
 def probe_prefix(queries, retrieve, corpus, run_id):
     if not queries or any(q['split'] != 'development' for q in queries):
         raise ValueError('M4 prefix audit is Development only')
+    return _capture_prefix(queries, retrieve, corpus, run_id)
+
+
+def _capture_prefix(queries, retrieve, corpus, run_id):
+    """Shared capture mechanics; phase-specific public callers own split gates."""
     unique(queries, 'query_id', 'query ID')
     chunks = {c['chunk_id']: c for c in corpus['chunks']}
     snapshots = []

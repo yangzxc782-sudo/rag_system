@@ -1,0 +1,578 @@
+{
+  "status": "AWAITING_PROJECT_OWNER_CATEGORY_REVIEW",
+  "category_review_profile_ids": [
+    "bf16-L1024-C32-B16",
+    "bf16-L1024-C32-B32",
+    "bf16-L1024-C32-B8",
+    "bf16-L1024-C8-B8",
+    "bf16-L2048-C8-B8",
+    "bf16-L4096-C8-B2",
+    "bf16-L4096-C8-B4",
+    "fp16-L1024-C32-B16",
+    "fp16-L1024-C32-B32",
+    "fp16-L1024-C32-B8",
+    "fp16-L1024-C8-B8",
+    "fp16-L2048-C8-B8",
+    "fp16-L4096-C8-B1",
+    "fp16-L4096-C8-B4"
+  ],
+  "gates": {
+    "bf16-L1024-C16-B16": {
+      "status": "QUALITY_REJECTED",
+      "primary": {
+        "ndcg_at_8": true,
+        "mrr_at_8": true
+      },
+      "non_regression": {
+        "hit_rate_at_1": true,
+        "hit_rate_at_3": true,
+        "recall_at_8": false
+      },
+      "category_review_required": {
+        "paraphrase": [
+          "ndcg_at_8",
+          "mrr_at_8",
+          "hit_rate_at_1",
+          "hit_rate_at_3",
+          "recall_at_8"
+        ]
+      },
+      "category_status": "CATEGORY_REVIEW_REQUIRED"
+    },
+    "bf16-L1024-C16-B8": {
+      "status": "QUALITY_REJECTED",
+      "primary": {
+        "ndcg_at_8": true,
+        "mrr_at_8": true
+      },
+      "non_regression": {
+        "hit_rate_at_1": true,
+        "hit_rate_at_3": true,
+        "recall_at_8": false
+      },
+      "category_review_required": {
+        "paraphrase": [
+          "ndcg_at_8",
+          "mrr_at_8",
+          "hit_rate_at_1",
+          "hit_rate_at_3",
+          "recall_at_8"
+        ]
+      },
+      "category_status": "CATEGORY_REVIEW_REQUIRED"
+    },
+    "bf16-L1024-C32-B16": {
+      "status": "QUALITY_PASS_WITH_CATEGORY_REVIEW",
+      "primary": {
+        "ndcg_at_8": true,
+        "mrr_at_8": true
+      },
+      "non_regression": {
+        "hit_rate_at_1": true,
+        "hit_rate_at_3": true,
+        "recall_at_8": true
+      },
+      "category_review_required": {
+        "paraphrase": [
+          "ndcg_at_8",
+          "mrr_at_8",
+          "hit_rate_at_1",
+          "hit_rate_at_3",
+          "recall_at_8"
+        ]
+      },
+      "category_status": "CATEGORY_REVIEW_REQUIRED"
+    },
+    "bf16-L1024-C32-B32": {
+      "status": "QUALITY_PASS_WITH_CATEGORY_REVIEW",
+      "primary": {
+        "ndcg_at_8": true,
+        "mrr_at_8": true
+      },
+      "non_regression": {
+        "hit_rate_at_1": true,
+        "hit_rate_at_3": true,
+        "recall_at_8": true
+      },
+      "category_review_required": {
+        "paraphrase": [
+          "ndcg_at_8",
+          "mrr_at_8",
+          "hit_rate_at_1",
+          "hit_rate_at_3",
+          "recall_at_8"
+        ]
+      },
+      "category_status": "CATEGORY_REVIEW_REQUIRED"
+    },
+    "bf16-L1024-C32-B8": {
+      "status": "QUALITY_PASS_WITH_CATEGORY_REVIEW",
+      "primary": {
+        "ndcg_at_8": true,
+        "mrr_at_8": true
+      },
+      "non_regression": {
+        "hit_rate_at_1": true,
+        "hit_rate_at_3": true,
+        "recall_at_8": true
+      },
+      "category_review_required": {
+        "paraphrase": [
+          "ndcg_at_8",
+          "mrr_at_8",
+          "hit_rate_at_1",
+          "hit_rate_at_3",
+          "recall_at_8"
+        ]
+      },
+      "category_status": "CATEGORY_REVIEW_REQUIRED"
+    },
+    "bf16-L1024-C8-B8": {
+      "status": "QUALITY_PASS_WITH_CATEGORY_REVIEW",
+      "primary": {
+        "ndcg_at_8": true,
+        "mrr_at_8": true
+      },
+      "non_regression": {
+        "hit_rate_at_1": true,
+        "hit_rate_at_3": true,
+        "recall_at_8": true
+      },
+      "category_review_required": {
+        "paraphrase": [
+          "ndcg_at_8",
+          "mrr_at_8",
+          "hit_rate_at_1",
+          "hit_rate_at_3"
+        ]
+      },
+      "category_status": "CATEGORY_REVIEW_REQUIRED"
+    },
+    "bf16-L2048-C16-B16": {
+      "status": "QUALITY_REJECTED",
+      "primary": {
+        "ndcg_at_8": true,
+        "mrr_at_8": true
+      },
+      "non_regression": {
+        "hit_rate_at_1": true,
+        "hit_rate_at_3": true,
+        "recall_at_8": false
+      },
+      "category_review_required": {
+        "paraphrase": [
+          "ndcg_at_8",
+          "mrr_at_8",
+          "hit_rate_at_1",
+          "hit_rate_at_3",
+          "recall_at_8"
+        ]
+      },
+      "category_status": "CATEGORY_REVIEW_REQUIRED"
+    },
+    "bf16-L2048-C16-B8": {
+      "status": "QUALITY_REJECTED",
+      "primary": {
+        "ndcg_at_8": true,
+        "mrr_at_8": true
+      },
+      "non_regression": {
+        "hit_rate_at_1": true,
+        "hit_rate_at_3": true,
+        "recall_at_8": false
+      },
+      "category_review_required": {
+        "paraphrase": [
+          "ndcg_at_8",
+          "mrr_at_8",
+          "hit_rate_at_1",
+          "hit_rate_at_3",
+          "recall_at_8"
+        ]
+      },
+      "category_status": "CATEGORY_REVIEW_REQUIRED"
+    },
+    "bf16-L2048-C8-B8": {
+      "status": "QUALITY_PASS_WITH_CATEGORY_REVIEW",
+      "primary": {
+        "ndcg_at_8": true,
+        "mrr_at_8": true
+      },
+      "non_regression": {
+        "hit_rate_at_1": true,
+        "hit_rate_at_3": true,
+        "recall_at_8": true
+      },
+      "category_review_required": {
+        "paraphrase": [
+          "ndcg_at_8",
+          "mrr_at_8",
+          "hit_rate_at_1",
+          "hit_rate_at_3"
+        ]
+      },
+      "category_status": "CATEGORY_REVIEW_REQUIRED"
+    },
+    "bf16-L4096-C8-B2": {
+      "status": "QUALITY_PASS_WITH_CATEGORY_REVIEW",
+      "primary": {
+        "ndcg_at_8": true,
+        "mrr_at_8": true
+      },
+      "non_regression": {
+        "hit_rate_at_1": true,
+        "hit_rate_at_3": true,
+        "recall_at_8": true
+      },
+      "category_review_required": {
+        "paraphrase": [
+          "ndcg_at_8",
+          "mrr_at_8",
+          "hit_rate_at_1",
+          "hit_rate_at_3"
+        ]
+      },
+      "category_status": "CATEGORY_REVIEW_REQUIRED"
+    },
+    "bf16-L4096-C8-B4": {
+      "status": "QUALITY_PASS_WITH_CATEGORY_REVIEW",
+      "primary": {
+        "ndcg_at_8": true,
+        "mrr_at_8": true
+      },
+      "non_regression": {
+        "hit_rate_at_1": true,
+        "hit_rate_at_3": true,
+        "recall_at_8": true
+      },
+      "category_review_required": {
+        "paraphrase": [
+          "ndcg_at_8",
+          "mrr_at_8",
+          "hit_rate_at_1",
+          "hit_rate_at_3"
+        ]
+      },
+      "category_status": "CATEGORY_REVIEW_REQUIRED"
+    },
+    "bf16-L4096-C8-B8": {
+      "status": "SELECTION_RUNTIME_REJECTED",
+      "category_review_required": [],
+      "reason": "gpu_peak_rejected"
+    },
+    "fp16-L1024-C16-B16": {
+      "status": "QUALITY_REJECTED",
+      "primary": {
+        "ndcg_at_8": true,
+        "mrr_at_8": true
+      },
+      "non_regression": {
+        "hit_rate_at_1": true,
+        "hit_rate_at_3": true,
+        "recall_at_8": false
+      },
+      "category_review_required": {
+        "paraphrase": [
+          "ndcg_at_8",
+          "mrr_at_8",
+          "hit_rate_at_1",
+          "hit_rate_at_3",
+          "recall_at_8"
+        ]
+      },
+      "category_status": "CATEGORY_REVIEW_REQUIRED"
+    },
+    "fp16-L1024-C16-B8": {
+      "status": "QUALITY_REJECTED",
+      "primary": {
+        "ndcg_at_8": true,
+        "mrr_at_8": true
+      },
+      "non_regression": {
+        "hit_rate_at_1": true,
+        "hit_rate_at_3": true,
+        "recall_at_8": false
+      },
+      "category_review_required": {
+        "paraphrase": [
+          "ndcg_at_8",
+          "mrr_at_8",
+          "hit_rate_at_1",
+          "hit_rate_at_3",
+          "recall_at_8"
+        ]
+      },
+      "category_status": "CATEGORY_REVIEW_REQUIRED"
+    },
+    "fp16-L1024-C32-B16": {
+      "status": "QUALITY_PASS_WITH_CATEGORY_REVIEW",
+      "primary": {
+        "ndcg_at_8": true,
+        "mrr_at_8": true
+      },
+      "non_regression": {
+        "hit_rate_at_1": true,
+        "hit_rate_at_3": true,
+        "recall_at_8": true
+      },
+      "category_review_required": {
+        "paraphrase": [
+          "ndcg_at_8",
+          "mrr_at_8",
+          "hit_rate_at_1",
+          "hit_rate_at_3",
+          "recall_at_8"
+        ]
+      },
+      "category_status": "CATEGORY_REVIEW_REQUIRED"
+    },
+    "fp16-L1024-C32-B32": {
+      "status": "QUALITY_PASS_WITH_CATEGORY_REVIEW",
+      "primary": {
+        "ndcg_at_8": true,
+        "mrr_at_8": true
+      },
+      "non_regression": {
+        "hit_rate_at_1": true,
+        "hit_rate_at_3": true,
+        "recall_at_8": true
+      },
+      "category_review_required": {
+        "paraphrase": [
+          "ndcg_at_8",
+          "mrr_at_8",
+          "hit_rate_at_1",
+          "hit_rate_at_3",
+          "recall_at_8"
+        ]
+      },
+      "category_status": "CATEGORY_REVIEW_REQUIRED"
+    },
+    "fp16-L1024-C32-B8": {
+      "status": "QUALITY_PASS_WITH_CATEGORY_REVIEW",
+      "primary": {
+        "ndcg_at_8": true,
+        "mrr_at_8": true
+      },
+      "non_regression": {
+        "hit_rate_at_1": true,
+        "hit_rate_at_3": true,
+        "recall_at_8": true
+      },
+      "category_review_required": {
+        "paraphrase": [
+          "ndcg_at_8",
+          "mrr_at_8",
+          "hit_rate_at_1",
+          "hit_rate_at_3",
+          "recall_at_8"
+        ]
+      },
+      "category_status": "CATEGORY_REVIEW_REQUIRED"
+    },
+    "fp16-L1024-C8-B8": {
+      "status": "QUALITY_PASS_WITH_CATEGORY_REVIEW",
+      "primary": {
+        "ndcg_at_8": true,
+        "mrr_at_8": true
+      },
+      "non_regression": {
+        "hit_rate_at_1": true,
+        "hit_rate_at_3": true,
+        "recall_at_8": true
+      },
+      "category_review_required": {
+        "paraphrase": [
+          "ndcg_at_8",
+          "mrr_at_8",
+          "hit_rate_at_1",
+          "hit_rate_at_3"
+        ]
+      },
+      "category_status": "CATEGORY_REVIEW_REQUIRED"
+    },
+    "fp16-L2048-C16-B16": {
+      "status": "QUALITY_REJECTED",
+      "primary": {
+        "ndcg_at_8": true,
+        "mrr_at_8": true
+      },
+      "non_regression": {
+        "hit_rate_at_1": true,
+        "hit_rate_at_3": true,
+        "recall_at_8": false
+      },
+      "category_review_required": {
+        "paraphrase": [
+          "ndcg_at_8",
+          "mrr_at_8",
+          "hit_rate_at_1",
+          "hit_rate_at_3",
+          "recall_at_8"
+        ]
+      },
+      "category_status": "CATEGORY_REVIEW_REQUIRED"
+    },
+    "fp16-L2048-C16-B8": {
+      "status": "QUALITY_REJECTED",
+      "primary": {
+        "ndcg_at_8": true,
+        "mrr_at_8": true
+      },
+      "non_regression": {
+        "hit_rate_at_1": true,
+        "hit_rate_at_3": true,
+        "recall_at_8": false
+      },
+      "category_review_required": {
+        "paraphrase": [
+          "ndcg_at_8",
+          "mrr_at_8",
+          "hit_rate_at_1",
+          "hit_rate_at_3",
+          "recall_at_8"
+        ]
+      },
+      "category_status": "CATEGORY_REVIEW_REQUIRED"
+    },
+    "fp16-L2048-C8-B8": {
+      "status": "QUALITY_PASS_WITH_CATEGORY_REVIEW",
+      "primary": {
+        "ndcg_at_8": true,
+        "mrr_at_8": true
+      },
+      "non_regression": {
+        "hit_rate_at_1": true,
+        "hit_rate_at_3": true,
+        "recall_at_8": true
+      },
+      "category_review_required": {
+        "paraphrase": [
+          "ndcg_at_8",
+          "mrr_at_8",
+          "hit_rate_at_1",
+          "hit_rate_at_3"
+        ]
+      },
+      "category_status": "CATEGORY_REVIEW_REQUIRED"
+    },
+    "fp16-L4096-C8-B1": {
+      "status": "QUALITY_PASS_WITH_CATEGORY_REVIEW",
+      "primary": {
+        "ndcg_at_8": true,
+        "mrr_at_8": true
+      },
+      "non_regression": {
+        "hit_rate_at_1": true,
+        "hit_rate_at_3": true,
+        "recall_at_8": true
+      },
+      "category_review_required": {
+        "paraphrase": [
+          "ndcg_at_8",
+          "mrr_at_8",
+          "hit_rate_at_1",
+          "hit_rate_at_3"
+        ]
+      },
+      "category_status": "CATEGORY_REVIEW_REQUIRED"
+    },
+    "fp16-L4096-C8-B4": {
+      "status": "QUALITY_PASS_WITH_CATEGORY_REVIEW",
+      "primary": {
+        "ndcg_at_8": true,
+        "mrr_at_8": true
+      },
+      "non_regression": {
+        "hit_rate_at_1": true,
+        "hit_rate_at_3": true,
+        "recall_at_8": true
+      },
+      "category_review_required": {
+        "paraphrase": [
+          "ndcg_at_8",
+          "mrr_at_8",
+          "hit_rate_at_1",
+          "hit_rate_at_3"
+        ]
+      },
+      "category_status": "CATEGORY_REVIEW_REQUIRED"
+    },
+    "fp16-L4096-C8-B8": {
+      "status": "SELECTION_RUNTIME_REJECTED",
+      "category_review_required": [],
+      "reason": "gpu_peak_rejected"
+    }
+  },
+  "execution_status": "OWNER_STOPPED_PARTIAL",
+  "not_run_by_owner": [
+    "bf16-L4096-C8-B1"
+  ],
+  "matrix_fingerprint": "eaccd156aade33d1dadc7a8c1c6e7db167e336c4ba91afeaaadf64c2c7ef7b73",
+  "feasibility_fingerprint": "196a02dd33771d7d695a02eeabafe696841497c9c59933fac46a8e1864f43742",
+  "final_run_count": 0,
+  "batch_comparison": [
+    {
+      "reference_profile_id": "bf16-L1024-C16-B16",
+      "profile_id": "bf16-L1024-C16-B8",
+      "changed_query_ids": [],
+      "max_score_drift": 0.0
+    },
+    {
+      "reference_profile_id": "bf16-L1024-C32-B16",
+      "profile_id": "bf16-L1024-C32-B32",
+      "changed_query_ids": [],
+      "max_score_drift": 0.0
+    },
+    {
+      "reference_profile_id": "bf16-L1024-C32-B16",
+      "profile_id": "bf16-L1024-C32-B8",
+      "changed_query_ids": [],
+      "max_score_drift": 0.0
+    },
+    {
+      "reference_profile_id": "bf16-L2048-C16-B16",
+      "profile_id": "bf16-L2048-C16-B8",
+      "changed_query_ids": [],
+      "max_score_drift": 0.0
+    },
+    {
+      "reference_profile_id": "bf16-L4096-C8-B2",
+      "profile_id": "bf16-L4096-C8-B4",
+      "changed_query_ids": [],
+      "max_score_drift": 0.0
+    },
+    {
+      "reference_profile_id": "fp16-L1024-C16-B16",
+      "profile_id": "fp16-L1024-C16-B8",
+      "changed_query_ids": [],
+      "max_score_drift": 0.005859375
+    },
+    {
+      "reference_profile_id": "fp16-L1024-C32-B16",
+      "profile_id": "fp16-L1024-C32-B32",
+      "changed_query_ids": [],
+      "max_score_drift": 0.00390625
+    },
+    {
+      "reference_profile_id": "fp16-L1024-C32-B16",
+      "profile_id": "fp16-L1024-C32-B8",
+      "changed_query_ids": [
+        "p12-sel-025"
+      ],
+      "max_score_drift": 0.0078125
+    },
+    {
+      "reference_profile_id": "fp16-L2048-C16-B16",
+      "profile_id": "fp16-L2048-C16-B8",
+      "changed_query_ids": [],
+      "max_score_drift": 0.005859375
+    },
+    {
+      "reference_profile_id": "fp16-L4096-C8-B1",
+      "profile_id": "fp16-L4096-C8-B4",
+      "changed_query_ids": [],
+      "max_score_drift": 0.015625
+    }
+  ]
+}

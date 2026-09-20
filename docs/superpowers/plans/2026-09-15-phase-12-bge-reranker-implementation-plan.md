@@ -1,6 +1,6 @@
 # Phase 12：BAAI/bge-reranker-v2-m3 设计与实施计划 — Implementation Plan
 
-> 2026-09-16 M4更新：M0—M3已由负责人验收并独立提交；当前HEAD `97bf603`。新corpus readiness与token-only audit、model-free harness通过，120道质量题及3道robustness均为待审草案。当前 `AWAITING_PROJECT_OWNER_PHASE12_GOLDEN_REVIEW`，未冻结Gold、未完成M4 acceptance、未进入M5。最新Owner A/B决议见第八节；前文历史证据及M0—M7各12项结构保留。
+> 当前状态：PHASE12_M5_ACCEPTED；最新Owner frozen profile与收口证据见文末 M5 Owner Closure。前文M0–M5状态是历史记录。
 
 ## 一、Planning Baseline 与授权边界
 
@@ -310,14 +310,14 @@ M0 完整报告必须包含：
 | 2. Non-goals | 不访问 Final held-out；不修改 SLO；不默认启用 |
 | 3. Read-before-code | canonical docs 中的 M0 负责人 SLO 决议、M3 smoke、M4 manifest 与质量 Gate |
 | 4. Files expected to create | `D:\rag_system\backend\tests\phase12_local\parameter_selection.py`；`D:\rag_system\backend\tests\test_reranker_parameter_selection.py`；`D:\rag_system\docs\phase-12-m5-parameter-selection.md` |
-| 5. Files expected to modify | `D:\rag_system\backend\app\core\config.py` 与两份现有 `.env.example`，仅写入批准参数和说明；enabled 仍为 false |
+| 5. Files expected to modify | Owner已授权必要validator扩展；实际为 `backend/app/retrieval/reranker.py:RerankerConfig` 一处允许2048/4096，保留512/1024；两份 `.env.example` 只更新允许值注释，不写最终默认；enabled仍false |
 | 6. Interfaces | 输入冻结 SLO、validation manifest、候选参数矩阵；输出每项 Gate、类别审查状态、成本排序及选中 profile 指纹 |
 | 7. RED tests | 任一主指标不提升则淘汰；任一非退化指标下降则淘汰；SLO 未冻结拒绝选参；final 输入拒绝；类别风险不可隐藏；无可行组合保持关闭 |
-| 8. Minimal implementation steps | 使用已冻结SLO；dtype FP16/BF16 × max_length1024/2048/4096六组合先过hardware/SLO feasibility；C8/16/32；2048/4096的当前生产长度校验扩展须先取得对应授权并TDD验证；同池评测与table格式/long paragraph切片；按Gate和成本规则选择；Owner批准完整参数包。FP32仅数值参考，8192排除Phase12 v1 |
+| 8. Minimal implementation steps | Frozen Gold/实时语料核验→Selection40题8/16/32前缀并冻结snapshot→固定54个FP16/BF16 × 1024/2048/4096 × C8/16/32显式batch/microbatch实验→Stage A共存hardware/SLO→冻结feasible list→Stage B同池质量→类别审查→原成本规则。2048/4096 validator经Owner授权TDD扩展；FP32/8192不进入生产候选 |
 | 9. Regression suite | 参数选择/metrics 测试、Provider/runtime、RAG；选中参数的真实本地复测 |
-| 10. Acceptance criteria | 质量、类别审查、性能均通过；C 确为所选 profile 的已验证容量；完整参数和版本冻结；没有访问 final |
-| 11. Scope stop conditions | 无组合通过、SLO 未批准、需要扩大 C 到未验证值、需要量化或修改 Embedding |
-| 12. Git commit boundary | 单独提交选参工具、报告、批准默认参数；不包含启用动作 |
+| 10. Acceptance criteria | 全部Stage A与feasible profile Selection证据完整、Gate不变、Final run=0；有合格者按原成本顺序提出推荐，类别退化必须Owner review；无合格者报告PHASE12_M5_NO_ACCEPTABLE_PROFILE，不宣称自动失败 |
+| 11. Scope stop conditions | Final泄漏、Gold/corpus drift、CUDA不健康、需扩大固定矩阵或修改Embedding/Hybrid/Graph/API；不提高SLO、timeout或修改Gold救结果 |
+| 12. Git commit boundary | M4已独立commit且clean才开始M5；本轮M5不得commit/push、不得启用或写最终default，等Owner Review |
 
 ## M6 — Real RAG / Citation / Graph / Deletion Regression
 
@@ -518,3 +518,35 @@ Development真实smoke FP16/C8/batch8/1024/5s：41/41成功，load1；quality40+
 Finalization补充TDD6项；M4 focused102、相关回归410+140、Backend full1670 passed /28 deselected /0 FAIL。详细限制与原始数据见[收口报告](../../phase-12-m4-golden-dataset.md)。
 M4 production diff0；独立commit边界 `test: freeze phase 12 reranker evaluation dataset`，提交且clean后才开始已授权M5。Selection/Final尚未运行，未选生产参数、未启用reranker、未push。
 M5维持FP16/BF16 × 1024/2048/4096 × C8/16/32，8192排除；先hardware/SLO再Selection，Final封存。完整候选profile必须Owner复核后才能写默认值。
+
+## M5 Execution Record — Owner停止后汇总（2026-09-16）
+
+M4独立commit=`dbce60a07f6166c47b5f5a4e9e00ba274178381a`，clean Gate通过后开始M5。仅按Owner第14节扩展实际`RerankerConfig`长度validator与tests/env注释；512兼容、8192拒绝，未设生产默认。
+
+Stage A已冻结54项，25可行（FP16 12、BF16 13）、29拒绝；C8/16/32与1024/2048/4096均按已声明矩阵测试，无FP32生产、量化或自动降参。全部硬件证据先于Selection评分固定。
+
+Selection prefix40/40通过，快照`f5e7830cf93a1f492e57aef8bf98794dd9f0ad0c1dd418ba1140813ee993f3b7`不刷新。已有22份完整质量结果、2份实际GPU拒绝；Owner要求不再执行剩余BF16 2048/4096。调度已停止，最后在途子进程自然结束；BF16/4096/C8/B1未启动，不作淘汰结论。
+
+14项QUALITY_PASS_WITH_CATEGORY_REVIEW，8项QUALITY_REJECTED（Recall下降），2项SELECTION_RUNTIME_REJECTED。无自动推荐，成本选择尚无符合全部边界的输入。状态**OWNER_STOPPED_PARTIAL / AWAITING_PROJECT_OWNER_CATEGORY_REVIEW**，不宣称M5完整acceptance通过，不进入M6。
+
+Final run count0，Gold/Corpus保持M4冻结hash，最后只读核验PASS。M5 focused84项通过后新增3项失败记录/安全续跑RED→GREEN；相关Selection focused31，M4回归102，M1–M3/检索/RAG/生命周期组合518，最终full1725 passed/28 deselected/0 FAIL。普通pytest没有真实BGE调用。
+
+真实样本、八类别/table/long paragraph、模型版本、worktree hash、失败证据限制和未执行项见[M5收口报告](../../phase-12-m5-parameter-selection.md)。保留Owner待决事项：类别退化是否接受、是否继续未执行项；未经新指令不得继续实验、冻结生产profile、启用reranker或提交M5。
+
+## M5 Owner Closure — 2026-09-20
+
+**PHASE12_M5_ACCEPTED**。本节覆盖历史的 OWNER_STOPPED_PARTIAL / AWAITING_PROJECT_OWNER_CATEGORY_REVIEW；原始实验记录、自动Gate及失败证据完整保留，未重新计算Selection质量或执行模型实验。
+
+Owner-selected frozen profile：`bf16-L1024-C32-B8`。model=`BAAI/bge-reranker-v2-m3`，revision=`953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e`，provider=`local_transformers`，runtime=Transformers AutoTokenizer + AutoModelForSequenceClassification，local_files_only=true、trust_remote_code=false，dtype=BF16、device=CUDA、max_length=1024、C=32、batch=8、timeout=5.0s。5秒是fail-open safety deadline，不是正常请求延迟SLO。
+
+selection policy = **owner quality-first decision**；不是自动成本排序winner。paraphrase category degradation = **accepted known Phase 12 v1 risk**，必须持续披露；不修改Gold、query、qrel、质量Gate或性能SLO。`bf16-L4096-C8-B1=OWNER_STOPPED_NOT_RUN`，不补跑任何失败、缺失或停止profile，不重跑Selection，不刷新snapshot。Final run count=0，production RERANKER_ENABLED=false，actual .env保持原样。
+
+冻结记录：`backend/tests/fixtures/phase12/selected_profile.json`；test-only helper：`backend/tests/phase12_local/selected_profile.py`。复用既有`corpus_audit.fingerprint()`的sorted-key紧凑UTF-8 JSON/SHA-256格式，identity绑定全部运行参数、runtime/provider、model/revision和M0六个模型/tokenizer文件大小及SHA。确定性生成的profile fingerprint：
+
+`3c7efd44de1b2c7fece6b142ec58cc41d88f4dadf5160aef9cf439fcd565b5c7`
+
+原始结果索引/decision仍保留当时自动Gate状态，不覆盖或改写原始证据；本Owner决议与selected_profile为后续M6/M7依据。现有Settings默认值不据此自动启用；integration harness显式构造完整profile并验证指纹。
+
+M5 closure补充15项漂移/旧env隔离测试：15 RED（helper不存在）→GREEN。M5/config/Provider/runtime/RAG及M4 integrity组合321 passed。完整安全回归结果见下方收口验证记录。只提交M5与上下文交接文档，不含M6测试；独立commit后clean才进入M6。M7 Gate与SLO不变。
+
+收口验证：Backend full1740 passed/28 deselected/0 FAIL；actual .env、Golden、Selection、原始82份artifact及生产代码边界SHA不变，git diff --check通过。详细结果见M5报告。M6尚未开始。

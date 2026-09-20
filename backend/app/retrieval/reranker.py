@@ -83,7 +83,7 @@ class RerankerConfig:
             or not isinstance(self.model_path, str) or not self.model_path.strip()
             or self.device != "cuda" or self.dtype not in ("fp16", "bf16")
             or any(type(value) is not int or value <= 0 for value in values)
-            or self.max_length not in (512, 1024)
+            or self.max_length not in (512, 1024, 2048, 4096)
             or type(self.timeout_seconds) not in (int, float)
             or not math.isfinite(self.timeout_seconds) or self.timeout_seconds <= 0
         ):
