@@ -16,7 +16,7 @@
 - 第六阶段不修改 weighted RRF 融合规则。
 - 第六阶段不修改 OpenSearch 索引结构。
 - 第六阶段不修改 `POST /api/v1/search` 返回结构。
-- 第四阶段调试接口 `POST /api/v1/search/vector` 仍保留。
+- 旧 `POST /api/v1/search/vector` 已于 2026-09-23 单独授权退役，调用返回 404；RAG 仍复用 Hybrid Search，现有 RRF、可选 BGE reranker 和 context builder 链路不变。
 
 第六阶段新增的问答链路为：
 
@@ -130,7 +130,7 @@ question
 - 不重新实现 weighted RRF。
 - 不修改 OpenSearch index schema。
 - 不修改 `POST /api/v1/search`。
-- 不删除 `POST /api/v1/search/vector`。
+- 保留 Hybrid 的 OpenSearch 向量召回；旧纯向量接口的阶段保留要求已被退役决定替代。
 - 不写 `retrieval_logs`。
 
 no-context 规则：
@@ -397,7 +397,7 @@ POST /api/v1/search
 
 - 返回混合检索结果。
 - `items` 包含 `hybrid_score`、`retrieval_source`、`matched_keywords`。
-- `/api/v1/search/vector` 仍保留。
+- 旧 `/api/v1/search/vector` 不在 OpenAPI 中，调用返回 404。
 
 ### 12.11 第六阶段 RAG API 验收
 
@@ -447,4 +447,4 @@ POST /api/v1/rag/ask
 - 未确认引入 LangGraph
 - 未确认接入 MinerU
 - 未确认正式接入 reranker
-- 未确认删除 `/api/v1/search/vector`
+- 未确认删除其他搜索接口（旧纯向量接口已单独授权退役）

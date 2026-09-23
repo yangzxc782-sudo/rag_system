@@ -4,6 +4,8 @@ from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
 from app.api.v1 import search as search_api
 from app.core.errors import (
@@ -439,8 +441,39 @@ def test_api_post_search_unavailable_returns_503(monkeypatch: pytest.MonkeyPatch
     assert response.status_code == 503
 
 
-def test_existing_vector_and_index_api_endpoints_remain() -> None:
-    assert hasattr(search_api, "vector_search_endpoint")
-    assert hasattr(search_api, "create_search_index_endpoint")
-    assert hasattr(search_api, "rebuild_search_index_endpoint")
-    assert hasattr(search_api, "search_index_status_endpoint")
+def test_search_routes_keep_hybrid_and_index_but_retire_vector(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.api.v1.router import api_router
+
+    app = FastAPI()
+    app.include_router(api_router, prefix="/api/v1")
+    fake_db = object()
+    app.dependency_overrides[search_api.get_db] = lambda: fake_db
+    calls = []
+
+    def fake_hybrid_search(db, *, query, limit, document_id):
+        calls.append((db, query, limit, document_id))
+        return HybridSearchResult(query=query, limit=limit, total=0, items=[])
+
+    monkeypatch.setattr(search_api.hybrid_search_service, "hybrid_search_chunks", fake_hybrid_search)
+    openapi = app.openapi()
+    paths = openapi["paths"]
+    assert "post" in paths["/api/v1/search"]
+    assert "post" in paths["/api/v1/search/index/create"]
+    assert "post" in paths["/api/v1/search/index/rebuild"]
+    assert "get" in paths["/api/v1/search/index/status"]
+    assert "/api/v1/search/vector" not in paths
+    assert not any("VectorSearch" in name for name in openapi["components"]["schemas"])
+
+    with TestClient(app) as client:
+        retired_response = client.post("/api/v1/search/vector", json={"query": "冒口"})
+        assert retired_response.status_code == 404
+        assert calls == []
+
+        response = client.post("/api/v1/search", json={"query": "冒口"})
+        assert response.status_code == 200
+        assert response.json() == {
+            "success": True,
+            "data": {"query": "冒口", "limit": 10, "total": 0, "items": []},
+            "error": None,
+        }
+        assert calls == [(fake_db, "冒口", 10, None)]

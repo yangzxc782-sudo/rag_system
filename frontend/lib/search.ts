@@ -12,35 +12,6 @@ export type ApiEnvelope<T> = {
   error: ApiError | null;
 };
 
-export type VectorSearchRequest = {
-  query: string;
-  limit?: number;
-  document_id?: string;
-};
-
-export type VectorSearchItem = {
-  chunk_id: string;
-  document_id: string;
-  original_filename: string;
-  chunk_index: number;
-  content: string;
-  chunk_type: string | null;
-  source_metadata: Record<string, unknown> | null;
-  embedding_model: string | null;
-  embedding_dim: number | null;
-  embedding_status: string;
-  distance: number;
-  score: number;
-};
-
-export type VectorSearchData = {
-  query: string;
-  limit: number;
-  document_id: string | null;
-  total: number;
-  items: VectorSearchItem[];
-};
-
 export type HybridSearchRequest = {
   query: string;
   limit?: number;
@@ -129,29 +100,6 @@ export async function hybridSearch(request: HybridSearchRequest): Promise<ApiEnv
     return parseEnvelope<HybridSearchData>(response);
   } catch (error) {
     return fallbackError<HybridSearchData>("混合检索请求失败。", {
-      error_type: error instanceof Error ? error.name : typeof error,
-    });
-  }
-}
-
-export async function vectorSearch(request: VectorSearchRequest): Promise<ApiEnvelope<VectorSearchData>> {
-  try {
-    const response = await fetch(`${API_BASE_URL}/api/v1/search/vector`, {
-      method: "POST",
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        query: request.query,
-        limit: request.limit ?? 10,
-        document_id: request.document_id || undefined,
-      }),
-    });
-
-    return parseEnvelope<VectorSearchData>(response);
-  } catch (error) {
-    return fallbackError<VectorSearchData>("向量检索请求失败。", {
       error_type: error instanceof Error ? error.name : typeof error,
     });
   }

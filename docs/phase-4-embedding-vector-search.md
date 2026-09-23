@@ -2,6 +2,8 @@
 
 本文记录 `D:\rag_system` 第四阶段“Embedding 生成与基础向量检索闭环”的实现范围、配置、数据结构、接口、前端能力、手动验收和安全边界。
 
+> 2026-09-23 退役说明：旧 `POST /api/v1/search/vector` 及其专用实现已移除，调用返回 404。下文旧查询协议、距离分数和旧页面能力仅保留为第四阶段历史说明。当前搜索入口是 `POST /api/v1/search`，使用 OpenSearch 关键词/向量召回及 RRF；embedding 生成、pgvector 存储和索引同步继续保留。本次退役无需迁移或重建索引，历史维度探测结果不变。
+
 第四阶段数据流：
 
 ```text
@@ -127,9 +129,9 @@ TRANSFORMERS_OFFLINE=1
 - `models`
 - `dims`
 
-### POST /api/v1/search/vector
+### 已退役：POST /api/v1/search/vector（历史协议）
 
-基础向量检索接口。
+第四阶段基础向量检索接口的历史协议，当前已不可调用；客户端应迁移至 Hybrid Search，并适配其响应字段。
 
 输入：
 
@@ -167,7 +169,9 @@ TRANSFORMERS_OFFLINE=1
 - `distance`
 - `score`
 
-## 4. 前端能力
+## 4. 第四阶段历史前端能力
+
+以下记录当时的页面能力；当前 `/search` 页面调用 Hybrid Search，保留的 `VectorSearchPanel` 组件也使用 Hybrid 客户端，不再展示旧 distance/score。
 
 第四阶段新增前端能力：
 
@@ -280,10 +284,10 @@ Codex 不自动执行迁移，PostgreSQL MCP 也不得用于执行迁移或写�
 7. 在文档详情页确认 embedding 状态统计。
 8. 点击生成 embedding。
 9. 确认 `embedded` 数量增加，`embedding_status` 更新为 `embedded`。
-10. 打开 `/search`。
-11. 输入 query 执行基础向量检索。
-12. 确认结果包含文档名、chunk_index、content、source_metadata、distance 和 score。
-13. 确认 distance 越小越相似，score 等于 `1 - distance`。
+10. 对新增或尚未同步的 chunks，按第五阶段说明同步 OpenSearch；本次接口退役本身不要求重建索引。
+11. 打开 `/search`，输入 query 执行 Hybrid Search。
+12. 确认结果包含文档名、chunk_index、content、source_metadata、hybrid_score、keyword_score 和 vector_score。
+13. 确认按 hybrid_score 排序；旧接口不在 OpenAPI 中，调用返回 404。
 
 ### 6.5 数据库只读核验建议
 

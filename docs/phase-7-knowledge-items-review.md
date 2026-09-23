@@ -18,7 +18,7 @@ document_chunks
 
 - 不修改 `POST /api/v1/search`。
 - 不修改 `POST /api/v1/rag/ask`。
-- 不删除 `POST /api/v1/search/vector`。
+- 旧 `POST /api/v1/search/vector` 已于 2026-09-23 单独授权退役；该变更不影响 Hybrid/RAG 或 Knowledge API。
 - 不修改 OpenSearch index schema。
 - 不修改 weighted RRF。
 - 不写 `retrieval_logs`。
@@ -568,7 +568,7 @@ http://localhost:3000/knowledge-items
 
 - `/api/v1/search` 正常。
 - `/api/v1/rag/ask` 正常。
-- `/api/v1/search/vector` 仍存在。
+- 旧 `/api/v1/search/vector` 不在 OpenAPI 中，调用返回 404。
 - `/search` 页面仍正常。
 - `/rag` 页面仍正常。
 - `retrieval_logs` 没有因为第七阶段增加。
@@ -634,7 +634,7 @@ http://localhost:3000/knowledge-items
 - 删除 `documents` / `document_chunks` / `retrieval_logs` / uploaded files / search 相关表
 - 修改 `/api/v1/search`
 - 修改 `/api/v1/rag/ask`
-- 删除 `/api/v1/search/vector`
+- 删除其他搜索接口（旧纯向量接口已单独授权退役）
 - 写 `retrieval_logs`
 - 接入 Neo4j
 - 引入 LangGraph

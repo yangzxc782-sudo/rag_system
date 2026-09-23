@@ -531,6 +531,8 @@ rag-documents
 
 本节补充第四阶段“Embedding 生成与基础向量检索闭环”的本地开发运行说明。本文中的命令仅供用户手动执行，Codex 不自动执行 pip、npm、Docker、alembic、pytest、uvicorn、模型加载、维度探测或数据库写入命令。
 
+> 2026-09-23 更新：旧纯向量 HTTP 接口已移除，当前搜索使用 `POST /api/v1/search` 的 Hybrid Search。embedding 生成、pgvector 存储和模型配置继续保留；本次接口退役不要求执行迁移或重建索引。
+
 ## 依赖安装建议
 
 如果本机使用 NVIDIA GeForce RTX 5060 Laptop GPU，属于较新的 Blackwell / `sm_120` 架构，建议先单独安装适配 CUDA 12.8 / cu128 的 GPU 版 torch，避免 `pip install -e .` 自动解析依赖时安装 CPU 版 torch 或不支持 `sm_120` 的 CUDA 版本。
@@ -643,10 +645,10 @@ Codex 不自动执行 `alembic upgrade head`。PostgreSQL MCP 也不得用于执
 4. 如文档尚未解析，先点击解析文档。
 5. 在文档详情页查看 embedding 状态。
 6. 点击生成 embedding。
-7. 打开 `/search`。
-8. 输入 query 执行基础向量检索。
-9. 确认结果展示文档名、chunk_index、content、source_metadata、distance 和 score。
-10. 确认 `distance` 越小越相似，`score = 1 - distance`。
+7. 对新增或尚未同步的 chunks，按第五阶段说明由管理员同步 OpenSearch；已同步的数据无需因接口退役重建索引。
+8. 打开 `/search`，输入 query 执行 Hybrid Search。
+9. 确认结果展示文档名、chunk_index、content、source_metadata、hybrid_score、keyword_score 和 vector_score。
+10. 确认按 `hybrid_score` 排序；旧 `distance` / `score = 1 - distance` 不再适用于当前搜索响应。
 
 第四阶段仍不实现 RAG 问答、大语言模型回答、reranker、混合检索、关键词检索、图谱检索、Celery 队列、`retrieval_logs` 写入或向量索引。
  

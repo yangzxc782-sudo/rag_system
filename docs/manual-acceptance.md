@@ -98,7 +98,7 @@
 - [ ] 不触发 embedding 的情况下，`embedding_status` 保持 `not_started` 或 `None`。
 - [ ] 手动触发 embedding 后状态正常。
 - [ ] 手动重建或同步 OpenSearch 后，`/api/v1/search` 正常。
-- [ ] `/api/v1/search/vector` 仍保留。
+- [ ] 旧 `POST /api/v1/search/vector` 不在 OpenAPI 中，调用返回 404；`POST /api/v1/search` 仍正常注册。
 - [ ] `/api/v1/rag/ask` 正常。
 - [ ] `/api/v1/knowledge-items` 正常。
 - [ ] 第八阶段没有写入 `retrieval_logs`。
@@ -367,7 +367,7 @@ Phase 9 内部已经支持文本多轮和 assistant 历史的 Provider wire cont
 - [ ] MinIO raw exact key、所有 versions/delete markers、parsed output、images/assets/intermediate 全部不存在。
 - [ ] Shared Knowledge 按来源规则保留，projection 指向剩余来源，versions 不含已删 Document provenance。
 - [ ] PostgreSQL、MinIO、OpenSearch 的其他资源集合与 pre-delete snapshot 完全一致；alias 与 mapping checksum 不变。
-- [ ] PostgreSQL vector、Hybrid/RAG 和最终 context/citations 均不能召回已删 Document。
+- [ ] Hybrid/RAG 和最终 context/citations 均不能召回已删 Document；旧 PostgreSQL 纯向量查询接口已退役。
 
 ### 6. UI 与最终记录
 

@@ -25,7 +25,6 @@ from app.core.errors import (
     SEARCH_INDEX_NOT_FOUND,
     SEARCH_INDEX_REBUILD_FAILED,
     SEARCH_QUERY_EMPTY,
-    VECTOR_SEARCH_FAILED,
     BusinessError,
 )
 from app.db.session import get_db
@@ -37,12 +36,9 @@ from app.schemas.search import (
     SearchIndexRebuildRequest,
     SearchIndexStatusData,
     SearchRequest,
-    VectorSearchData,
-    VectorSearchRequest,
 )
 from app.services import hybrid_search as hybrid_search_service
 from app.services import search_index as search_index_service
-from app.services.vector_search import vector_search_chunks
 
 
 router = APIRouter(prefix="/search", tags=["search"])
@@ -57,7 +53,6 @@ ERROR_STATUS_CODES = {
     EMBEDDING_MODEL_LOAD_FAILED: status.HTTP_503_SERVICE_UNAVAILABLE,
     EMBEDDING_DIMENSION_MISMATCH: status.HTTP_500_INTERNAL_SERVER_ERROR,
     EMBEDDING_GENERATION_FAILED: status.HTTP_500_INTERNAL_SERVER_ERROR,
-    VECTOR_SEARCH_FAILED: status.HTTP_500_INTERNAL_SERVER_ERROR,
     NO_EMBEDDED_CHUNKS: status.HTTP_409_CONFLICT,
     SEARCH_ENGINE_CONFIG_INVALID: status.HTTP_400_BAD_REQUEST,
     SEARCH_ENGINE_UNAVAILABLE: status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -93,23 +88,6 @@ def hybrid_search_endpoint(
             document_id=request.document_id,
         )
         return ApiResponse[SearchData].ok(SearchData.model_validate(result))
-    except BusinessError as error:
-        return business_error_response(error)
-
-
-@router.post("/vector", response_model=ApiResponse[VectorSearchData])
-def vector_search_endpoint(
-    request: VectorSearchRequest,
-    db: DbSession,
-) -> ApiResponse[VectorSearchData] | JSONResponse:
-    try:
-        result = vector_search_chunks(
-            db,
-            query=request.query,
-            limit=request.limit,
-            document_id=request.document_id,
-        )
-        return ApiResponse[VectorSearchData].ok(VectorSearchData.model_validate(result))
     except BusinessError as error:
         return business_error_response(error)
 

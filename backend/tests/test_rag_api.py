@@ -239,7 +239,7 @@ def test_router_registers_rag_without_removing_search_routes() -> None:
 
     assert "/api/v1/rag/ask" in paths
     assert "/api/v1/search" in paths
-    assert "/api/v1/search/vector" in paths
+    assert "/api/v1/search/vector" not in paths
 
 
 def test_rag_openapi_request_schema_does_not_add_messages_or_history() -> None:

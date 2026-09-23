@@ -293,7 +293,11 @@ PostgreSQL MCP 仅允许只读核验，例如：
 
 第四阶段在第三阶段 `document_chunks` 入库基础上，补充本地 embedding 生成、pgvector 存储、基础向量检索和前端轻量检索验证能力。详细说明见 `docs/phase-4-embedding-vector-search.md`。
 
-当前第四阶段能力：
+> 当前检索入口（2026-09-23 更新）：旧纯向量接口 `POST /api/v1/search/vector` 及其专用实现已移除，请使用 `POST /api/v1/search`。旧地址返回 404；客户端迁移时应适配 Hybrid 的 `hybrid_score`、`keyword_score`、`vector_score`，不能沿用旧 `distance` / `score` 语义。Hybrid 的 OpenSearch 关键词召回、向量召回和 RRF，以及 RAG 中可选 BGE reranker、context、citations、graph 均保持原行为。PostgreSQL embedding 存储及索引同步继续保留，无需因本次退役执行迁移或重建索引。
+>
+> 下文按阶段记录演进。`docs/superpowers/` 历史计划与设计、已完成验收结果及 `final-run-lock.json` 中的旧接口、旧测试和文件哈希引用保留为历史证据，不代表当前接口或测试命令。
+
+第四阶段引入且继续保留的 embedding 能力：
 
 - 使用本地 `Qwen3-Embedding-0.6B`，模型路径为 `D:/rag_system/models/Qwen3-Embedding-0.6B`。
 - 通过 `.env` 配置 `EMBEDDING_PROVIDER=local_qwen3`、`EMBEDDING_DIM=1024`、`EMBEDDING_LOCAL_FILES_ONLY=true`。
@@ -302,14 +306,12 @@ PostgreSQL MCP 仅允许只读核验，例如：
 - `document_chunks.embedding_updated_at` 记录 embedding 生成或更新时间。
 - 提供单文档 embedding 生成接口：`POST /api/v1/documents/{document_id}/embeddings`。
 - 提供 embedding 状态接口：`GET /api/v1/documents/{document_id}/embedding-status`。
-- 提供基础向量检索接口：`POST /api/v1/search/vector`。
 - 前端文档详情页展示 embedding 状态并提供生成按钮。
-- 前端 `/search` 页面可输入 query 做基础向量检索。
-- 检索结果展示来源文档、chunk 序号、内容、source_metadata、distance 和 score。
+- 前端 `/search` 页面当前调用 Hybrid Search，展示来源文档、chunk 序号、内容、source_metadata 和混合检索分数。
 
-第四阶段仍是本地开发闭环，不是生产级 RAG 系统。当前仍不实现 RAG 问答、大语言模型回答、reranker、混合检索、关键词检索、图谱检索、知识条目自动抽取、专家审核、Celery 队列、多模型调度或生产级模型服务部署。
+第四阶段当时是本地开发闭环，尚未实现 RAG 问答、大语言模型回答、reranker、混合检索、关键词检索、图谱检索、知识条目自动抽取、专家审核、Celery 队列、多模型调度或生产级模型服务部署。
 
-第四阶段不写 `retrieval_logs`，原因是当前 `retrieval_logs.session_id` 非空，尚未设计 search session；后续如需记录检索日志，应先设计 search session 或通过 Alembic 改造约束。第四阶段也不创建 HNSW / IVFFlat 或其他向量索引，本地小规模数据使用精确 cosine scan。
+第四阶段不写 `retrieval_logs`，原因是当前 `retrieval_logs.session_id` 非空，尚未设计 search session；后续如需记录检索日志，应先设计 search session 或通过 Alembic 改造约束。第四阶段也不创建 HNSW / IVFFlat 或其他向量索引；当时使用的 pgvector 精确 cosine scan 查询已退役，embedding 存储仍保留。
 
 ## 第五阶段：OpenSearch + IK 统一混合检索索引闭环
 
@@ -328,7 +330,6 @@ PostgreSQL MCP 仅允许只读核验，例如：
 第五阶段新增或保留的搜索接口：
 
 - `POST /api/v1/search`：统一混合检索接口。
-- `POST /api/v1/search/vector`：第四阶段 pgvector 遗留调试接口，前端不再调用。
 - `POST /api/v1/search/index/create`：创建 OpenSearch index 和 alias。
 - `POST /api/v1/search/index/rebuild`：同步 PostgreSQL 中可检索 chunks 到 OpenSearch。
 - `GET /api/v1/search/index/status`：查看搜索索引状态。
@@ -341,7 +342,7 @@ PostgreSQL MCP 仅允许只读核验，例如：
 - 当前不做 reranker。
 - 当前不写入 `retrieval_logs`。
 - OpenSearch 是派生索引，PostgreSQL 仍是主数据源，MinIO 仍保存原始文件。
-- PostgreSQL pgvector 字段和第四阶段 `/api/v1/search/vector` 能力继续保留。
+- PostgreSQL pgvector 字段继续保留，供 embedding 存储及 OpenSearch 索引同步使用；旧纯向量调试接口已移除。
 
 第五阶段详细说明见 `docs/phase-5-hybrid-search-index.md`。
 
@@ -370,7 +371,7 @@ PostgreSQL MCP 仅允许只读核验，例如：
 - 不重新实现 BM25、OpenSearch kNN 或 weighted RRF。
 - 不修改 OpenSearch 索引结构。
 - 不修改 `POST /api/v1/search` 返回结构。
-- 仍保留第四阶段调试接口 `POST /api/v1/search/vector`。
+- 旧纯向量调试接口已移除，RAG 继续复用 Hybrid Search。
 - citations 只来自检索到的 chunks，不允许 LLM 自行生成来源。
 - 当前仍不写 `retrieval_logs`。
 
@@ -415,7 +416,7 @@ PostgreSQL MCP 仅允许只读核验，例如：
 - 不正式接入 reranker。
 - 不让知识条目直接影响 `/api/v1/rag/ask`。
 - 不修改 `/api/v1/search`。
-- 不删除 `/api/v1/search/vector`。
+- 旧纯向量接口已单独授权退役，不影响本阶段的 Knowledge API。
 - 不写 `retrieval_logs`。
 
 详细说明和手动验收流程见 `docs/phase-7-knowledge-items-review.md`。

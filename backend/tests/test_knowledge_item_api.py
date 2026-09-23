@@ -132,7 +132,7 @@ def test_router_registers_knowledge_items_without_removing_search_or_rag() -> No
     assert "/api/v1/knowledge-items/{item_id}/reviews" in paths
     assert "/api/v1/knowledge-items/{item_id}/revise" in paths
     assert "/api/v1/search" in paths
-    assert "/api/v1/search/vector" in paths
+    assert "/api/v1/search/vector" not in paths
     assert "/api/v1/rag/ask" in paths
 
 

@@ -12,7 +12,7 @@
 - OpenSearch 是派生检索索引，可从 PostgreSQL 中的 documents 与 document_chunks 重建。
 - 不使用 OpenSearch 替代 PostgreSQL 主库。
 - 不删除 PostgreSQL 中的 pgvector embedding 字段。
-- `POST /api/v1/search/vector` 保留为第四阶段 pgvector 调试/回退能力，前端不再调用。
+- 旧 `POST /api/v1/search/vector` 已于 2026-09-23 退役，返回 404；Hybrid 的 OpenSearch kNN 向量召回继续保留，没有切换到 pgvector 查询的回退路径。
 
 ## 本阶段新增能力
 
@@ -34,7 +34,6 @@
 第五阶段涉及以下搜索接口：
 
 - `POST /api/v1/search`：第五阶段统一混合检索接口。
-- `POST /api/v1/search/vector`：第四阶段遗留 pgvector 调试接口，前端不再调用。
 - `POST /api/v1/search/index/create`：创建不存在的 OpenSearch index 和 alias。
 - `POST /api/v1/search/index/rebuild`：按 scope 重建派生搜索索引。
 - `GET /api/v1/search/index/status`：查询搜索引擎、index、alias 和可同步 chunks 状态。

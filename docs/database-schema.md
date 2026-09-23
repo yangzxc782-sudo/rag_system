@@ -264,14 +264,13 @@
 - 失败时写入 `embedding_error_message`。
 - 成功时写入 `embedding_model`、`embedding_dim`、`embedding_status='embedded'`、`embedding_updated_at`。
 
-向量检索策略：
+当前检索与存储边界（2026-09-23 更新）：
 
-- `POST /api/v1/search/vector` 只检索 `embedding_status='embedded'` 且 `embedding IS NOT NULL` 的 chunks。
-- 检索时要求 chunk 的 `embedding_model` 和 `embedding_dim` 与 query embedding 一致。
-- 使用 pgvector cosine distance。
-- `distance` 越小越相似。
-- 返回 `score = 1 - distance`。
-- 第四阶段不创建 HNSW / IVFFlat 或其他向量索引，小规模本地数据使用精确扫描。
+- 旧 `POST /api/v1/search/vector` 及 pgvector cosine distance 查询实现已移除；该地址返回 404。
+- `document_chunks.embedding` 及其模型、维度、状态字段继续保留，数据库 schema 和历史迁移不变。
+- OpenSearch 索引同步仍读取 `embedding_status='embedded'`、embedding 非空且模型、维度匹配的正常文档 chunks。
+- `POST /api/v1/search` 使用 OpenSearch 关键词召回和 kNN 向量召回，再进行 weighted RRF 融合；不使用旧 `distance` / `score = 1 - distance` 返回结构。
+- 本次退役不创建或删除 PostgreSQL 向量索引，也不要求重建 OpenSearch index。
 
 `retrieval_logs` 边界：
 
@@ -663,7 +662,7 @@ Phase 10 使用两个有序 migration：
 
 ## documents.deletion_status
 
-允许值为 `normal`、`deleting`、`delete_failed`，默认并回填为 `normal`。非 normal Document 被写路径 guard 拒绝，也不会进入 PostgreSQL vector 或 Hybrid/RAG 的正常候选集合。
+允许值为 `normal`、`deleting`、`delete_failed`，默认并回填为 `normal`。非 normal Document 被写路径 guard 拒绝，也不会进入 Hybrid/RAG 的正常候选集合；旧 PostgreSQL 纯向量查询已退役。
 
 ## document_deletion_jobs
 

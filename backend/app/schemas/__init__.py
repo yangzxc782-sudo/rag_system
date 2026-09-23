@@ -8,7 +8,6 @@ from app.schemas.document_chunk import (
     DocumentEmbeddingStatusData,
     DocumentParseData,
 )
-from app.schemas.search import VectorSearchData, VectorSearchItem, VectorSearchRequest
 
 __all__ = [
     "ApiError",
@@ -23,7 +22,4 @@ __all__ = [
     "DocumentParseData",
     "DocumentRead",
     "DocumentUploadData",
-    "VectorSearchData",
-    "VectorSearchItem",
-    "VectorSearchRequest",
 ]
