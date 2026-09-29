@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     mineru_parse_mode: str = "auto"
     mineru_enable_ocr: bool = True
     mineru_save_intermediate: bool = True
+    pdf_cleaning_enabled: bool = False
+    pdf_cleaning_profile: Literal["auto", "gb_zh", "iso_en"] = "auto"
+    pdf_cleaning_backfill_enabled: bool = True
 
     model_config = SettingsConfigDict(
         env_file=BACKEND_DIR / ".env",
@@ -140,8 +143,8 @@ class Settings(BaseSettings):
     # Phase 13: opt in only after the separately authorized 0010 migration.
     conversation_enabled: bool = False
     conversation_graph_version: Literal["phase13_m2_v1", "phase13_m3_v2"] = "phase13_m3_v2"
-    conversation_answer_max_input_tokens: int = Field(default=8192, ge=1024, le=64000)
-    conversation_answer_graph_tokens: int = Field(default=1024, ge=0, le=8192)
+    conversation_answer_max_input_tokens: int = Field(default=8192, ge=1024, le=100000)
+    conversation_answer_graph_tokens: int = Field(default=1024, ge=0, le=50000)
     conversation_answer_safety_tokens: int = Field(default=1024, ge=128, le=8192)
     # Optional deployment-verified provider window; no tokenizer/window discovery
     # exists in the current Provider API. The input estimate is always enforced.

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any
 
@@ -9,6 +9,7 @@ from app.ingestion.mineru.normalizer import NormalizedDocumentBlock
 
 CHUNK_METHOD = "mineru_block_merge"
 PARSER_PROVIDER = "mineru_api"
+BlockContentRenderer = Callable[[Any], tuple[str, str]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,13 +97,14 @@ def build_block_aware_chunks(
     *,
     parse_run_id: str,
     config: BlockChunkerConfig | None = None,
+    renderer: BlockContentRenderer | None = None,
 ) -> ChunkBuildResult:
     settings = config or BlockChunkerConfig()
     parse_run_value = str(parse_run_id)
     if not parse_run_value.strip():
         raise ValueError("parse_run_id is required")
 
-    views = _prepare_block_views(blocks, settings)
+    views = _prepare_block_views(blocks, settings, renderer)
     groups = _build_chunk_groups(views, settings)
     chunks: list[BuiltDocumentChunk] = []
     links: list[BuiltChunkBlockLink] = []
@@ -116,11 +118,12 @@ def build_block_aware_chunks(
 def _prepare_block_views(
     blocks: Iterable[NormalizedDocumentBlock | Any],
     config: BlockChunkerConfig,
+    renderer: BlockContentRenderer | None = None,
 ) -> list[_BlockView]:
     views: list[_BlockView] = []
     active_section_path: list[str] = []
     for fallback_index, block in enumerate(blocks):
-        view = _to_block_view(block, fallback_index)
+        view = _to_block_view(block, fallback_index, renderer)
         if (
             view.block_type in {"header", "footer"}
             and not config.include_headers_footers
@@ -298,7 +301,9 @@ def _build_links(
     return links
 
 
-def _to_block_view(block: Any, fallback_index: int) -> _BlockView:
+def _to_block_view(
+    block: Any, fallback_index: int, renderer: BlockContentRenderer | None = None,
+) -> _BlockView:
     block_type = str(_value(block, "block_type") or "unknown").strip().lower()
     source_metadata = _mapping(_value(block, "source_metadata"))
     text = _optional_text(_value(block, "text"))
@@ -314,6 +319,8 @@ def _to_block_view(block: Any, fallback_index: int) -> _BlockView:
         latex=latex,
         caption=caption,
     )
+    if renderer is not None:
+        content, content_format = renderer(block)
     block_id = _optional_text(_value(block, "id"))
     if block_id is None:
         block_id = _optional_text(source_metadata.get("document_block_id"))

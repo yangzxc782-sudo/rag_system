@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from functools import partial
 from pathlib import Path, PurePosixPath
 from typing import Any
 from uuid import UUID
@@ -32,6 +33,11 @@ from app.ingestion.block_chunker import (
 from app.ingestion.chunk_adapters import adapt_mineru_chunks
 from app.ingestion.markdown.chunker import build_markdown_chunks
 from app.ingestion.markdown.parser import parse_markdown
+from app.ingestion.pdf_cleaner import (
+    PdfCleaningOptions,
+    clean_pdf_blocks,
+    render_cleaned_block,
+)
 from app.ingestion.mineru.client import MinerUClient
 from app.ingestion.mineru.models import (
     MinerUClientError,
@@ -265,6 +271,37 @@ def _parse_document_with_mineru(
             output_prefix=settings.mineru_output_prefix,
         )
 
+        blocks = normalized.blocks
+        assets = list(normalized.assets)
+        cleaned_content: bytes | None = None
+        cleaned_key: str | None = None
+        chunker_options: dict[str, Any] = {}
+        extension = Path(document.original_filename).suffix.lower() or (
+            "." + (document.file_type or "").lower().lstrip(".")
+        )
+        if extension == ".pdf" and getattr(settings, "pdf_cleaning_enabled", False):
+            stage = "pdf_cleaning"
+            output_prefix = str(PurePosixPath(normalized.output_markdown_key).parent)
+            cleaned_key = f"{output_prefix}/cleaned.md"
+            if any(asset.asset_key == cleaned_key for asset in assets):
+                raise ValueError("Cleaned Markdown key collides with a raw asset")
+            blocks = clean_pdf_blocks(
+                normalized.blocks,
+                content,
+                PdfCleaningOptions(
+                    profile=getattr(settings, "pdf_cleaning_profile", "auto"),
+                    backfill_enabled=getattr(settings, "pdf_cleaning_backfill_enabled", True),
+                    filename=document.original_filename,
+                    zero_based_pages=parse_result.raw_metadata.get("api_version") == "v4",
+                ),
+            )
+            renderer = partial(render_cleaned_block, output_prefix=output_prefix)
+            rendered_blocks = [renderer(block)[0].strip() for block in blocks]
+            cleaned_content = "\n\n".join(part for part in rendered_blocks if part).encode("utf-8")
+            if not cleaned_content:
+                raise ValueError("PDF cleaning produced no indexable content")
+            chunker_options["renderer"] = renderer
+
         stage = "parsed_assets_storage"
         document = DocumentOperationGuard(db).lock_normal(document.id)
         storage_metadata = _save_mineru_outputs(
@@ -273,12 +310,25 @@ def _parse_document_with_mineru(
             normalized=normalized,
         )
 
+        if cleaned_content is not None and cleaned_key is not None:
+            stage = "cleaned_markdown_storage"
+            upload_bytes_to_minio(
+                bucket_name=document.bucket_name,
+                object_key=cleaned_key,
+                content=cleaned_content,
+                content_type="text/markdown",
+            )
+            assets.append(NormalizedDocumentAsset(
+                asset_type="markdown", asset_key=cleaned_key, filename="cleaned.md",
+                mime_type="text/markdown", size_bytes=len(cleaned_content),
+            ))
+
         stage = "document_assets"
         add_document_assets(
             db,
             document_id=document.id,
             parse_run_id=parse_run.id,
-            assets=normalized.assets,
+            assets=assets,
         )
 
         stage = "document_blocks"
@@ -286,7 +336,7 @@ def _parse_document_with_mineru(
             db,
             document_id=document.id,
             parse_run_id=parse_run.id,
-            blocks=normalized.blocks,
+            blocks=blocks,
         )
 
         stage = "block_chunking"
@@ -294,6 +344,7 @@ def _parse_document_with_mineru(
             block_objects,
             parse_run_id=str(parse_run.id),
             config=_mineru_chunker_config(settings),
+            **chunker_options,
         )
 
         stage = "document_chunks"
@@ -316,8 +367,8 @@ def _parse_document_with_mineru(
             output_markdown_key=normalized.output_markdown_key,
             output_json_key=normalized.output_json_key,
             page_count=normalized.page_count,
-            block_count=normalized.block_count,
-            asset_count=normalized.asset_count,
+            block_count=len(blocks),
+            asset_count=len(assets),
             source_metadata={
                 **normalized.source_metadata,
                 **storage_metadata,

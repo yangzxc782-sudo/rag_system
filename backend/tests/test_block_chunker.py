@@ -9,6 +9,18 @@ from app.ingestion.mineru.normalizer import NormalizedDocumentBlock
 PARSE_RUN_ID = "22222222-2222-2222-2222-222222222222"
 
 
+def test_optional_cleaned_renderer_preserves_links_and_keeps_old_default():
+    from app.ingestion.pdf_cleaner import render_cleaned_block
+
+    blocks = [_block(0, "text", "old", markdown="cleaned", block_id="real-block")]
+    old = build_block_aware_chunks(blocks, parse_run_id=PARSE_RUN_ID)
+    cleaned = build_block_aware_chunks(blocks, parse_run_id=PARSE_RUN_ID, renderer=render_cleaned_block)
+    assert old.chunks[0].content == "old\n\ncleaned"
+    assert cleaned.chunks[0].content == "cleaned"
+    assert cleaned.links == old.links
+    assert cleaned.links[0].block_id == "real-block"
+
+
 def _block(
     block_index: int,
     block_type: str,

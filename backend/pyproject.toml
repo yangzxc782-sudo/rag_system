@@ -21,6 +21,7 @@ dependencies = [
   "minio>=7.2,<8.0",
   "python-multipart>=0.0.9,<1.0",
   "markdown-it-py==4.2.0",
+  "pdfplumber>=0.11,<0.12",
   "neo4j==6.2.0",
   "opensearch-py>=3.2,<4.0",
   "openai>=1.0,<3.0",
