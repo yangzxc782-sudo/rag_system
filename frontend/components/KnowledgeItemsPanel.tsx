@@ -129,7 +129,7 @@ function splitTokens(value: string): string[] {
     .filter(Boolean);
 }
 
-function responseError<T>(response: ApiEnvelope<T>, fallback: string): string {
+function responseError(response: Pick<ApiEnvelope<unknown>, "error">, fallback: string): string {
   return response.error ? friendlyKnowledgeItemErrorMessage(response.error) : fallback;
 }
 

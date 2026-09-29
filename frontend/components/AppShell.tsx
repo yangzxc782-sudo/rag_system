@@ -18,7 +18,7 @@ const modules = [
   },
   {
     name: "知识问答",
-    description: "基于混合检索结果的单轮 RAG 问答入口",
+    description: "独立会话、连续追问与持久化历史",
     href: "/rag",
   },
   {
@@ -32,10 +32,18 @@ const modules = [
   },
 ];
 
-export default function AppShell({ children }: { children: ReactNode }) {
+export default function AppShell({ children, compactNavigation = false }: { children: ReactNode; compactNavigation?: boolean }) {
   return (
     <main className="min-h-screen bg-[#f6f7f9] text-slate-950">
       <div className="mx-auto flex w-full max-w-7xl flex-col gap-8 px-5 py-6 sm:px-8 lg:px-10">
+        {compactNavigation ? <header className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-4">
+          <Link href="/" className="text-lg font-semibold">铸型工艺知识库</Link>
+          <nav aria-label="应用入口" className="flex flex-wrap gap-1">
+            {modules.filter(module => module.href).map(module => <Link key={module.href} href={module.href!} aria-current={module.href === "/rag" ? "location" : undefined}
+              className={`rounded-md px-3 py-2 text-sm ${module.href === "/rag" ? "bg-slate-900" : "hover:bg-slate-100"}`}>
+              <span className={module.href === "/rag" ? "text-white" : "text-slate-600"}>{module.name}</span></Link>)}
+          </nav>
+        </header> : <>
         <header className="flex flex-col gap-4 border-b border-slate-200 pb-6 lg:flex-row lg:items-end lg:justify-between">
           <div>
             <p className="text-sm font-medium text-slate-500">本地开发闭环</p>
@@ -72,6 +80,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
             );
           })}
         </section>
+        </>}
 
         {children}
       </div>

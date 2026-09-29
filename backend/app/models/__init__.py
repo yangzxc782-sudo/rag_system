@@ -12,6 +12,10 @@ from app.models.knowledge_item_source import KnowledgeItemSource
 from app.models.knowledge_item_version import KnowledgeItemVersion
 from app.models.qa_message import QAMessage
 from app.models.qa_session import QASession
+from app.models.qa_turn import QATurn
+from app.models.qa_turn_artifact import QATurnArtifact
+from app.models.qa_evidence_snapshot import QAEvidenceSnapshot
+from app.models.qa_evidence_source import QAEvidenceSource
 from app.models.retrieval_log import RetrievalLog
 
 __all__ = [
@@ -29,5 +33,9 @@ __all__ = [
     "KnowledgeItemVersion",
     "QAMessage",
     "QASession",
+    "QATurn",
+    "QATurnArtifact",
+    "QAEvidenceSnapshot",
+    "QAEvidenceSource",
     "RetrievalLog",
 ]

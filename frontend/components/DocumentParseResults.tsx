@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 import {
   getDocumentAssets,
@@ -250,11 +250,14 @@ export default function DocumentParseResults({
   const [loadingKind, setLoadingKind] = useState<"blocks" | "assets" | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  useEffect(() => {
+  const [previousInput, setPreviousInput] = useState({ blocks: initialBlocks, assets: initialAssets, runId: selectedRun?.id });
+  // Reset derived pagination before rendering new props, not in a cascading effect.
+  if (previousInput.blocks !== initialBlocks || previousInput.assets !== initialAssets || previousInput.runId !== selectedRun?.id) {
+    setPreviousInput({ blocks: initialBlocks, assets: initialAssets, runId: selectedRun?.id });
     setBlocks(initialBlocks);
     setAssets(initialAssets);
     setLoadError(null);
-  }, [initialAssets, initialBlocks, selectedRun?.id]);
+  }
 
   async function loadMoreBlocks() {
     if (!blocks || loadingKind) {

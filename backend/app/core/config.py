@@ -137,6 +137,29 @@ class Settings(BaseSettings):
     rag_no_context_message: str = "当前知识库中未检索到足够依据，无法可靠回答该问题。"
     rag_system_prompt_name: str = "casting_rag_default"
 
+    # Phase 13: opt in only after the separately authorized 0010 migration.
+    conversation_enabled: bool = False
+    conversation_graph_version: Literal["phase13_m2_v1", "phase13_m3_v2"] = "phase13_m3_v2"
+    conversation_answer_max_input_tokens: int = Field(default=8192, ge=1024, le=64000)
+    conversation_answer_graph_tokens: int = Field(default=1024, ge=0, le=8192)
+    conversation_answer_safety_tokens: int = Field(default=1024, ge=128, le=8192)
+    # Optional deployment-verified provider window; no tokenizer/window discovery
+    # exists in the current Provider API. The input estimate is always enforced.
+    conversation_model_context_window: int | None = Field(default=None, ge=2048)
+    conversation_checkpoint_pool_min_size: int = Field(default=1, ge=1, le=16)
+    conversation_checkpoint_pool_max_size: int = Field(default=8, ge=2, le=32)
+    conversation_checkpoint_timeout_seconds: float = Field(default=5, gt=0, le=60, allow_inf_nan=False)
+    conversation_history_max_turns: int = Field(default=6, ge=1, le=6)
+    conversation_history_max_bytes: int = Field(default=12000, ge=128, le=64000)
+    conversation_history_max_estimated_tokens: int = Field(default=4096, ge=128, le=64000)
+    conversation_rewrite_max_input_bytes: int = Field(default=20000, ge=1024, le=64000)
+    conversation_rewrite_max_estimated_tokens: int = Field(default=8192, ge=1024, le=64000)
+    conversation_question_max_bytes: int = Field(default=6000, ge=128, le=6000)
+    conversation_rewrite_max_output_bytes: int = Field(default=8192, ge=512, le=16000)
+    conversation_rewrite_max_tokens: int = Field(default=768, ge=64, le=2048)
+    conversation_rewrite_timeout_seconds: float = Field(default=15, gt=0, le=60, allow_inf_nan=False)
+    conversation_rewrite_temperature: float = Field(default=0.0, ge=0, le=0.2, allow_inf_nan=False)
+
     knowledge_extraction_max_chunks: int = 20
     knowledge_extraction_max_chars: int = 12000
     knowledge_extraction_default_status: str = "draft"
@@ -173,6 +196,8 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_search_settings(self) -> "Settings":
+        if self.conversation_checkpoint_pool_min_size > self.conversation_checkpoint_pool_max_size:
+            raise ValueError("conversation checkpoint pool min_size exceeds max_size")
         self.search_vector_space = self.search_vector_space.strip().lower()
         if self.search_vector_space != "cosine":
             raise ValueError("search_vector_space must be cosine in phase 5")

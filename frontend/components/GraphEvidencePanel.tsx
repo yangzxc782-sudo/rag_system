@@ -1,4 +1,4 @@
-import type { RagGraphData, RagGraphEvidence } from "@/lib/rag";
+import type { RagGraphData, RagGraphEvidence } from "@/lib/rag-evidence";
 
 function EvidenceRecord({ evidence }: { evidence: RagGraphEvidence }) {
   return (

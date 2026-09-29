@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from copy import deepcopy
 import logging
+from time import perf_counter
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -67,15 +68,19 @@ def retrieve_chunks(
     limit: int,
     document_id: UUID | None,
     settings: Any | None = None,
+    *, deletion_filter_session_factory=None,
 ) -> HybridSearchResult:
     settings = settings or get_settings()
     try:
+        extra = ({"deletion_filter_session_factory": deletion_filter_session_factory}
+                 if deletion_filter_session_factory is not None else {})
         return hybrid_search_service.hybrid_search_chunks(
             db,
             query=question,
             limit=limit,
             document_id=document_id,
             settings=settings,
+            **extra,
         )
     except BusinessError:
         raise
@@ -102,6 +107,30 @@ class RagRerankOutcome:
     search_result: HybridSearchResult
     applied: bool
     fallback_reason: str | None
+
+
+@dataclass(frozen=True)
+class RagRetrievalStage:
+    outcome: RagRerankOutcome
+    hybrid_limit: int
+    candidate_limit: int | None
+    hybrid_count: int
+    retrieval_ms: int
+    rerank_ms: int
+
+
+def retrieve_and_rerank(db: Any, question: str, limit: int, document_id: UUID | None,
+                        settings: Any, *, deletion_filter_session_factory=None) -> RagRetrievalStage:
+    """Shared once-only Phase 12 orchestration; scores retain their RRF meaning."""
+    plan = _plan_rerank(limit, settings)
+    start = perf_counter()
+    extra = ({"deletion_filter_session_factory": deletion_filter_session_factory}
+             if deletion_filter_session_factory is not None else {})
+    candidates = retrieve_chunks(db, question, plan.hybrid_limit, document_id, settings=settings, **extra)
+    retrieved = perf_counter()
+    outcome = optional_rerank_chunks(question, candidates, settings, limit=limit, plan=plan)
+    return RagRetrievalStage(outcome, plan.hybrid_limit, plan.candidate_limit, len(candidates.items),
+                             int((retrieved - start) * 1000), int((perf_counter() - retrieved) * 1000))
 
 
 def _plan_rerank(limit: int, settings: Any) -> _RerankPlan:
@@ -211,14 +240,23 @@ def build_prompt(question: str, context: RagContext, settings: Any,
 
 def generate_answer(prompt: RagPrompt, llm_provider: LLMProvider, settings: Any) -> LLMGenerateResult:
     try:
-        result = llm_provider.generate(
-            LLMGenerateRequest.from_prompt(
-                prompt.user_prompt,
-                prompt.system_prompt,
-                temperature=getattr(settings, "llm_temperature", None),
-                max_tokens=getattr(settings, "llm_max_tokens", None),
-            )
+        request = LLMGenerateRequest.from_prompt(
+            prompt.user_prompt, prompt.system_prompt,
+            temperature=getattr(settings, "llm_temperature", None),
+            max_tokens=getattr(settings, "llm_max_tokens", None),
         )
+    except BusinessError:
+        raise
+    except Exception as exc:
+        raise BusinessError(RAG_ANSWER_FAILED, "RAG answer generation failed.",
+                            detail={"error_type": exc.__class__.__name__}, status_code=500) from exc
+    return generate_request(request, llm_provider)
+
+
+def generate_request(request: LLMGenerateRequest, llm_provider: LLMProvider) -> LLMGenerateResult:
+    """Same provider/error/empty-answer contract for single and multi-message prompts."""
+    try:
+        result = llm_provider.generate(request)
     except BusinessError:
         raise
     except Exception as exc:
@@ -308,18 +346,7 @@ def answer_question(
     settings = settings or get_settings()
     normalized_question = _normalize_question(question)
     normalized_limit = _normalize_limit(limit, settings)
-    rerank_plan = _plan_rerank(normalized_limit, settings)
-
-    search_result = retrieve_chunks(
-        db,
-        normalized_question,
-        rerank_plan.hybrid_limit,
-        document_id,
-        settings=settings,
-    )
-    reranked = optional_rerank_chunks(
-        normalized_question, search_result, settings, limit=normalized_limit, plan=rerank_plan,
-    )
+    reranked = retrieve_and_rerank(db, normalized_question, normalized_limit, document_id, settings).outcome
     search_result = reranked.search_result
     context = build_context(normalized_question, search_result, settings, preserve_order=reranked.applied)
 

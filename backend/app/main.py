@@ -1,4 +1,4 @@
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from collections.abc import AsyncIterator
 
 from fastapi import FastAPI
@@ -14,6 +14,38 @@ from app.services.reranking import close_reranking_service
 from app.tasks.document_deletion_executor import DocumentDeletionExecutor
 
 
+@contextmanager
+def _conversation_runtime(settings: Settings, graph_retrieval=None):
+    if not bool(getattr(settings, "conversation_enabled", False)):
+        yield None
+        return
+    from sqlalchemy.engine import make_url
+
+    from app.db.langgraph import CheckpointPool, CheckpointUnavailable
+    from app.db.session import SessionLocal
+    from app.llm.provider import build_llm_provider
+    from app.rag.conversation_graph import ConversationGraph
+    from app.rag.query_rewrite import QueryRewriter
+
+    # Both resources must address the same database. Explicit create_app settings
+    # must never pair a test checkpoint pool with the default business Session.
+    if SessionLocal.kw["bind"].url != make_url(settings.database_url):
+        raise CheckpointUnavailable("QA_CHECKPOINT_DATABASE_MISMATCH")
+    checkpoints = CheckpointPool(settings)
+    provider = None
+    try:
+        checkpoints.open()  # SELECT-only readiness; schema is managed by Alembic.
+        provider = build_llm_provider(settings)
+        yield ConversationGraph(SessionLocal, checkpoints, QueryRewriter(provider, settings), settings,
+                                graph_retrieval=graph_retrieval)
+    finally:
+        try:
+            if provider is not None:
+                provider.close()
+        finally:
+            checkpoints.close()
+
+
 def _lifespan(settings: Settings):
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -21,12 +53,25 @@ def _lifespan(settings: Settings):
         app.state.graph_repository = graph_repository
         app.state.graph_retrieval = GraphRetrievalService(settings, repository=graph_repository)
         executor: DocumentDeletionExecutor | None = None
-        if bool(getattr(settings, "document_deletion_executor_enabled", False)):
-            executor = DocumentDeletionExecutor(settings=settings)
-            app.state.document_deletion_executor = executor
-            executor.start()
         try:
-            yield
+            with _conversation_runtime(settings, app.state.graph_retrieval) as conversation:
+                app.state.conversation_graph = conversation
+                from app.services.conversations import Conversations
+                service = Conversations(conversation) if conversation is not None and conversation.rag_nodes is not None else None
+                app.state.conversations = service
+                try:
+                    if bool(getattr(settings, "document_deletion_executor_enabled", False)):
+                        executor = DocumentDeletionExecutor(settings=settings)
+                        app.state.document_deletion_executor = executor
+                        executor.start()
+                    yield
+                finally:
+                    try:
+                        if service is not None:
+                            service.close()
+                    finally:
+                        app.state.conversations = None
+                        app.state.conversation_graph = None
         finally:
             try:
                 if executor is not None:

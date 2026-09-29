@@ -74,11 +74,13 @@ def _phase10_domain_engine(settings: Phase10ResourceSettings):
     engine = create_engine(settings.database_url, poolclass=NullPool)
     with engine.connect() as connection:
         version = connection.scalar(text("SELECT version_num FROM alembic_version"))
-    if version != "0008_phase10_enforce":
+    # Runtime deletion now also clears QA evidence; its four tables are required.
+    # Keep the historical 0006/0007/0008 migration test on its separate target.
+    if version != "0009_phase13_chat_expand":
         engine.dispose()
         raise Phase10IntegrationGateError(
-            f"Dedicated {settings.resource_domain.value} database is not at the Phase 10 "
-            "Alembic head."
+            f"Dedicated {settings.resource_domain.value} database is not at required "
+            "application Alembic head 0009_phase13_chat_expand. Upgrade requires separate authorization."
         )
     return engine
 

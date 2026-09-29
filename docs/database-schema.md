@@ -1,3 +1,130 @@
+# 数据库设计与阶段演进
+
+## Phase 13 M3 阶段产物（无数据库迁移）
+
+M3 继续使用 0009 业务表和 0010 Checkpoint 表，不新增表、列、索引或迁移。
+业务库只读核验仍为 `0008_phase10_enforce`，`langgraph_checkpoints` schema 不存在。
+本轮所有写入验收都在独立 Phase 13 PostgreSQL 实例完成。
+
+`qa_turn_artifacts.details` 在原 M1 metrics、M2 rewrite 类型之外增加四个封闭判别类型：
+`chat_retrieval_v1`、`chat_evidence_v1`、`chat_generation_v1`、`chat_result_v1`。
+对应 key 为 `chat_<stage>:v1`，kind 为 retrieval/evidence/generation/result。
+元数据只包含受限 query、ID/key、状态、计数/耗时/usage 和 Prompt 哈希，不包含 Prompt 或证据正文。
+父产物链为 rewrite → retrieval → evidence → generation → result；clarification 直接从 rewrite
+连接到 generation → result。no_context 同样保留 evidence 产物和无来源草稿。
+
+正文均放既有 `qa_evidence_snapshots.payload`，candidate/citation 每片一个 snapshot，graph 每完整
+图谱单元一个 snapshot，answer_draft 一份草稿；每份带完整规范化 document/chunk 依赖。
+删除任意相关来源清理整个依赖单元，正常文档对应的其他独立 snapshot 保留。
+新 `save_stage` 保持 Document→QA 锁序，并在调用方事务内原子写入 artifact 与 snapshot；
+检索日志同事务保存，`evidence_generation=attempt_no`，来源失效后的新检索需显式新 attempt。
+没有重新实现消息发布、没有修改模型约束或删除终结事务。已发布正文依然在 qa_messages。
+
+Checkpoint 的 State v2 只增加阶段 UUID 和 generation，原 v1 保持可读；不做 SQL 回填。
+Graph result_staged 不等于业务 completed。终态 Checkpoint、可发布草稿与正式助手消息是三个独立
+事实，M4 执行协调器再通过原 publish_answer 完成原子发布。
+详细契约见 [Phase 13 设计](phase-13-design.md) 和 [M3 验收](phase-13-m3-acceptance.md)。
+
+## Phase 13 M2 Checkpoint 增量
+
+迁移文件：`backend/alembic/versions/0010_phase13_langgraph_checkpoints.py`。
+实际 revision 为 `0010_phase13_checkpoints`，父版本为 `0009_phase13_chat_expand`；
+revision 缩短是为了兼容现有 Alembic `version_num VARCHAR(32)`，文件名保持阶段约定。
+**现有业务库未执行 0009/0010，2026-09-28 只读核验仍为 `0008_phase10_enforce`。**
+
+独立 schema `langgraph_checkpoints` 撤销 PUBLIC schema 权限，使用应用数据库账号的独立
+psycopg pool 访问，不改变业务连接的 search_path。表结构冻结自实际安装的
+`langgraph-checkpoint-postgres==3.1.2` 的十条上游迁移，SHA-256：
+`b61d83ce19b67141d851d7fa29a73ecc6f5cd8e9d45c1aa0f6b6f9ebe50f26bf`。
+
+| 表 | 主键及职责 |
+|---|---|
+| checkpoint_migrations | `v`；记录上游版本 0–9，与项目 Alembic 版本分开 |
+| checkpoints | `(thread_id,checkpoint_ns,checkpoint_id)`；parent ID、checkpoint JSONB、metadata JSONB、type |
+| checkpoint_blobs | `(thread_id,checkpoint_ns,channel,version)`；type、可空 BYTEA blob |
+| checkpoint_writes | `(thread_id,checkpoint_ns,checkpoint_id,task_id,idx)`；channel、type、BYTEA blob、task_path |
+
+后三表分别有 thread_id 索引。0010 仅在新 schema 建空表，使用事务内普通索引，
+与上游最终结构等价，不需要上游为在线旧表使用的 CONCURRENTLY。
+namespace 不存在是升级前提；已存在的未知 namespace 不会被自动接管。
+不改 QA 数据、不重新回填历史、不建第二套消息表。运行时禁止 `.setup()`，启动只读检查
+版本、表字段和项目 revision；缺少 0010 明确失败，不自动补表。
+
+Checkpoint thread_id 为 `str(qa_sessions.id)`，namespace 固定空字符串。
+保持上游 schema 形状，不添加到 QA 表的数据库外键：内部入口和 Saver 写入前通过
+M1 Repository 校验 session/turn/request/attempt/指纹，业务行锁围住一次短 Checkpoint 写入。
+业务事务和 Saver 事务独立，不能将其当作一个原子提交。
+
+M2 对 `qa_turn_artifacts.details` 仅增加 `kind=rewrite` 的封闭
+`RewriteArtifactDetails` 类型（`query_rewrite:v1`，schema_version=1）：保存独立问题、
+决策、来源消息 ID、语言指代映射、澄清原因/选项及受限预算/usage。其他 kind 仍只收
+M1 的 PersistenceMetrics；不增加数据库列，不允许 Prompt、检索正文或任意 JSON。
+
+降级先对四表取排他锁，任何 checkpoints/blobs/writes 数据存在即拒绝。
+只允许回滚未使用的空扩展；不会删除已有恢复状态。禁止 CASCADE；未知依赖也使降级失败回滚。
+上线后的恢复方式是回退应用并保留 schema，清理/备份恢复须另行授权。
+隔离 PostgreSQL 的实际验证及限制见 [M2 验收](phase-13-m2-acceptance.md)。
+
+## Phase 13 M1 会话持久化增量
+
+当前新增设计见 [Phase 13 M1](phase-13-design.md)，对应待执行迁移
+`0009_phase13_chat_expand`（基于 `0008_phase10_enforce`）。下文保留各阶段历史记录。
+
+| 表 | Phase 13 M1 变化 |
+|---|---|
+| qa_sessions | UUID 即未来 thread_id；创建请求幂等身份；next_turn_no / next_message_seq |
+| qa_messages | turn_id 可空以保留 legacy；session 内 sequence_no 唯一；每 turn/role 唯一 |
+| qa_turns | session/request 和 session/turn_no 唯一；请求指纹、状态、attempt、outcome |
+| qa_turn_artifacts | 同 thread/turn 的不可变阶段产物与受限元数据，不存检索正文 |
+| qa_evidence_snapshots | 可按来源清理的候选/引用/图谱/回答草稿 payload 与哈希 |
+| qa_evidence_sources | 规范化 document/chunk 来源；源删除后保留 UUID 与 tombstone |
+| retrieval_logs | nullable legacy turn/generation；新日志的消息及 turn 归属复合约束 |
+
+已有消息按 `(created_at,id)` 在 session 内回填序号，原文和时间戳保留；不猜测旧轮次。
+复合外键校验 thread/turn 归属，Repository 在短事务内分配序号和校验幂等冲突。
+成功问答正文保留；文档删除时仅清除受控证据 payload 及恢复草稿。
+本阶段不创建 LangGraph Checkpoint 表，不执行现有业务数据库迁移。
+
+### 字段与约束
+
+- `qa_sessions`：增加 `create_request_id UUID`、`create_fingerprint VARCHAR(64)`，两者同时为空或同时有值；
+  创建请求 ID 全表唯一，适用于当前可信本地单用户边界。增加正数 `BIGINT` 计数器
+  `next_turn_no`、`next_message_seq`，默认 1，由 Repository 持有 session 行锁后分配。
+- `qa_turns`：UUID 主键；`session_id` 外键；`request_id`、`request_fingerprint`、`turn_no`、
+  `question`、`retrieval_limit`、可空 `document_id` 请求参数；`attempt_no`、`status`、`outcome`、
+  `error_code` 和创建/更新/完成时间。`(session_id,id)` 是复合外键目标；
+  `(session_id,request_id)`、`(session_id,turn_no)` 唯一；部分唯一索引保证同 session
+  最多一个 running/finalizing/needs_recovery 轮次。完成、失败字段组合有 CHECK 约束。
+- `qa_messages`：增加 `sequence_no BIGINT NOT NULL`、可空 `turn_id`、可空 `answer_snapshot_id`。
+  `(session_id,sequence_no)` 唯一；新轮次仅允许 user/assistant，`(turn_id,role)` 唯一。
+  用户消息不可带回答快照，助手消息必须引用同 session/turn 的快照；legacy 不绑定快照。
+  不保存占位助手消息：回答发布时一次写入完整正文，执行状态统一从关联 turn 读取。
+- `qa_turn_artifacts`：UUID 主键；session/turn、attempt、artifact_key、kind、schema_version、
+  输入/产物 SHA-256、可空 parent_artifact_id、details JSONB 和创建时间。
+  `(turn_id,attempt_no,artifact_key)` 唯一；父产物复合外键必须属于同 session/turn。
+  details 只接受 `PersistenceMetrics` 的白名单字段；没有任意文本或完整响应缓存字段。
+- `qa_evidence_snapshots`：UUID 主键；session/turn/artifact、snapshot_key、kind、schema_version、
+  payload JSONB、内容 SHA-256、status、redacted_document_id、redacted_at 和创建时间。
+  `(artifact_id,snapshot_key)` 唯一；artifact 归属复合外键。available 必须有非 SQL NULL payload；
+  source_deleted 必须为 SQL NULL payload，并带删除来源与时间。正文快照由 Repository 再校验 JSON 和来源。
+- `qa_evidence_sources`：UUID 主键；session/turn/snapshot、document_id、可空 chunk_id、status、
+  deleted_at 和创建时间。无 chunk 时 `(snapshot_id,document_id)` 唯一，有 chunk 时
+  `(snapshot_id,chunk_id)` 唯一；另建 document/snapshot 查询索引。来源 UUID 不设保留文档/分块的外键，
+  避免阻止源文档硬删除；写入时通过 DocumentOperationGuard 与 chunk 所属校验补足来源有效性。
+- `retrieval_logs`：增加可空 turn_id 和 evidence_generation。legacy 两者均空；新日志要求
+  正数 generation 和 message_id，`(turn_id,evidence_generation)` 唯一。
+  session/message 及 session/turn/message 复合外键防止跨 thread 和跨 turn 关联。
+
+### 迁移前置检查与回滚边界
+
+迁移在事务内锁住旧 QA 三表，检查孤立消息、孤立或跨会话检索日志。历史 `result_summary`
+只自动接受 SQL NULL、JSON null 或空对象；其他内容没有规范化来源，必须停止并报告日志 UUID，
+由人工审阅和单独迁移，不能自动抹去或猜测来源。正常 legacy 日志及消息内容保持不变。
+
+新结构一旦保存过 Phase 13 会话创建身份、轮次、产物或证据，downgrade 即拒绝删除。
+此时恢复方式是回退应用、保留 schema 和数据，或经单独授权从备份恢复。
+只有未使用的新结构允许回到 0008，legacy 问答及检索日志仍然保留。
+
 # 第一阶段数据库设计
 
 本文说明 `D:\rag_system` 第一阶段数据库设计。第一阶段目标是建立可迁移、可扩展的关系型数据骨架，不实现检索链路、问答链路、模型调用或生产级审核流程。

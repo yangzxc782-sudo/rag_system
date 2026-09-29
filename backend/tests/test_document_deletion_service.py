@@ -416,15 +416,18 @@ def test_finalization_deletes_job_last_and_allows_absent_document_recovery(
 ) -> None:
     db = RecordingFinalizationSession(document_exists=document_exists)
     cleanup_calls: list[UUID] = []
+    evidence_cleanup_calls: list[UUID] = []
 
     finalize_postgresql_deletion(
         db,
         claimed=claim("finalize_postgresql"),
         manifest=manifest(),
         knowledge_cleanup=lambda document_id: cleanup_calls.append(document_id),
+        qa_evidence_cleanup=lambda document_id: evidence_cleanup_calls.append(document_id),
     )
 
     assert cleanup_calls == [DOCUMENT_ID]
+    assert evidence_cleanup_calls == [DOCUMENT_ID]
     deletes = [sql for sql in db.statements if sql.startswith("DELETE")]
     assert "document_chunk_blocks" in deletes[0]
     assert "knowledge_item_chunks" in deletes[1]

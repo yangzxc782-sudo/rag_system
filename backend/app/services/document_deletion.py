@@ -54,6 +54,7 @@ from app.services.document_knowledge_deletion import (
     DocumentKnowledgeDeletionInvariantError,
     DocumentKnowledgeDeletionService,
 )
+from app.services.document_qa_evidence_deletion import DocumentQaEvidenceDeletionService
 
 
 DOCUMENT_DELETION_STEP_FAILED = "DOCUMENT_DELETION_STEP_FAILED"
@@ -552,6 +553,7 @@ def finalize_postgresql_deletion(
     claimed: ClaimedDocumentDeletion,
     manifest: DocumentDeletionManifest,
     knowledge_cleanup: Callable[[UUID], object] | None = None,
+    qa_evidence_cleanup: Callable[[UUID], object] | None = None,
 ) -> None:
     job = db.scalar(
         select(DocumentDeletionJob)
@@ -582,6 +584,11 @@ def finalize_postgresql_deletion(
     if cleanup is None:
         cleanup = DocumentKnowledgeDeletionService(db).cleanup
     cleanup(claimed.document_id)
+
+    evidence_cleanup = qa_evidence_cleanup
+    if evidence_cleanup is None:
+        evidence_cleanup = DocumentQaEvidenceDeletionService(db).redact
+    evidence_cleanup(claimed.document_id)
 
     db.execute(
         delete(DocumentChunkBlock).where(
