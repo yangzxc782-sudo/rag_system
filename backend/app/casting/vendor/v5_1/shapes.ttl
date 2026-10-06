@@ -1,0 +1,218 @@
+@prefix ex: <https://example.org/casting#> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+ex:TaskShape a sh:NodeShape; sh:targetClass ex:DesignTask;
+ sh:property [sh:path ex:forCasting;sh:minCount 1;sh:maxCount 1;sh:class ex:Casting],
+ [sh:path ex:usesSnapshot;sh:minCount 1;sh:maxCount 1;sh:class ex:InputSnapshot],
+ [sh:path ex:hasRequirement;sh:minCount 1;sh:class ex:DesignRequirement];
+ sh:sparql [sh:message "输入参数必须针对本任务的铸件或其铸件区域。"@zh;sh:select """
+ PREFIX ex:<https://example.org/casting#>
+ SELECT $this WHERE {$this ex:forCasting ?casting;ex:usesSnapshot ?snapshot.
+ ?value ex:inSnapshot ?snapshot;ex:aboutEntity ?entity.
+ FILTER(?entity!=?casting && NOT EXISTS {?entity ex:regionOf ?casting} && NOT EXISTS {?snapshot ex:inputSystem ?entity})}
+ """] .
+
+ex:RequirementShape a sh:NodeShape; sh:targetClass ex:DesignRequirement;
+ sh:property [sh:path ex:requirementKind;sh:minCount 1;sh:maxCount 1;sh:in ("Objective" "HardConstraint" "SoftConstraint")],
+ [sh:path ex:requirementText;sh:minCount 1;sh:maxCount 1;sh:datatype xsd:string] .
+
+ex:SnapshotShape a sh:NodeShape; sh:targetClass ex:InputSnapshot;
+ sh:property [sh:path ex:recordId;sh:minCount 1;sh:maxCount 1;sh:datatype xsd:string],
+ [sh:path ex:materialFamily;sh:minCount 1;sh:maxCount 1;sh:datatype xsd:string],
+ [sh:path ex:manufacturingProcess;sh:minCount 1;sh:maxCount 1;sh:datatype xsd:string],
+ [sh:path [sh:inversePath ex:inSnapshot];sh:minCount 1;sh:class ex:ParameterValue],
+ [sh:path ex:supersedesSnapshot;sh:maxCount 1;sh:class ex:InputSnapshot];
+ sh:sparql [sh:message "同一对象、参数类型和输入版本中，不得同时存在多个已确认值。"@zh;sh:select """
+ PREFIX ex:<https://example.org/casting#>
+ SELECT $this WHERE {?a ex:inSnapshot $this;ex:status "Confirmed";ex:aboutEntity ?entity;ex:parameterDefinition ?kind.
+ ?b ex:inSnapshot $this;ex:status "Confirmed";ex:aboutEntity ?entity;ex:parameterDefinition ?kind.
+ FILTER(?a!=?b)}
+ """] .
+
+ex:ParameterDefinitionShape a sh:NodeShape; sh:targetClass ex:ParameterDefinition;
+ sh:property [sh:path ex:parameterKind;sh:minCount 1;sh:maxCount 1;sh:in ("numeric" "text" "structured" "geometry")],
+ [sh:path ex:subjectKind;sh:minCount 1;sh:maxCount 1;sh:in ("Casting" "CastingRegion" "GatingRiseringSystem" "SystemComponent")],
+ [sh:path ex:quantityKind;sh:minCount 1;sh:maxCount 1;sh:datatype xsd:string] .
+
+ex:ParameterValueShape a sh:NodeShape; sh:targetClass ex:ParameterValue;
+ sh:property [sh:path ex:parameterDefinition;sh:minCount 1;sh:maxCount 1;sh:class ex:ParameterDefinition],
+ [sh:path ex:aboutEntity;sh:minCount 1;sh:maxCount 1],
+ [sh:path ex:status;sh:minCount 1;sh:maxCount 1;sh:in ("Confirmed" "Derived" "Proposed" "Missing" "Conflicted")],
+ [sh:path ex:inSnapshot;sh:maxCount 1;sh:class ex:InputSnapshot],
+ [sh:path ex:inCandidate;sh:maxCount 1;sh:class ex:CandidateDesign],
+ [sh:path ex:numberValue;sh:maxCount 1;sh:datatype xsd:decimal],
+ [sh:path ex:textValue;sh:maxCount 1;sh:datatype xsd:string],
+ [sh:path ex:structuredValue;sh:maxCount 1;sh:datatype xsd:string],
+ [sh:path ex:geometryRef;sh:maxCount 1;sh:datatype xsd:string],
+ [sh:path ex:unitSymbol;sh:maxCount 1;sh:datatype xsd:string];
+ sh:xone ([sh:property [sh:path ex:inSnapshot;sh:minCount 1]]
+          [sh:property [sh:path ex:inCandidate;sh:minCount 1]]);
+ sh:sparql [sh:message "非缺失参数须有且只有一个与参数定义相符的值；缺失参数须说明原因且无值。"@zh;sh:select """
+ PREFIX ex:<https://example.org/casting#>
+ SELECT $this WHERE {$this ex:status ?status;ex:parameterDefinition/ex:parameterKind ?kind.
+ OPTIONAL {$this ex:numberValue ?number} OPTIONAL {$this ex:textValue ?text}
+ OPTIONAL {$this ex:structuredValue ?structured} OPTIONAL {$this ex:geometryRef ?geometry}
+ BIND(IF(BOUND(?number),1,0)+IF(BOUND(?text),1,0)+IF(BOUND(?structured),1,0)+IF(BOUND(?geometry),1,0) AS ?count)
+ FILTER((?status="Missing" && (?count!=0 || NOT EXISTS {$this ex:missingReason ?why})) ||
+        (?status!="Missing" && (?count!=1 ||
+          (?kind="numeric" && !BOUND(?number)) || (?kind="text" && !BOUND(?text)) ||
+          (?kind="structured" && !BOUND(?structured)) || (?kind="geometry" && !BOUND(?geometry))))) }
+ """],
+ [sh:message "数值参数的单位必须符合其物理量类型。"@zh;sh:select """
+ PREFIX ex:<https://example.org/casting#>
+ SELECT $this WHERE {$this ex:numberValue ?v;ex:parameterDefinition/ex:quantityKind ?kind.
+ OPTIONAL {$this ex:unitSymbol ?unit}
+ FILTER(!BOUND(?unit) || (?kind="length" && ?unit!="mm") || (?kind="area" && ?unit!="mm2") ||
+ (?kind="mass" && ?unit!="kg") || (?kind="time" && ?unit!="s") ||
+ (?kind="temperature" && ?unit!="degC") || (?kind="density" && ?unit!="kg/m3") ||
+ (?kind="count" && ?unit!="one"))}
+ """],
+ [sh:message "参数主体与参数类型要求不符。"@zh;sh:select """
+ PREFIX ex:<https://example.org/casting#>
+ PREFIX rdf:<http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+ SELECT $this WHERE {$this ex:parameterDefinition/ex:subjectKind ?kind;ex:aboutEntity ?entity.
+ FILTER((?kind="Casting" && NOT EXISTS {?entity rdf:type ex:Casting}) ||
+ (?kind="CastingRegion" && NOT EXISTS {?entity rdf:type ex:CastingRegion}) ||
+ (?kind="GatingRiseringSystem" && NOT EXISTS {?entity rdf:type ex:GatingRiseringSystem}) ||
+ (?kind="SystemComponent" && NOT EXISTS {?entity rdf:type ex:SystemComponent}))}
+ """],
+ [sh:message "已确认的输入参数须有外部来源标识。"@zh;sh:select """
+ PREFIX ex:<https://example.org/casting#>
+ SELECT $this WHERE {$this ex:inSnapshot ?snapshot;ex:status "Confirmed".
+ FILTER NOT EXISTS {$this ex:sourceRef ?source}}
+ """],
+ [sh:message "规则输出参数必须归属使用该规则的生成活动所产生的候选方案。"@zh;sh:select """
+ PREFIX ex:<https://example.org/casting#>
+ SELECT $this WHERE {?use ex:applicationOutput $this. $this ex:inCandidate ?candidate.
+ FILTER NOT EXISTS {?candidate ex:generatedBy ?activity. ?activity ex:activityRuleApplication ?use}}
+ """] .
+
+ex:RuleShape a sh:NodeShape; sh:targetClass ex:EngineeringRule;
+ sh:property [sh:path ex:ruleFamilyId;sh:minCount 1;sh:maxCount 1;sh:datatype xsd:string],
+ [sh:path ex:version;sh:minCount 1;sh:maxCount 1;sh:datatype xsd:string],
+ [sh:path ex:status;sh:minCount 1;sh:maxCount 1;sh:in ("Draft" "Active" "Retired")],
+ [sh:path ex:ruleKind;sh:minCount 1;sh:maxCount 1;sh:in ("Calculation" "Selection" "HardConstraint" "Evaluation" "Heuristic")],
+ [sh:path ex:sourceRef;sh:minCount 1;sh:maxCount 1;sh:datatype xsd:string],
+ [sh:path ex:sourceEdition;sh:minCount 1;sh:maxCount 1;sh:datatype xsd:string],
+ [sh:path ex:scopeMaterialFamily;sh:minCount 1;sh:maxCount 1;sh:datatype xsd:string],
+ [sh:path ex:scopeProcess;sh:minCount 1;sh:maxCount 1;sh:datatype xsd:string],
+ [sh:path ex:evaluatorId;sh:minCount 1;sh:maxCount 1;sh:datatype xsd:string],
+ [sh:path ex:ruleRequires;sh:minCount 1;sh:class ex:ParameterDefinition],
+ [sh:path ex:supersedesRule;sh:maxCount 1;sh:class ex:EngineeringRule] .
+
+ex:RuleApplicationShape a sh:NodeShape; sh:targetClass ex:RuleApplication;
+ sh:property [sh:path ex:appliesRule;sh:minCount 1;sh:maxCount 1;sh:class ex:EngineeringRule],
+ [sh:path ex:checkedSnapshot;sh:minCount 1;sh:maxCount 1;sh:class ex:InputSnapshot],
+ [sh:path ex:applicationResult;sh:minCount 1;sh:maxCount 1;sh:in ("Applicable" "Excluded" "InsufficientInput")],
+ [sh:path ex:reason;sh:minCount 1;sh:maxCount 1;sh:datatype xsd:string];
+ sh:sparql [sh:message "Applicable判定须匹配材料与铸型方式，且全部必需输入已确认。"@zh;sh:select """
+ PREFIX ex:<https://example.org/casting#>
+ SELECT $this WHERE {$this ex:applicationResult "Applicable";ex:appliesRule ?rule;ex:checkedSnapshot ?snapshot.
+ ?rule ex:scopeMaterialFamily ?material;ex:scopeProcess ?process.
+ ?snapshot ex:materialFamily ?actualMaterial;ex:manufacturingProcess ?actualProcess.
+ FILTER(?material!=?actualMaterial || ?process!=?actualProcess ||
+ EXISTS {?rule ex:ruleRequires ?definition.
+ FILTER NOT EXISTS {?p ex:inSnapshot ?snapshot;ex:parameterDefinition ?definition;ex:status "Confirmed"}})}
+ """],
+ [sh:message "Applicable规则执行必须列明它实际使用的每项必需参数。"@zh;sh:select """
+ PREFIX ex:<https://example.org/casting#>
+ SELECT $this WHERE {$this ex:applicationResult "Applicable";ex:appliesRule/ex:ruleRequires ?definition.
+ FILTER NOT EXISTS {$this ex:applicationInput/ex:parameterDefinition ?definition}}
+ """] .
+
+ex:ActivityShape a sh:NodeShape; sh:targetClass ex:DesignActivity;
+ sh:property [sh:path ex:activityType;sh:minCount 1;sh:maxCount 1;
+  sh:in ("InputPreparation" "RuleSelection" "Generation" "Validation" "Simulation" "Evaluation" "Revision" "Release")],
+ [sh:path ex:status;sh:minCount 1;sh:maxCount 1;sh:in ("Planned" "Running" "Completed")],
+ [sh:path ex:activityTask;sh:minCount 1;sh:maxCount 1;sh:class ex:DesignTask],
+ [sh:path ex:dependsOn;sh:class ex:DesignActivity];
+ sh:sparql [sh:message "活动依赖关系不允许成环。"@zh;sh:select """
+ PREFIX ex:<https://example.org/casting#>
+ SELECT $this WHERE {$this ex:dependsOn+ $this}
+ """],
+ [sh:message "方案生成活动须使用任务的输入版本和适用规则，并产出候选方案。"@zh;sh:select """
+ PREFIX ex:<https://example.org/casting#>
+ SELECT $this WHERE {$this ex:activityType "Generation";ex:status "Completed";ex:activityTask ?task.
+ FILTER(NOT EXISTS {?task ex:usesSnapshot ?snapshot. $this ex:activityRuleApplication ?app.
+ ?app ex:applicationResult "Applicable";ex:checkedSnapshot ?snapshot} ||
+ NOT EXISTS {?candidate ex:generatedBy $this})}
+ """] .
+
+ex:ComponentShape a sh:NodeShape; sh:targetClass ex:SystemComponent;
+ sh:property [sh:path ex:componentType;sh:minCount 1;sh:maxCount 1;
+ sh:in ("Riser" "Ingate" "Runner" "Sprue" "Filter" "PouringBasin" "Chill" "RiserNeck")];
+ sh:sparql [sh:message "冒口须说明其拟补缩的铸件区域。"@zh;sh:select """
+ PREFIX ex:<https://example.org/casting#>
+ SELECT $this WHERE {$this ex:componentType "Riser". FILTER NOT EXISTS {$this ex:feedsRegion ?region}}
+ """] .
+
+ex:CandidateShape a sh:NodeShape; sh:targetClass ex:CandidateDesign;
+ sh:property [sh:path ex:generatedBy;sh:minCount 1;sh:maxCount 1;sh:class ex:DesignActivity],
+ [sh:path ex:candidateInput;sh:minCount 1;sh:maxCount 1;sh:class ex:InputSnapshot],
+ [sh:path ex:candidateSystem;sh:minCount 1;sh:maxCount 1;sh:class ex:GatingRiseringSystem],
+ [sh:path ex:version;sh:minCount 1;sh:maxCount 1;sh:datatype xsd:string],
+ [sh:path ex:status;sh:minCount 1;sh:maxCount 1;sh:in ("Draft" "NeedsReview" "Validated" "Released" "Superseded")],
+ [sh:path ex:modelRef;sh:minCount 1;sh:maxCount 1;sh:datatype xsd:string],
+ [sh:path ex:supersedesCandidate;sh:maxCount 1;sh:class ex:CandidateDesign];
+ sh:sparql [sh:message "候选方案须与生成活动使用相同输入版本。"@zh;sh:select """
+ PREFIX ex:<https://example.org/casting#>
+ SELECT $this WHERE {$this ex:generatedBy ?activity;ex:candidateInput ?snapshot.
+ FILTER NOT EXISTS {?activity ex:activityType "Generation";ex:activityTask ?task. ?task ex:usesSnapshot ?snapshot}}
+ """],
+ [sh:message "候选方案冒口补缩区域须属于任务铸件。"@zh;sh:select """
+ PREFIX ex:<https://example.org/casting#>
+ SELECT $this WHERE {$this ex:candidateSystem/ex:hasComponent/ex:feedsRegion ?region;ex:generatedBy/ex:activityTask/ex:forCasting ?casting.
+ FILTER NOT EXISTS {?region ex:regionOf ?casting}}
+ """],
+ [sh:message "发布须有同模型的结构校验通过及真实CAE或审查证据通过，且无待确认假设。"@zh;sh:select """
+ PREFIX ex:<https://example.org/casting#>
+ SELECT $this WHERE {$this ex:status "Released";ex:modelRef ?model.
+ FILTER(EXISTS {$this ex:candidateAssumption ?missing} ||
+ NOT EXISTS {?validation ex:evaluatesCandidate $this;ex:evaluationKind "Validation";ex:outcome "Pass";ex:modelRef ?model;ex:evaluationBasis ?validationBasis.
+ FILTER(?validationBasis!="Illustrative")} ||
+ NOT EXISTS {?evaluation ex:evaluatesCandidate $this;ex:outcome "Pass";ex:modelRef ?model;ex:evaluationKind ?kind;ex:evaluationBasis ?basis.
+ FILTER((?kind="Simulation" && ?basis="RealCAE") || (?kind="Review" && ?basis="ReviewedEvidence"))})}
+ """] .
+
+ex:EvaluationShape a sh:NodeShape; sh:targetClass ex:Evaluation;
+ sh:property [sh:path ex:evaluatesCandidate;sh:minCount 1;sh:maxCount 1;sh:class ex:CandidateDesign],
+ [sh:path ex:evaluationKind;sh:minCount 1;sh:maxCount 1;sh:in ("Validation" "Simulation" "Review")],
+ [sh:path ex:evaluationBasis;sh:minCount 1;sh:maxCount 1;sh:in ("Illustrative" "RealCAE" "ReviewedEvidence")],
+ [sh:path ex:outcome;sh:minCount 1;sh:maxCount 1;sh:in ("Pass" "Fail" "Pending")],
+ [sh:path ex:modelRef;sh:minCount 1;sh:maxCount 1;sh:datatype xsd:string];
+ sh:sparql [sh:message "评价必须使用被评价候选方案的模型。"@zh;sh:select """
+ PREFIX ex:<https://example.org/casting#>
+ SELECT $this WHERE {$this ex:evaluatesCandidate ?candidate;ex:modelRef ?model.
+ FILTER NOT EXISTS {?candidate ex:modelRef ?model}}
+ """],
+ [sh:message "演示性仿真或审查不能标记为合格。"@zh;sh:select """
+ PREFIX ex:<https://example.org/casting#>
+ SELECT $this WHERE {$this ex:evaluationBasis "Illustrative";ex:evaluationKind ?kind;ex:outcome "Pass".
+ FILTER(?kind IN ("Simulation","Review"))}
+ """] .
+
+ex:ChangeShape a sh:NodeShape; sh:targetClass ex:ChangeEvent;
+ sh:property [sh:path ex:reason;sh:minCount 1;sh:maxCount 1;sh:datatype xsd:string];
+ sh:xone ([sh:property [sh:path ex:oldSnapshot;sh:minCount 1;sh:maxCount 1],
+                         [sh:path ex:newSnapshot;sh:minCount 1;sh:maxCount 1]]
+          [sh:property [sh:path ex:oldRule;sh:minCount 1;sh:maxCount 1],
+                         [sh:path ex:newRule;sh:minCount 1;sh:maxCount 1]]);
+ sh:sparql [sh:message "新版本须显式替代旧版本。"@zh;sh:select """
+ PREFIX ex:<https://example.org/casting#>
+ SELECT $this WHERE {{$this ex:oldSnapshot ?old;ex:newSnapshot ?new.
+ FILTER(?old=?new || NOT EXISTS {?new ex:supersedesSnapshot ?old})}
+ UNION {$this ex:oldRule ?old;ex:newRule ?new.
+ FILTER(?old=?new || NOT EXISTS {?new ex:supersedesRule ?old})}}
+ """],
+ [sh:message "采用旧输入版本的候选方案须被列入变更影响。"@zh;sh:select """
+ PREFIX ex:<https://example.org/casting#>
+ SELECT $this WHERE {$this ex:oldSnapshot ?old. ?candidate ex:candidateInput ?old.
+ FILTER NOT EXISTS {$this ex:affectsCandidate ?candidate}}
+ """],
+ [sh:message "采用旧规则版本的候选方案须被列入变更影响。"@zh;sh:select """
+ PREFIX ex:<https://example.org/casting#>
+ SELECT $this WHERE {$this ex:oldRule ?old.
+ ?candidate ex:generatedBy/ex:activityRuleApplication/ex:appliesRule ?old.
+ FILTER NOT EXISTS {$this ex:affectsCandidate ?candidate}}
+ """] .

@@ -40,7 +40,7 @@ def stage_fingerprint(identity: ExecutionIdentity, kind: str, parent: UUID | Non
     return fingerprint({"request": identity.input_fingerprint, "request_id": str(identity.request_id),
                         "thread": str(identity.thread_id), "turn": str(identity.turn_id),
                         "attempt": identity.attempt_no, "generation": identity.attempt_no,
-                        "graph": M3_GRAPH_VERSION, "rewrite_strategy": REWRITE_STRATEGY,
+                        "graph": identity.graph_version, "rewrite_strategy": REWRITE_STRATEGY,
                         "stage": STAGE_KEYS[kind], "parent": str(parent) if parent else None})
 
 
@@ -76,7 +76,7 @@ class ConversationRagNodes:
     @contextmanager
     def _read(self, state, config):
         identity = self.base._identity(state, config)
-        if state["state_schema_version"] != 2 or state["evidence_generation"] != identity.attempt_no:
+        if state["state_schema_version"] not in {2, 3} or state["evidence_generation"] != identity.attempt_no:
             raise ConversationError("QA_EXECUTION_STALE", "Invalid M3 evidence generation.", status_code=409)
         with self.session_factory() as db, db.begin():
             repo = ConversationRepository(db)
@@ -320,7 +320,8 @@ class ConversationRagNodes:
             turn = repo.get_turn(sid, tid)
             if turn.request_id != request_id or turn.attempt_no != attempt:
                 raise ConversationError("QA_EXECUTION_STALE", "Result execution identity mismatch.", status_code=409)
-            identity = ExecutionIdentity(sid, tid, request_id, attempt, turn.request_fingerprint)
+            version = (turn.graph_version or M3_GRAPH_VERSION) if self.settings.casting_design_enabled else M3_GRAPH_VERSION
+            identity = ExecutionIdentity(sid, tid, request_id, attempt, turn.request_fingerprint, version)
             repo.require_rewrite_policy(turn, current_rewrite_policy())
             artifact = repo.get_artifact_by_key(sid, tid, attempt_no=attempt, key=STAGE_KEYS["result"])
             if artifact is None:

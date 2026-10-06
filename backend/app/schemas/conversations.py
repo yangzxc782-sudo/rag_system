@@ -6,6 +6,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.schemas.rag import RagCitationItem, RagGraphData, RagLlmInfo
+from app.schemas.casting_answer import CastingAnswerInfo
 
 
 class RequestModel(BaseModel):
@@ -32,6 +33,7 @@ class TurnCreateRequest(RequestModel):
     question: str = Field(min_length=1, max_length=2000)
     limit: int | None = Field(default=None, ge=1, le=50, strict=True)
     document_id: UUID | None = None
+    casting_input_file_id: UUID | None = None
 
     @field_validator("question")
     @classmethod
@@ -42,7 +44,7 @@ class TurnCreateRequest(RequestModel):
 
 
 TurnStatus = Literal["running", "finalizing", "completed", "failed", "needs_recovery"]
-Outcome = Literal["answer", "no_context", "clarification"]
+Outcome = Literal["answer", "no_context", "clarification", "casting_design"]
 
 
 class SessionCreateResponse(BaseModel):
@@ -69,11 +71,12 @@ class EvidenceSourceStatus(BaseModel):
 class ConversationAnswer(BaseModel):
     question: str
     answer: str
-    context_status: Literal["ok", "no_context", "clarification"]
+    context_status: Literal["ok", "no_context", "clarification", "casting_design"]
     citations: list[RagCitationItem]
     graph: RagGraphData | None = None
     llm: RagLlmInfo
     sources: list[EvidenceSourceStatus]
+    casting: CastingAnswerInfo | None = None
 
 
 class RequestStatusResponse(BaseModel):
@@ -114,6 +117,9 @@ class ConversationMessage(BaseModel):
     status: TurnStatus | None = None
     outcome: Outcome | None = None
     result: ConversationAnswer | None = None
+    casting_input_file_id: UUID | None = None
+    effective_casting_input_file_id: UUID | None = None
+    casting_input_filename: str | None = None
 
 
 class MessageHistoryResponse(BaseModel):

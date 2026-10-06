@@ -1,9 +1,10 @@
 import { API_BASE_URL } from "./api";
 import type { RagCitationItem, RagGraphData, RagLlmInfo } from "./rag-evidence";
+import type { CastingAnswerInfo } from "./casting-design";
 
-export type TurnInput = { request_id: string; question: string; limit: number | null; document_id: string | null };
+export type TurnInput = { request_id: string; question: string; limit: number | null; document_id: string | null; casting_input_file_id?: string | null };
 export type TurnStatus = "running" | "finalizing" | "completed" | "failed" | "needs_recovery";
-export type Outcome = "answer" | "no_context" | "clarification";
+export type Outcome = "answer" | "no_context" | "clarification" | "casting_design";
 export type QaSession = { thread_id: string; title: string; created_at: string; updated_at: string };
 export type SessionPage = { items: QaSession[]; next_cursor: string | null };
 export type EvidenceSource = {
@@ -12,8 +13,9 @@ export type EvidenceSource = {
   status: "available" | "source_deleted" | "source_unavailable";
 };
 export type ConversationAnswer = {
-  question: string; answer: string; context_status: "ok" | "no_context" | "clarification";
+  question: string; answer: string; context_status: "ok" | "no_context" | "clarification" | "casting_design";
   citations: RagCitationItem[]; graph: RagGraphData | null; llm: RagLlmInfo; sources: EvidenceSource[];
+  casting?: CastingAnswerInfo | null;
 };
 export type RequestStatus = {
   thread_id: string; turn_id: string; request_id: string; status: TurnStatus;
@@ -26,12 +28,21 @@ export type QaMessage = {
   message_id: string; sequence_no: number; role: string; content: string; created_at: string;
   turn_id: string | null; request_id: string | null; status: TurnStatus | null;
   outcome: Outcome | null; result: ConversationAnswer | null;
+  casting_input_file_id?: string | null; effective_casting_input_file_id?: string | null;
+  casting_input_filename?: string | null;
 };
 export type MessagePage = { thread_id: string; items: QaMessage[]; next_before_seq: number | null };
 export type ApiResult<T> = { data: T; status: number; retryAfterMs: number | null; location: string | null };
 
+export type FieldIssue = { field_path: string; error_code: string; message: string };
+export function safeIssues(detail: unknown): FieldIssue[] {
+  if (!detail || typeof detail !== "object" || !("issues" in detail) || !Array.isArray(detail.issues)) return [];
+  return detail.issues.slice(0, 100).flatMap(item => item && [item.field_path, item.error_code, item.message]
+    .every(v => typeof v === "string" && v.length <= 512)
+    ? [{ field_path: item.field_path, error_code: item.error_code, message: item.message }] : []);
+}
 export class QaApiError extends Error {
-  constructor(public code: string, public status = 0) { super(code); this.name = "QaApiError"; }
+  constructor(public code: string, public status = 0, public issues: FieldIssue[] = []) { super(code); this.name = "QaApiError"; }
 }
 
 const ERROR_MESSAGES: Record<string, string> = {
@@ -61,6 +72,26 @@ const ERROR_MESSAGES: Record<string, string> = {
   NETWORK_ERROR: "网络连接中断，后端可能仍在执行。请先查询状态。",
   REQUEST_TIMEOUT: "等待响应超时，后端可能仍在执行。正在核对请求状态。",
   INVALID_RESPONSE: "服务器响应格式或会话归属异常，请重新查询。",
+  CASTING_FEATURE_DISABLED: "浇冒系统设计功能尚未启用，当前仍可进行知识问答。",
+  CASTING_SERVICE_UNAVAILABLE: "工程计算服务暂不可用，请稍后重试。",
+  CASTING_FILE_TOO_LARGE: "工程 JSON 文件不能超过 256 KiB。",
+  CASTING_FILE_TYPE: "请选择一个 .json 文件。",
+  CASTING_FILE_NOT_FOUND: "此会话中找不到该工程文件，请重新选择或上传。",
+  CASTING_FILE_NOT_READY: "工程文件尚未上传完成，请重试上传。",
+  CASTING_INPUT_INVALID: "JSON 未通过结构检查，请按字段提示修正后重新上传。",
+  CASTING_REQUEST_INVALID: "工程请求信息无效，请检查所选文件。",
+  CASTING_UPLOAD_CONFLICT: "上传编号已对应其他文件，请重新选择文件。",
+  CASTING_ADMISSION_FAILED: "工程输入未通过准入，请修正 JSON 后重新上传。",
+  CASTING_INPUT_REQUIRED: "请上传或明确选择工程输入 JSON。",
+  CASTING_RULE_NOT_APPLICABLE: "当前规则不适用于此输入，请核对材料、工艺和浇注方式。",
+  CASTING_RULE_AMBIGUOUS: "存在多个适用规则版本，请由管理员检查规则配置。",
+  CASTING_BUSY: "计算服务繁忙，请稍后查询状态并显式重试。",
+  CASTING_CAPACITY_EXCEEDED: "输入的计算规模超过上限，请缩小热节或位置候选范围。",
+  CASTING_STORAGE_UNAVAILABLE: "工程文件存储暂不可用，请稍后重试。",
+  CASTING_PROVENANCE_INVALID: "工程结果来源核验未通过，未发布方案，请联系管理员检查运行记录。",
+  CASTING_TOOL_CALL_INVALID: "模型返回的工程工具调用无效，本轮未发布方案。",
+  CASTING_OUTPUT_INVALID: "工程结果核验未通过，请检查运行记录。",
+  CASTING_DOWNLOAD_FAILED: "结果下载失败，请稍后重试。",
 };
 export function qaErrorMessage(error: unknown): string {
   const code = error instanceof QaApiError ? error.code : typeof error === "string" ? error : "";
@@ -78,19 +109,20 @@ export function retryDelay(value: string | null): number | null {
   return Number.isFinite(delay) ? Math.min(30_000, Math.max(1000, delay)) : null;
 }
 
-async function request<T>(path: string, signal: AbortSignal, body?: object, method = "GET"): Promise<ApiResult<T>> {
+export async function qaRequest<T>(path: string, signal: AbortSignal, body?: object, method = "GET"): Promise<ApiResult<T>> {
   const timeout = new AbortController();
   const timer = setTimeout(() => timeout.abort(), method === "POST" ? 120_000 : 15_000);
   try {
     const response = await fetch(`${API_BASE_URL}${path}`, {
       method, cache: "no-store", credentials: "omit",
       signal: AbortSignal.any([signal, timeout.signal]),
-      headers: body ? { "Content-Type": "application/json" } : undefined,
-      body: body ? JSON.stringify(body) : undefined,
+      headers: body && !(body instanceof FormData) ? { "Content-Type": "application/json" } : undefined,
+      body: body instanceof FormData ? body : body ? JSON.stringify(body) : undefined,
     });
     const envelope = await response.json().catch(() => { throw new QaApiError("INVALID_RESPONSE", response.status); });
     if (!response.ok || envelope.success !== true) {
-      throw new QaApiError(typeof envelope.error?.code === "string" ? envelope.error.code : "INVALID_RESPONSE", response.status);
+      const code = typeof envelope.error?.code === "string" ? envelope.error.code : "INVALID_RESPONSE";
+      throw new QaApiError(code, response.status, code.startsWith("CASTING_") ? safeIssues(envelope.error?.detail) : []);
     }
     if (!envelope.data || typeof envelope.data !== "object") throw new QaApiError("INVALID_RESPONSE", response.status);
     return { data: envelope.data as T, status: response.status, location: response.headers.get("Location"),
@@ -102,6 +134,7 @@ async function request<T>(path: string, signal: AbortSignal, body?: object, meth
     throw new QaApiError("NETWORK_ERROR");
   } finally { clearTimeout(timer); }
 }
+const request = qaRequest;
 
 const base = "/api/v1/rag/sessions";
 function sessionPath(threadId: string) {

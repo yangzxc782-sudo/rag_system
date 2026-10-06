@@ -21,7 +21,8 @@ def test_status_includes_exact_saved_request_input():
     result = service._status(repo, sid, rid)
     assert result.can_retry and result.input == TurnCreateRequest(
         request_id=rid, question=turn.question, limit=3, document_id=did)
-    assert set(result.input.model_dump()) == {"request_id", "question", "limit", "document_id"}
+    assert set(result.input.model_dump()) == {"request_id", "question", "limit", "document_id", "casting_input_file_id"}
+    assert result.input.casting_input_file_id is None
 
 
 def test_status_serialization_does_not_require_client_execution_state():

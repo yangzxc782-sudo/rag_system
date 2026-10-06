@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 import json
+import math
 from typing import Any, Literal, TypeAlias
 from urllib.parse import urlsplit
 
@@ -11,6 +12,38 @@ from app.core.errors import LLM_REQUEST_INVALID, BusinessError
 
 LLMRole: TypeAlias = Literal["system", "user", "assistant", "tool"]
 LLMImageDetail: TypeAlias = Literal["auto", "low", "high"]
+
+
+def parse_tool_arguments(raw: str) -> dict[str, Any]:
+    """Bounded strict JSON object; callers still validate their tool's schema."""
+    if not isinstance(raw, str) or len(raw.encode("utf-8")) > 16384:
+        raise ValueError("Invalid tool argument size")
+    def pairs(items):
+        result = {}
+        for key, value in items:
+            if key in result:
+                raise ValueError("Duplicate tool argument key")
+            result[key] = value
+        return result
+    def walk(value, depth=0):
+        if depth > 32:
+            raise ValueError("Tool arguments too deep")
+        if isinstance(value, dict):
+            for key, item in value.items():
+                key.encode("utf-8")
+                walk(item, depth + 1)
+        elif isinstance(value, list):
+            for item in value:
+                walk(item, depth + 1)
+        elif isinstance(value, str):
+            value.encode("utf-8")
+        elif type(value) in (int, float) and not math.isfinite(value):
+            raise ValueError("Nonfinite tool argument")
+    value = json.loads(raw, object_pairs_hook=pairs)
+    walk(value)
+    if not isinstance(value, dict):
+        raise ValueError("Tool arguments must be an object")
+    return value
 
 
 def _raise_request_invalid(

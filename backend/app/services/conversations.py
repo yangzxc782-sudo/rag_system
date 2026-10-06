@@ -10,7 +10,7 @@ from app.schemas.conversations import (
 )
 from app.services import conversation_recovery as recovery
 from app.services.conversation_history import decode_cursor, encode_cursor, published_answer, session_view
-from app.services.conversation_repository import ConversationError, ConversationRepository, fingerprint
+from app.services.conversation_repository import ConversationError, ConversationRepository, turn_fingerprint
 
 
 class Conversations:
@@ -64,11 +64,19 @@ class Conversations:
             items = []
             for row in rows:
                 turn = repo.get_turn(sid, row.turn_id) if row.turn_id else None
+                requested, effective, filename = None, None, None
+                if turn and (self.settings.casting_design_enabled or turn.outcome == "casting_design"):
+                    requested, effective = turn.requested_casting_input_file_id, turn.effective_casting_input_file_id
+                    if requested or effective:
+                        from app.services.casting_repository import CastingRepository
+                        filename = CastingRepository(db).file(sid, requested or effective, input_only=True).original_filename
                 items.append(ConversationMessage(message_id=row.id, sequence_no=row.sequence_no,
                     role=row.role, content=row.content, created_at=row.created_at, turn_id=row.turn_id,
                     request_id=turn.request_id if turn else None, status=turn.status if turn else None,
                     outcome=turn.outcome if turn else None,
-                    result=published_answer(repo, turn) if turn and row.role == "assistant" else None))
+                    result=published_answer(repo, turn) if turn and row.role == "assistant" else None,
+                    casting_input_file_id=requested, effective_casting_input_file_id=effective,
+                    casting_input_filename=filename))
             return MessageHistoryResponse(thread_id=sid, items=items,
                 next_before_seq=rows[0].sequence_no if has_more else None)
 
@@ -87,7 +95,9 @@ class Conversations:
             user_message_id=user.id, assistant_message_id=assistant.id if assistant else None,
             result=published_answer(repo, turn) if assistant else None,
             input=TurnCreateRequest(request_id=rid, question=turn.question,
-                                    limit=turn.retrieval_limit, document_id=turn.document_id))
+                                    limit=turn.retrieval_limit, document_id=turn.document_id,
+                                    casting_input_file_id=turn.requested_casting_input_file_id
+                                    if getattr(self.settings, "casting_design_enabled", False) or turn.outcome == "casting_design" else None))
 
     def request_status(self, sid, rid):
         # Probe the real lock; elapsed client time is never evidence of failure.
@@ -118,13 +128,13 @@ class Conversations:
     def _validate_request(self, repo, sid, request, limit):
         repo.get_session(sid)
         row = repo.get_turn_by_request(sid, request.request_id)
-        identity = fingerprint({"question": request.question, "limit": limit,
-                                "document_id": str(request.document_id) if request.document_id else None})
+        identity = turn_fingerprint(request.question, limit, request.document_id, request.casting_input_file_id)
         if row and row.request_fingerprint != identity:
             raise ConversationError("IDEMPOTENCY_CONFLICT", "The request_id already has different parameters.", status_code=409)
         return row
 
     def submit(self, sid: UUID, request):
+        casting_enabled = self.settings.casting_design_enabled and self.settings.conversation_graph_version == "casting_v1_v3"
         limit = request.limit if request.limit is not None else self.settings.rag_top_k
         if not 1 <= limit <= 50 or len(request.question.encode("utf-8")) > self.settings.conversation_question_max_bytes:
             raise ConversationError("QA_REQUEST_INVALID", "Question or retrieval limit exceeds configuration.", status_code=422)
@@ -132,6 +142,8 @@ class Conversations:
             row = self._validate_request(ConversationRepository(db), sid, request, limit)
             if row and row.status == "completed":
                 return 200, self._status(ConversationRepository(db), sid, request.request_id)
+            if request.casting_input_file_id is not None and not casting_enabled:
+                raise ConversationError("CASTING_FEATURE_DISABLED", "工程问答尚未启用。", status_code=503)
         with self.locks.acquire(sid) as lease:
             if lease is None:
                 with self.session_factory() as db, db.begin():
@@ -150,8 +162,10 @@ class Conversations:
                 if row and row.status == "completed":
                     return 200, self._status(repo, sid, request.request_id)
                 recovery.reject_legacy(repo, repo.active_turn(sid))
+                casting_args = dict(casting_enabled=True, casting_input_file_id=request.casting_input_file_id,
+                    graph_version="casting_v1_v3") if casting_enabled else {}
                 row = repo.start_turn(sid, request.request_id, request.question,
-                                     limit=limit, document_id=request.document_id, rewrite_policy=current_rewrite_policy())
+                                     limit=limit, document_id=request.document_id, rewrite_policy=current_rewrite_policy(), **casting_args)
             publishing = False
             try:
                 self._hook("after_user_commit", graph, lease)
@@ -162,6 +176,8 @@ class Conversations:
                 with lease.session_factory() as db, db.begin():
                     repo = ConversationRepository(db)
                     row = recovery.prepare_retry(repo, repo.get_turn(sid, row.id), saved)
+                    if self.settings.casting_design_enabled:
+                        db.refresh(row, attribute_names=["graph_version", "requested_casting_input_file_id", "effective_casting_input_file_id"])
                 self._hook("before_graph", graph, lease)
                 if recovery.same_execution(saved.values, row) and saved.values.get("terminal_status") == "result_staged" and not saved.next:
                     state = saved.values
@@ -182,7 +198,8 @@ class Conversations:
                     # No QA lock before publish_answer: it first locks every
                     # document source, then rechecks attempt and draft under QA locks.
                     repo.publish_answer(sid, row.id, staged.draft_snapshot_id,
-                                        expected_attempt=row.attempt_no, finalize=True)
+                                        expected_attempt=row.attempt_no, finalize=True,
+                                        **({"casting_proof": staged.proof} if staged.outcome == "casting_design" else {}))
                     self._hook("before_publication_commit", graph, lease)
                 self._hook("after_publication_commit", graph, lease)
                 with lease.session_factory() as db, db.begin():

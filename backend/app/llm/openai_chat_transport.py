@@ -27,7 +27,7 @@ from app.core.errors import (
     LLM_UPSTREAM_FAILED,
     BusinessError,
 )
-from app.llm.messages import LLMMessage, LLMTextContentPart
+from app.llm.messages import LLMFunctionCall, LLMMessage, LLMTextContentPart, LLMToolCall, parse_tool_arguments
 from app.llm.provider import (
     LLMGenerateRequest,
     LLMGenerateResult,
@@ -90,6 +90,12 @@ class OpenAIChatTransport:
             payload["stop"] = list(request.stop)
         if request.json_mode:
             payload["response_format"] = {"type": "json_object"}
+        if request.tools:
+            payload["tools"] = [{"type": "function", "function": {
+                "name": tool.name, "parameters": tool.parameters,
+                **({"description": tool.description} if tool.description is not None else {}),
+            }} for tool in request.tools]
+            payload["parallel_tool_calls"] = request.parallel_tool_calls is True
         if self.send_think and request.think is not None:
             payload["extra_body"] = {"think": request.think}
 
@@ -122,6 +128,7 @@ class OpenAIChatTransport:
                 provider_name=provider_name,
                 model=model,
                 json_mode=request.json_mode,
+                request=request,
             )
         except BusinessError as error:
             _log_generation_failure(
@@ -179,24 +186,23 @@ class OpenAIChatTransport:
     @staticmethod
     def _serialize_text_messages(
         request: LLMGenerateRequest,
-    ) -> list[dict[str, str]]:
-        messages: list[dict[str, str]] = []
+    ) -> list[dict[str, Any]]:
+        messages: list[dict[str, Any]] = []
         for message in request.messages:
-            if (
-                message.role not in {"system", "user", "assistant"}
-                or len(message.content) != 1
-                or not isinstance(message.content[0], LLMTextContentPart)
-                or message.tool_calls
-            ):
+            if any(not isinstance(part, LLMTextContentPart) for part in message.content):
                 raise BusinessError(
                     LLM_REQUEST_INVALID,
                     "OpenAI Chat text transport received a non-text message.",
                     detail={"field": "messages"},
                     status_code=400,
                 )
-            messages.append(
-                {"role": message.role, "content": message.content[0].text}
-            )
+            item = {"role": message.role, "content": message.content[0].text if message.content else None}
+            if message.tool_calls:
+                item["tool_calls"] = [{"id": call.id, "type": "function", "function": {
+                    "name": call.function.name, "arguments": call.function.arguments}} for call in message.tool_calls]
+            if message.role == "tool":
+                item["tool_call_id"] = message.tool_call_id
+            messages.append(item)
         return messages
 
     @staticmethod
@@ -206,6 +212,7 @@ class OpenAIChatTransport:
         provider_name: str,
         model: str,
         json_mode: bool,
+        request: LLMGenerateRequest | None = None,
     ) -> LLMGenerateResult:
         choices = getattr(completion, "choices", None)
         if not choices:
@@ -214,30 +221,51 @@ class OpenAIChatTransport:
         if (
             message is None
             or getattr(message, "role", None) != "assistant"
-            or getattr(message, "tool_calls", None)
         ):
             _raise_response_invalid(
                 "LLM response contained an unsupported assistant message.",
                 "choices[0].message",
             )
         content = getattr(message, "content", None)
-        if content is None:
+        calls = []
+        raw_calls = getattr(message, "tool_calls", None)
+        if raw_calls:
+            if (request is None or not request.tools or not isinstance(raw_calls, (tuple, list))
+                    or len(raw_calls) > (32 if request.parallel_tool_calls is True else 1)
+                    or getattr(choices[0], "finish_reason", None) != "tool_calls"):
+                _raise_response_invalid("LLM returned unrequested or unsupported tool calls.", "tool_calls")
+            allowed = {tool.name for tool in request.tools}
+            seen = set()
+            for call in raw_calls:
+                function = getattr(call, "function", None)
+                name, arguments, call_id = getattr(function, "name", None), getattr(function, "arguments", None), getattr(call, "id", None)
+                try:
+                    if (getattr(call, "type", None) != "function" or name not in allowed
+                            or not isinstance(call_id, str) or not _SAFE_REQUEST_ID_PATTERN.fullmatch(call_id)
+                            or call_id in seen or not isinstance(arguments, str) or len(arguments.encode("utf-8")) > 16384
+                            or not isinstance(parse_tool_arguments(arguments), dict)):
+                        raise ValueError("Invalid call")
+                except (ValueError, TypeError, RecursionError, OverflowError):
+                    _raise_response_invalid("LLM returned an invalid function call.", "tool_calls")
+                seen.add(call_id)
+                calls.append(LLMToolCall(call_id, LLMFunctionCall(name, arguments)))
+        if content is None and not calls:
             _raise_empty_content(
                 "LLM response did not contain generated text.",
                 "choices[0].message.content",
             )
-        if not isinstance(content, str):
+        if content is not None and not isinstance(content, str):
             _raise_response_invalid(
                 "LLM response contained unsupported structured content.",
                 "choices[0].message.content",
                 received_type=type(content).__name__,
             )
-        if not content.strip():
+        if not calls and not content.strip():
             _raise_empty_content(
                 "LLM response did not contain generated text.",
                 "choices[0].message.content",
             )
-        if json_mode:
+        if json_mode and not calls:
             parsed_content: Any = None
             json_parse_failed = False
             try:
@@ -261,7 +289,8 @@ class OpenAIChatTransport:
         return LLMGenerateResult(
             message=LLMMessage(
                 role="assistant",
-                content=(LLMTextContentPart(text=content),),
+                content=(LLMTextContentPart(text=content),) if content and content.strip() else (),
+                tool_calls=tuple(calls),
             ),
             provider=provider_name,
             model=model,

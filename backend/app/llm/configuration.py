@@ -197,6 +197,9 @@ def resolve_active_llm_metadata(settings: Any) -> ActiveLLMMetadata:
 def validate_active_llm_configuration(settings: Any) -> ActiveLLMMetadata:
     metadata = resolve_active_llm_metadata(settings)
     _validate_shared_defaults(settings)
+    tool_field = "llm_local_supports_tools" if metadata.provider == "local" else "llm_remote_supports_tools"
+    if not isinstance(getattr(settings, tool_field, False), bool):
+        _config_error(tool_field, f"{tool_field} must be a boolean.")
 
     if metadata.provider == "local":
         _required_text(settings, "llm_base_url")

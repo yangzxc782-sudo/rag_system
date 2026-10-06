@@ -9,6 +9,7 @@ from fastapi.routing import APIRoute
 
 from app.core.errors import BusinessError, LLM_ERROR_STATUS_CODES
 from app.schemas.common import ApiError, ApiResponse
+from app.schemas.casting_storage import CastingStorageError
 from app.schemas.conversations import (
     MessageHistoryResponse, RequestStatusResponse, SessionCreateRequest, SessionCreateResponse,
     SessionDetailResponse, SessionListResponse, SessionUpdateRequest, TurnCreateRequest, TurnCreateResponse,
@@ -48,6 +49,11 @@ class ConversationRoute(APIRoute):
                 return response
             except RequestValidationError:
                 return error_response("QA_REQUEST_INVALID", 422)
+            except CastingStorageError as exc:
+                return JSONResponse(status_code=exc.status_code,
+                    content=ApiResponse.fail(ApiError(code=exc.code, message=exc.message,
+                        detail=exc.safe_detail.model_dump(mode="json"))).model_dump(mode="json"),
+                    headers={"Cache-Control": "no-store"})
             except BusinessError as exc:
                 code = {"QA_REQUEST_CONFLICT": "IDEMPOTENCY_CONFLICT", "QA_THREAD_BUSY": "THREAD_BUSY"}.get(exc.code, exc.code)
                 code = code if re.fullmatch(r"[A-Z0-9_]{1,100}", code) else "QA_INTERNAL_ERROR"

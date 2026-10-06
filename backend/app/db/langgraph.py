@@ -64,7 +64,8 @@ class CheckpointPool:
             self.health()
         except Exception:
             self.close()
-            raise CheckpointUnavailable("QA_CHECKPOINT_NOT_READY: check connection and apply approved 0010 migration") from None
+            required = "0012" if self.settings.casting_design_enabled and self.settings.conversation_graph_version == "casting_v1_v3" else "0011" if self.settings.casting_design_enabled else "0010"
+            raise CheckpointUnavailable(f"QA_CHECKPOINT_NOT_READY: check connection and apply approved {required} migration") from None
 
     def health(self) -> None:
         if self.pool is None:
@@ -80,8 +81,16 @@ class CheckpointPool:
                 # The project's Alembic/QA tables live in public, separate from the
                 # pool search path. Readiness must not silently adopt a partial DB.
                 head = connection.execute("SELECT version_num FROM public.alembic_version").fetchone()
-                if head is None or head["version_num"] != "0010_phase13_checkpoints":
+                if head is None or head["version_num"] not in {"0010_phase13_checkpoints", "0011_casting_storage", "0012_casting_answers"}:
                     raise CheckpointUnavailable("QA_CHECKPOINT_MIGRATION_REQUIRED")
+                if self.settings.casting_design_enabled and head["version_num"] not in {"0011_casting_storage", "0012_casting_answers"}:
+                    raise CheckpointUnavailable("CASTING_MIGRATION_REQUIRED: apply approved 0011 migration")
+                if self.settings.casting_design_enabled and self.settings.conversation_graph_version == "casting_v1_v3" and head["version_num"] != "0012_casting_answers":
+                    raise CheckpointUnavailable("CASTING_MIGRATION_REQUIRED: apply approved 0012 migration")
+                if head["version_num"] in {"0011_casting_storage", "0012_casting_answers"}:
+                    connection.execute("SELECT id, session_id, storage_state, sha256 FROM public.casting_design_files LIMIT 0")
+                    connection.execute("SELECT id, turn_id, status, result_file_id FROM public.casting_design_runs LIMIT 0")
+                    connection.execute("SELECT graph_version, requested_casting_input_file_id, effective_casting_input_file_id FROM public.qa_turns LIMIT 0")
         except CheckpointUnavailable:
             raise
         except Exception:

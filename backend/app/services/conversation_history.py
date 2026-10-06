@@ -48,6 +48,9 @@ def published_answer(repo, turn):
     message = repo.get_answer(turn.session_id, turn.id)
     if turn.status != "completed" or message is None:
         raise ConversationError("QA_RESULT_NOT_PUBLISHED", "Answer has not been committed.", status_code=409)
+    if turn.outcome == "casting_design":
+        from app.services.casting_provenance import published_casting
+        return published_casting(repo, turn, message)
     result = ConversationAnswer(question=turn.question, answer=message.content,
         context_status="ok" if turn.outcome == "answer" else turn.outcome,
         citations=[], sources=[], llm=RagLlmInfo())

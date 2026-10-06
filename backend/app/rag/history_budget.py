@@ -119,8 +119,10 @@ def _clarification_link(repo, sid, latest):
 
 def select_history(repo: ConversationRepository, current_turn, settings: Settings) -> HistoryContext:
     sid = current_turn.session_id
+    # Engineering follow-ups use verified run references in the casting route.
+    # Their potentially long tables must not consume the RAG rewrite budget.
     turns = repo.list_completed_turns(sid, before_turn_no=current_turn.turn_no,
-                                     limit=settings.conversation_history_max_turns)
+                                     limit=settings.conversation_history_max_turns, rag_only=True)
     newest_id = turns[0].id if turns else None
     pending = None
     pending_root = None

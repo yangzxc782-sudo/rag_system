@@ -1,0 +1,54 @@
+{
+  "manifest_version": 1,
+  "engine_id": "casting-v5.1-cli",
+  "engine_version": "5.1-cli",
+  "source_archive": "casting-v5.1-python-cli(1).zip",
+  "archive_sha256": "679f5023546866b4b388a63d6bf16cfbc794ac12175fb1a104ccfa3c8af185ef",
+  "content_sha256": "40b034b272cc9c4af3411338af5a4508303bb7e155257c8f33a4d60c6798745f",
+  "content_hash_algorithm": "sha256 of UTF-8 JSON files map sorted keys, compact separators, ensure_ascii=False",
+  "vendor_root": "vendor/v5_1",
+  "file_count": 17,
+  "files": {
+    "PACKAGE-SHA256.txt": "1dd907502e0db6679f2707803458e19c24593ce433f5f1de8a417dd90f35e22a",
+    "README-命令行使用.md": "7b6ba955da20b0ea52b8e99a5feefb4f47b761847b0bb9a9fbdc9196c89706d2",
+    "config_formats.py": "5a74c3f350cb73c2348e1b8ce4ec88c880c3a0fd52715e33c7b52034cdfa62f6",
+    "examples/input-only-change.json": "348c3048f09cbf11df5c9fb3665402a46fca4337e6cb22c75e9b794ad239884a",
+    "examples/input-v2.json": "499cb1c1a6ef2cba7eb0e1a3d53392b3038fe5896fef6a4557abf65f1830a413",
+    "examples/rules-only-change.json": "83637d63ce472dff8fffd6c2e42e9493ed060f99d46c669e547dd8ba47d3f7d4",
+    "examples/rules-v2.json": "96ff4a0e9eaac899a7acb087e00d232b1d829b710b564b81dc7f1aa91de15970",
+    "generate_design.py": "0e3630dd071f1e064cade03a315b56d93ff23c3c2ea4c5c3b3df5ff9ff1eff7e",
+    "input-v1.json": "3319f9dba76abc4cd6bdbfcbf018cb7991a1c6f86348c0776f324f8a5db9d38b",
+    "ontology-inputs.ttl": "241f1d711c0052e6bf6e3e05854c379e553acc9a0254fa61f85b2d969d9f54ee",
+    "ontology_runtime.py": "327b44d21a52833ad8c7a72420101800d059b7f959cfe68d19a4bf8f8d1259cb",
+    "requirements.txt": "599c8d05df7160f3a87c35c2778f6b37a20238fb8e531b7f5fd92bb9845629a3",
+    "rules-screening.ttl": "f427a5a65843cba8561ab85dc50564b06b8bee4065d78061ea845d87c4781216",
+    "rules-v1.json": "a8023cb854eee6e1b7690b8cd9993b087af6535cd1cbb3c4dd3ae66a0ff263b2",
+    "schema-v5.1.ttl": "3817016b6eba6744eb9d44a7718ca4b939fe404e44585b19ab9354ba68dc11c1",
+    "shapes.ttl": "9991d3c390d32e73f86698fd0912f117b9a208341313a09841f1acbe611c25d8",
+    "配置字段说明.md": "46830613523b355b0888cae38416480fae8a96bfa640aeca4853acdbc21863d4"
+  },
+  "dependency_lock": "../../requirements-casting.txt",
+  "verified_python": "3.13.9",
+  "policy": {
+    "preserve_upstream_bytes": true,
+    "retain_rdf_shacl": true,
+    "previous_dir_enabled": false
+  },
+  "runtime_dependencies": {
+    "html5rdf": "1.2.1",
+    "owlrl": "7.6.2",
+    "packaging": "26.3",
+    "prettytable": "3.18.0",
+    "pyparsing": "3.3.3",
+    "pyshacl": "0.40.1",
+    "rdflib": "7.6.0",
+    "wcwidth": "0.9.1"
+  },
+  "supported_scopes": [
+    {
+      "material_family": "ZG270-500",
+      "manufacturing_process": "3d-printed-sand",
+      "pouring_method": "gravity"
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 """Explicit retry policy. Requires the caller's thread execution lease."""
 from app.core.errors import LLM_ERROR_STATUS_CODES
-from app.rag.conversation_state import ExecutionIdentity
+from app.rag.conversation_state import CASTING_GRAPH_VERSION, M3_GRAPH_VERSION, ExecutionIdentity
 from app.rag.query_rewrite_prompt import current_rewrite_policy
 from app.services.conversation_repository import ConversationError
 
@@ -8,15 +8,21 @@ from app.services.conversation_repository import ConversationError
 INTERRUPTED = {"QA_EXECUTION_INTERRUPTED", "QA_PUBLICATION_INTERRUPTED"}
 SOURCE_ERRORS = {"QA_EVIDENCE_UNAVAILABLE", "QA_SOURCE_INVALID", "DOCUMENT_NOT_FOUND",
                  "DOCUMENT_DELETION_IN_PROGRESS", "DOCUMENT_DELETE_FAILED"}
+CASTING_RETRYABLE = {"CASTING_BUSY", "CASTING_STORAGE_UNAVAILABLE", "CASTING_STORAGE_ERROR", "CASTING_SERVICE_UNAVAILABLE"}
 RETRYABLE = INTERRUPTED | SOURCE_ERRORS | {
     "EMBEDDING_GENERATION_FAILED", "SEARCH_ENGINE_UNAVAILABLE", "SEARCH_INDEX_NOT_FOUND",
     "HYBRID_SEARCH_FAILED", "RAG_ANSWER_FAILED", "QA_STAGE_FAILED", "QA_PROMPT_CHANGED", "QA_REWRITE_OUTPUT_INVALID",
-    *LLM_ERROR_STATUS_CODES,
+    *LLM_ERROR_STATUS_CODES, *CASTING_RETRYABLE,
 }
 FINAL_FAILURES = RETRYABLE | {"QA_PROMPT_BUDGET_EXCEEDED", "QA_CONTEXT_BUDGET_EXCEEDED",
                             "QA_REWRITE_INPUT_BUDGET_EXCEEDED", "QA_REWRITE_STRATEGY_UNSUPPORTED"}
 REWRITE_ERROR_STATUS = {"QA_REWRITE_OUTPUT_INVALID": 502, "QA_REWRITE_INPUT_BUDGET_EXCEEDED": 422,
                        "QA_CONTEXT_BUDGET_EXCEEDED": 422, "QA_REWRITE_STRATEGY_UNSUPPORTED": 409}
+REWRITE_ERROR_STATUS.update({code: 422 for code in ("CASTING_INPUT_REQUIRED", "CASTING_INPUT_INVALID", "CASTING_RULE_NOT_APPLICABLE",
+    "CASTING_RULE_AMBIGUOUS", "CASTING_CAPACITY_EXCEEDED", "CASTING_CANDIDATE_NOT_FOUND", "CASTING_ADMISSION_FAILED")})
+REWRITE_ERROR_STATUS.update({code: 409 for code in ("CASTING_PROVENANCE_INVALID", "CASTING_STAGE_INVALID", "CASTING_POLICY_CHANGED",
+    "CASTING_OUTPUT_INVALID", "CASTING_FILE_INTEGRITY", "CASTING_INPUT_INTEGRITY", "CASTING_GRAPH_VERSION_MISMATCH")})
+REWRITE_ERROR_STATUS["CASTING_TOOL_CALL_INVALID"] = 502
 
 
 def policy_supported(repo, turn):
@@ -47,8 +53,9 @@ def can_retry(repo, turn, *, active=False):
 
 
 def same_execution(values, turn):
+    version = (turn.graph_version or M3_GRAPH_VERSION) if values and values.get("graph_version") == CASTING_GRAPH_VERSION else M3_GRAPH_VERSION
     return bool(values) and ExecutionIdentity.from_state(values) == ExecutionIdentity(
-        turn.session_id, turn.id, turn.request_id, turn.attempt_no, turn.request_fingerprint)
+        turn.session_id, turn.id, turn.request_id, turn.attempt_no, turn.request_fingerprint, version)
 
 
 def prepare_retry(repo, turn, checkpoint):
@@ -89,7 +96,7 @@ def record_failure(repo, turn, code):
     """Handled failures release the thread; integrity failures require review."""
     if turn.status in {"running", "finalizing"}:
         return repo.transition_turn(turn.session_id, turn.id, expected_status=turn.status,
-            new_status="failed" if code in FINAL_FAILURES else "needs_recovery",
+            new_status="failed" if code in FINAL_FAILURES or code.startswith("CASTING_") else "needs_recovery",
             expected_attempt=turn.attempt_no, error_code=code)
     return turn
 

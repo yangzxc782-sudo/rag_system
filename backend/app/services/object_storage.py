@@ -171,6 +171,7 @@ def get_object_bytes_from_minio(
     bucket_name: str,
     object_key: str,
     client: Minio | None = None,
+    max_bytes: int | None = None,
 ) -> bytes:
     storage_client = client or get_minio_client()
     ensure_bucket_exists(storage_client, bucket_name)
@@ -178,7 +179,10 @@ def get_object_bytes_from_minio(
 
     try:
         response = storage_client.get_object(bucket_name=bucket_name, object_name=object_key)
-        return response.read()
+        content = response.read() if max_bytes is None else response.read(max_bytes + 1)
+        if max_bytes is not None and len(content) > max_bytes:
+            raise ValueError("Object exceeds the caller's byte budget")
+        return content
     except S3Error as exc:
         if exc.code in {"NoSuchKey", "NoSuchObject"}:
             raise BusinessError(

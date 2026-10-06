@@ -1,0 +1,557 @@
+@prefix ex: <https://example.org/casting#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+<https://example.org/casting> a owl:Ontology ;
+    rdfs:label "浇冒系统方案生成精简本体"@zh ;
+    rdfs:comment "用统一设计活动、输入快照、参数、规则、候选方案、评价与变更记录表达浇冒系统方案生成过程。"@zh ;
+    owl:versionIRI <https://example.org/casting/5.1.0-lean> ;
+    owl:versionInfo "5.1.0-lean" .
+
+ex:PD_CastingMainWall a owl:NamedIndividual,
+        ex:ParameterDefinition ;
+    rdfs:label "主体壁厚"@zh ;
+    ex:parameterKind "numeric" ;
+    ex:quantityKind "length" ;
+    ex:subjectKind "Casting" .
+
+ex:PD_CastingMass a owl:NamedIndividual,
+        ex:ParameterDefinition ;
+    rdfs:label "铸件重量"@zh ;
+    ex:parameterKind "numeric" ;
+    ex:quantityKind "mass" ;
+    ex:subjectKind "Casting" .
+
+ex:PD_CastingMaxWall a owl:NamedIndividual,
+        ex:ParameterDefinition ;
+    rdfs:label "最大壁厚"@zh ;
+    ex:parameterKind "numeric" ;
+    ex:quantityKind "length" ;
+    ex:subjectKind "Casting" .
+
+ex:PD_CastingMinWall a owl:NamedIndividual,
+        ex:ParameterDefinition ;
+    rdfs:label "最小壁厚"@zh ;
+    ex:parameterKind "numeric" ;
+    ex:quantityKind "length" ;
+    ex:subjectKind "Casting" .
+
+ex:PD_CastingModulus a owl:NamedIndividual,
+        ex:ParameterDefinition ;
+    rdfs:label "模数大小"@zh ;
+    ex:parameterKind "numeric" ;
+    ex:quantityKind "length" ;
+    ex:subjectKind "CastingRegion" .
+
+ex:PD_CastingPose a owl:NamedIndividual,
+        ex:ParameterDefinition ;
+    rdfs:label "铸件方向"@zh ;
+    ex:parameterKind "geometry" ;
+    ex:quantityKind "pose" ;
+    ex:subjectKind "Casting" .
+
+ex:PD_DesignPouringTemperature a owl:NamedIndividual,
+        ex:ParameterDefinition ;
+    rdfs:label "浇注温度"@zh ;
+    ex:parameterKind "numeric" ;
+    ex:quantityKind "temperature" ;
+    ex:subjectKind "GatingRiseringSystem" .
+
+ex:PD_DesignPouringTime a owl:NamedIndividual,
+        ex:ParameterDefinition ;
+    rdfs:label "浇注时间"@zh ;
+    ex:parameterKind "numeric" ;
+    ex:quantityKind "time" ;
+    ex:subjectKind "GatingRiseringSystem" .
+
+ex:PD_FeedingLocation a owl:NamedIndividual,
+        ex:ParameterDefinition ;
+    rdfs:label "补缩位置"@zh ;
+    ex:parameterKind "geometry" ;
+    ex:quantityKind "position" ;
+    ex:subjectKind "SystemComponent" .
+
+ex:PD_GatingAreaRatio a owl:NamedIndividual,
+        ex:ParameterDefinition ;
+    rdfs:label "浇注系统截面比"@zh ;
+    ex:parameterKind "structured" ;
+    ex:quantityKind "ordered area ratio" ;
+    ex:subjectKind "GatingRiseringSystem" .
+
+ex:PD_GatingForm a owl:NamedIndividual,
+        ex:ParameterDefinition ;
+    rdfs:label "浇注系统形式"@zh ;
+    ex:parameterKind "text" ;
+    ex:quantityKind "classification" ;
+    ex:subjectKind "GatingRiseringSystem" .
+
+ex:PD_HotSpotPosition a owl:NamedIndividual,
+        ex:ParameterDefinition ;
+    rdfs:label "热节位置"@zh ;
+    ex:parameterKind "geometry" ;
+    ex:quantityKind "position" ;
+    ex:subjectKind "CastingRegion" .
+
+ex:PD_IngateArea a owl:NamedIndividual,
+        ex:ParameterDefinition ;
+    rdfs:label "内浇道截面积"@zh ;
+    ex:parameterKind "numeric" ;
+    ex:quantityKind "area" ;
+    ex:subjectKind "SystemComponent" .
+
+ex:PD_IngateCount a owl:NamedIndividual,
+        ex:ParameterDefinition ;
+    rdfs:label "内浇道数量"@zh ;
+    ex:parameterKind "numeric" ;
+    ex:quantityKind "count" ;
+    ex:subjectKind "GatingRiseringSystem" .
+
+ex:PD_IngateDimensions a owl:NamedIndividual,
+        ex:ParameterDefinition ;
+    rdfs:label "内浇道尺寸"@zh ;
+    ex:parameterKind "structured" ;
+    ex:quantityKind "length" ;
+    ex:subjectKind "SystemComponent" .
+
+ex:PD_IngatePosition a owl:NamedIndividual,
+        ex:ParameterDefinition ;
+    rdfs:label "内浇道位置"@zh ;
+    ex:parameterKind "geometry" ;
+    ex:quantityKind "position" ;
+    ex:subjectKind "SystemComponent" .
+
+ex:PD_LiquidMetalDensity a owl:NamedIndividual,
+        ex:ParameterDefinition ;
+    rdfs:label "金属液密度"@zh ;
+    ex:parameterKind "numeric" ;
+    ex:quantityKind "density" ;
+    ex:subjectKind "Casting" .
+
+ex:PD_MaterialRequirement a owl:NamedIndividual,
+        ex:ParameterDefinition ;
+    rdfs:label "材质要求"@zh ;
+    ex:parameterKind "text" ;
+    ex:quantityKind "material" ;
+    ex:subjectKind "Casting" .
+
+ex:PD_NDTRequirement a owl:NamedIndividual,
+        ex:ParameterDefinition ;
+    rdfs:label "NDT要求"@zh ;
+    ex:parameterKind "structured" ;
+    ex:quantityKind "inspection specification" ;
+    ex:subjectKind "Casting" .
+
+ex:PD_PartEnvelope a owl:NamedIndividual,
+        ex:ParameterDefinition ;
+    rdfs:label "轮廓尺寸"@zh ;
+    ex:parameterKind "structured" ;
+    ex:quantityKind "length" ;
+    ex:subjectKind "Casting" .
+
+ex:PD_PressureHead a owl:NamedIndividual,
+        ex:ParameterDefinition ;
+    rdfs:label "静压头高度"@zh ;
+    ex:parameterKind "numeric" ;
+    ex:quantityKind "length" ;
+    ex:subjectKind "GatingRiseringSystem" .
+
+ex:PD_RiserCount a owl:NamedIndividual,
+        ex:ParameterDefinition ;
+    rdfs:label "冒口数量"@zh ;
+    ex:parameterKind "numeric" ;
+    ex:quantityKind "count" ;
+    ex:subjectKind "GatingRiseringSystem" .
+
+ex:PD_RiserSpecification a owl:NamedIndividual,
+        ex:ParameterDefinition ;
+    rdfs:label "冒口规格"@zh ;
+    ex:parameterKind "structured" ;
+    ex:quantityKind "specification" ;
+    ex:subjectKind "SystemComponent" .
+
+ex:PD_RunnerArea a owl:NamedIndividual,
+        ex:ParameterDefinition ;
+    rdfs:label "横浇道截面积"@zh ;
+    ex:parameterKind "numeric" ;
+    ex:quantityKind "area" ;
+    ex:subjectKind "SystemComponent" .
+
+ex:PD_RunnerDimensions a owl:NamedIndividual,
+        ex:ParameterDefinition ;
+    rdfs:label "横浇道尺寸"@zh ;
+    ex:parameterKind "structured" ;
+    ex:quantityKind "length" ;
+    ex:subjectKind "SystemComponent" .
+
+ex:PD_SprueArea a owl:NamedIndividual,
+        ex:ParameterDefinition ;
+    rdfs:label "直浇道截面积"@zh ;
+    ex:parameterKind "numeric" ;
+    ex:quantityKind "area" ;
+    ex:subjectKind "SystemComponent" .
+
+ex:PD_SprueDimensions a owl:NamedIndividual,
+        ex:ParameterDefinition ;
+    rdfs:label "直浇道尺寸"@zh ;
+    ex:parameterKind "structured" ;
+    ex:quantityKind "length" ;
+    ex:subjectKind "SystemComponent" .
+
+ex:PD_ThermalProperties a owl:NamedIndividual,
+        ex:ParameterDefinition ;
+    rdfs:label "热物性参数"@zh ;
+    ex:parameterKind "structured" ;
+    ex:quantityKind "temperature-dependent properties" ;
+    ex:subjectKind "Casting" .
+
+ex:aboutEntity a owl:ObjectProperty ;
+    rdfs:label "参数针对对象"@zh ;
+    rdfs:domain ex:ParameterValue .
+
+ex:activityEvaluation a owl:ObjectProperty ;
+    rdfs:label "活动形成评价"@zh ;
+    rdfs:domain ex:DesignActivity ;
+    rdfs:range ex:Evaluation .
+
+ex:activityRuleApplication a owl:ObjectProperty ;
+    rdfs:label "活动使用规则判定"@zh ;
+    rdfs:domain ex:DesignActivity ;
+    rdfs:range ex:RuleApplication .
+
+ex:activityTask a owl:ObjectProperty ;
+    rdfs:label "活动所属任务"@zh ;
+    rdfs:domain ex:DesignActivity ;
+    rdfs:range ex:DesignTask .
+
+ex:activityType a owl:DatatypeProperty ;
+    rdfs:label "活动类型"@zh ;
+    rdfs:range xsd:string .
+
+ex:affectsCandidate a owl:ObjectProperty ;
+    rdfs:label "影响候选方案"@zh ;
+    rdfs:domain ex:ChangeEvent ;
+    rdfs:range ex:CandidateDesign .
+
+ex:applicationInput a owl:ObjectProperty ;
+    rdfs:label "实际使用参数"@zh ;
+    rdfs:domain ex:RuleApplication ;
+    rdfs:range ex:ParameterValue .
+
+ex:applicationOutput a owl:ObjectProperty ;
+    rdfs:label "实际产生参数"@zh ;
+    rdfs:domain ex:RuleApplication ;
+    rdfs:range ex:ParameterValue .
+
+ex:applicationResult a owl:DatatypeProperty ;
+    rdfs:label "规则适用或执行结论"@zh ;
+    rdfs:range xsd:string .
+
+ex:appliesRule a owl:ObjectProperty ;
+    rdfs:label "适用或执行的规则"@zh ;
+    rdfs:domain ex:RuleApplication ;
+    rdfs:range ex:EngineeringRule .
+
+ex:candidateAssumption a owl:ObjectProperty ;
+    rdfs:label "方案依赖待确认参数"@zh ;
+    rdfs:domain ex:CandidateDesign ;
+    rdfs:range ex:ParameterValue .
+
+ex:candidateInput a owl:ObjectProperty ;
+    rdfs:label "方案使用输入版本"@zh ;
+    rdfs:domain ex:CandidateDesign ;
+    rdfs:range ex:InputSnapshot .
+
+ex:candidateSystem a owl:ObjectProperty ;
+    rdfs:label "方案设计浇冒系统"@zh ;
+    rdfs:domain ex:CandidateDesign ;
+    rdfs:range ex:GatingRiseringSystem .
+
+ex:changedParameter a owl:ObjectProperty ;
+    rdfs:label "变化的参数类型"@zh ;
+    rdfs:domain ex:ChangeEvent ;
+    rdfs:range ex:ParameterDefinition .
+
+ex:checkedSnapshot a owl:ObjectProperty ;
+    rdfs:label "规则判定使用输入"@zh ;
+    rdfs:domain ex:RuleApplication ;
+    rdfs:range ex:InputSnapshot .
+
+ex:componentType a owl:DatatypeProperty ;
+    rdfs:label "构件类型"@zh ;
+    rdfs:range xsd:string .
+
+ex:dependsOn a owl:ObjectProperty ;
+    rdfs:label "依赖先前活动"@zh ;
+    rdfs:domain ex:DesignActivity ;
+    rdfs:range ex:DesignActivity .
+
+ex:evaluatesCandidate a owl:ObjectProperty ;
+    rdfs:label "评价对应方案"@zh ;
+    rdfs:domain ex:Evaluation ;
+    rdfs:range ex:CandidateDesign .
+
+ex:evaluationBasis a owl:DatatypeProperty ;
+    rdfs:label "评价依据"@zh ;
+    rdfs:range xsd:string .
+
+ex:evaluationKind a owl:DatatypeProperty ;
+    rdfs:label "校验或评价类别"@zh ;
+    rdfs:range xsd:string .
+
+ex:evaluatorId a owl:DatatypeProperty ;
+    rdfs:label "规则执行器标识"@zh ;
+    rdfs:range xsd:string .
+
+ex:feedsRegion a owl:ObjectProperty ;
+    rdfs:label "冒口补缩区域"@zh ;
+    rdfs:domain ex:SystemComponent ;
+    rdfs:range ex:CastingRegion .
+
+ex:forCasting a owl:ObjectProperty ;
+    rdfs:label "针对铸件"@zh ;
+    rdfs:domain ex:DesignTask ;
+    rdfs:range ex:Casting .
+
+ex:generatedBy a owl:ObjectProperty ;
+    rdfs:label "方案由活动产生"@zh ;
+    rdfs:domain ex:CandidateDesign ;
+    rdfs:range ex:DesignActivity .
+
+ex:geometryRef a owl:DatatypeProperty ;
+    rdfs:label "几何定位引用"@zh ;
+    rdfs:range xsd:string .
+
+ex:hasComponent a owl:ObjectProperty ;
+    rdfs:label "系统包含构件"@zh ;
+    rdfs:domain ex:GatingRiseringSystem ;
+    rdfs:range ex:SystemComponent .
+
+ex:hasRequirement a owl:ObjectProperty ;
+    rdfs:label "具有设计目标或约束"@zh ;
+    rdfs:domain ex:DesignTask ;
+    rdfs:range ex:DesignRequirement .
+
+ex:inCandidate a owl:ObjectProperty ;
+    rdfs:label "参数属于候选方案"@zh ;
+    rdfs:domain ex:ParameterValue ;
+    rdfs:range ex:CandidateDesign .
+
+ex:inSnapshot a owl:ObjectProperty ;
+    rdfs:label "参数属于输入版本"@zh ;
+    rdfs:domain ex:ParameterValue ;
+    rdfs:range ex:InputSnapshot .
+
+ex:manufacturingProcess a owl:DatatypeProperty ;
+    rdfs:label "铸型制造方式"@zh ;
+    rdfs:range xsd:string .
+
+ex:materialFamily a owl:DatatypeProperty ;
+    rdfs:label "合金类别"@zh ;
+    rdfs:range xsd:string .
+
+ex:missingReason a owl:DatatypeProperty ;
+    rdfs:label "缺失原因"@zh ;
+    rdfs:range xsd:string .
+
+ex:modelRef a owl:DatatypeProperty ;
+    rdfs:label "CAD或CAE模型标识"@zh ;
+    rdfs:range xsd:string .
+
+ex:newRule a owl:ObjectProperty ;
+    rdfs:label "变更后规则"@zh ;
+    rdfs:domain ex:ChangeEvent ;
+    rdfs:range ex:EngineeringRule .
+
+ex:newSnapshot a owl:ObjectProperty ;
+    rdfs:label "变更后输入"@zh ;
+    rdfs:domain ex:ChangeEvent ;
+    rdfs:range ex:InputSnapshot .
+
+ex:numberValue a owl:DatatypeProperty ;
+    rdfs:label "数值"@zh ;
+    rdfs:range xsd:decimal .
+
+ex:oldRule a owl:ObjectProperty ;
+    rdfs:label "变更前规则"@zh ;
+    rdfs:domain ex:ChangeEvent ;
+    rdfs:range ex:EngineeringRule .
+
+ex:oldSnapshot a owl:ObjectProperty ;
+    rdfs:label "变更前输入"@zh ;
+    rdfs:domain ex:ChangeEvent ;
+    rdfs:range ex:InputSnapshot .
+
+ex:outcome a owl:DatatypeProperty ;
+    rdfs:label "评价结论"@zh ;
+    rdfs:range xsd:string .
+
+ex:parameterDefinition a owl:ObjectProperty ;
+    rdfs:label "参数采用类型"@zh ;
+    rdfs:domain ex:ParameterValue ;
+    rdfs:range ex:ParameterDefinition .
+
+ex:parameterKind a owl:DatatypeProperty ;
+    rdfs:label "参数值类型"@zh ;
+    rdfs:range xsd:string .
+
+ex:priority a owl:DatatypeProperty ;
+    rdfs:label "目标优先级"@zh ;
+    rdfs:range xsd:integer .
+
+ex:quantityKind a owl:DatatypeProperty ;
+    rdfs:label "物理量类型"@zh ;
+    rdfs:range xsd:string .
+
+ex:reason a owl:DatatypeProperty ;
+    rdfs:label "判定或变更原因"@zh ;
+    rdfs:range xsd:string .
+
+ex:recordId a owl:DatatypeProperty ;
+    rdfs:label "记录标识"@zh ;
+    rdfs:range xsd:string .
+
+ex:regionOf a owl:ObjectProperty ;
+    rdfs:label "属于铸件"@zh ;
+    rdfs:domain ex:CastingRegion ;
+    rdfs:range ex:Casting .
+
+ex:requirementKind a owl:DatatypeProperty ;
+    rdfs:label "要求类别"@zh ;
+    rdfs:range xsd:string .
+
+ex:requirementText a owl:DatatypeProperty ;
+    rdfs:label "要求正文"@zh ;
+    rdfs:range xsd:string .
+
+ex:ruleFamilyId a owl:DatatypeProperty ;
+    rdfs:label "规则族标识"@zh ;
+    rdfs:range xsd:string .
+
+ex:ruleKind a owl:DatatypeProperty ;
+    rdfs:label "规则类别"@zh ;
+    rdfs:range xsd:string .
+
+ex:ruleProduces a owl:ObjectProperty ;
+    rdfs:label "规则生成参数类型"@zh ;
+    rdfs:domain ex:EngineeringRule ;
+    rdfs:range ex:ParameterDefinition .
+
+ex:ruleRequires a owl:ObjectProperty ;
+    rdfs:label "规则要求参数"@zh ;
+    rdfs:domain ex:EngineeringRule ;
+    rdfs:range ex:ParameterDefinition .
+
+ex:scopeMaterialFamily a owl:DatatypeProperty ;
+    rdfs:label "规则适用材料类别"@zh ;
+    rdfs:range xsd:string .
+
+ex:scopeProcess a owl:DatatypeProperty ;
+    rdfs:label "规则适用制造方式"@zh ;
+    rdfs:range xsd:string .
+
+ex:sourceClause a owl:DatatypeProperty ;
+    rdfs:label "知识来源条款"@zh ;
+    rdfs:range xsd:string .
+
+ex:sourceEdition a owl:DatatypeProperty ;
+    rdfs:label "知识来源版次"@zh ;
+    rdfs:range xsd:string .
+
+ex:sourceRef a owl:DatatypeProperty ;
+    rdfs:label "外部资料标识"@zh ;
+    rdfs:range xsd:string .
+
+ex:status a owl:DatatypeProperty ;
+    rdfs:label "状态"@zh ;
+    rdfs:range xsd:string .
+
+ex:structuredValue a owl:DatatypeProperty ;
+    rdfs:label "结构化值"@zh ;
+    rdfs:range xsd:string .
+
+ex:subjectKind a owl:DatatypeProperty ;
+    rdfs:label "参数适用对象"@zh ;
+    rdfs:range xsd:string .
+
+ex:supersedesCandidate a owl:ObjectProperty ;
+    rdfs:label "替代旧候选方案"@zh ;
+    rdfs:domain ex:CandidateDesign ;
+    rdfs:range ex:CandidateDesign .
+
+ex:supersedesRule a owl:ObjectProperty ;
+    rdfs:label "替代旧规则版本"@zh ;
+    rdfs:domain ex:EngineeringRule ;
+    rdfs:range ex:EngineeringRule .
+
+ex:supersedesSnapshot a owl:ObjectProperty ;
+    rdfs:label "替代旧输入版本"@zh ;
+    rdfs:domain ex:InputSnapshot ;
+    rdfs:range ex:InputSnapshot .
+
+ex:textValue a owl:DatatypeProperty ;
+    rdfs:label "文本值"@zh ;
+    rdfs:range xsd:string .
+
+ex:unitSymbol a owl:DatatypeProperty ;
+    rdfs:label "单位符号"@zh ;
+    rdfs:range xsd:string .
+
+ex:usesSnapshot a owl:ObjectProperty ;
+    rdfs:label "任务使用输入版本"@zh ;
+    rdfs:domain ex:DesignTask ;
+    rdfs:range ex:InputSnapshot .
+
+ex:valueOrigin a owl:DatatypeProperty ;
+    rdfs:label "参数来源类型"@zh ;
+    rdfs:range xsd:string .
+
+ex:version a owl:DatatypeProperty ;
+    rdfs:label "版本"@zh ;
+    rdfs:range xsd:string .
+
+ex:DesignRequirement a owl:Class ;
+    rdfs:label "设计目标或约束"@zh .
+
+ex:Casting a owl:Class ;
+    rdfs:label "铸件"@zh .
+
+ex:CastingRegion a owl:Class ;
+    rdfs:label "铸件区域"@zh .
+
+ex:Evaluation a owl:Class ;
+    rdfs:label "校验或评价结果"@zh .
+
+ex:GatingRiseringSystem a owl:Class ;
+    rdfs:label "浇冒系统"@zh .
+
+ex:SystemComponent a owl:Class ;
+    rdfs:label "浇冒系统构件"@zh .
+
+ex:DesignTask a owl:Class ;
+    rdfs:label "设计任务"@zh .
+
+ex:RuleApplication a owl:Class ;
+    rdfs:label "规则适用与执行记录"@zh .
+
+ex:ChangeEvent a owl:Class ;
+    rdfs:label "输入或规则变更"@zh .
+
+ex:DesignActivity a owl:Class ;
+    rdfs:label "设计活动"@zh .
+
+ex:EngineeringRule a owl:Class ;
+    rdfs:label "工程规则版本"@zh .
+
+ex:ParameterValue a owl:Class ;
+    rdfs:label "参数记录"@zh .
+
+ex:InputSnapshot a owl:Class ;
+    rdfs:label "设计输入版本"@zh .
+
+ex:CandidateDesign a owl:Class ;
+    rdfs:label "候选方案"@zh .
+
+ex:ParameterDefinition a owl:Class ;
+    rdfs:label "参数类型"@zh .
+

@@ -1,7 +1,8 @@
 import GraphEvidencePanel from "@/components/GraphEvidencePanel";
 import type { ConversationAnswer } from "@/lib/qa-sessions";
+import CastingAnswerDetails from "./CastingAnswerDetails";
 
-export default function RagAnswerPanel({ result }: { result: ConversationAnswer }) {
+export default function RagAnswerPanel({ result, threadId }: { result: ConversationAnswer; threadId?: string }) {
   const missing = result.sources.filter(source => source.status !== "available");
   const hidden = new Set(missing.filter(s => s.kind === "citation").map(s => s.citation_id));
   const citations = result.citations.filter(c => !hidden.has(c.citation_id));
@@ -12,11 +13,12 @@ export default function RagAnswerPanel({ result }: { result: ConversationAnswer 
   return <div className="min-w-0">
     <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
       <span className="rounded bg-slate-100 px-2 py-1 text-slate-700">
-        {result.context_status === "clarification" ? "需要澄清" : result.context_status === "no_context" ? "暂无充分依据" : "知识库回答"}
+        {result.context_status === "casting_design" ? "浇冒系统设计" : result.context_status === "clarification" ? "需要澄清" : result.context_status === "no_context" ? "暂无充分依据" : "知识库回答"}
       </span>
       {result.llm.model && <span>模型：{result.llm.model}{result.llm.provider ? ` · ${result.llm.provider}` : ""}</span>}
     </div>
     <p className="my-4 whitespace-pre-wrap break-words text-sm leading-7 text-slate-800">{result.answer}</p>
+    {result.context_status === "casting_design" && result.casting && <CastingAnswerDetails info={result.casting} threadId={threadId} />}
     {missing.length > 0 && <div className="mb-4 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs leading-6 text-amber-900">
       <p>原回答已保留，部分证据现已不可用。</p>
       {missing.map(source => <p key={source.snapshot_id}>

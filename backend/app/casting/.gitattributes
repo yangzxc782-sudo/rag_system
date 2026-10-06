@@ -1,0 +1,3 @@
+# Preserve the attachment and active rule bytes, including on Windows checkouts.
+vendor/v5_1/** -text
+rules/**/rules.json -text

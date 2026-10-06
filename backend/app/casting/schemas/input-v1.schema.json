@@ -1,0 +1,520 @@
+{
+  "$defs": {
+    "CastingHotspot": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.:-]+$",
+          "title": "Id",
+          "type": "string"
+        },
+        "modulus_mm": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "gt": 0,
+          "title": "Modulus Mm"
+        },
+        "geometry_ref": {
+          "maxLength": 512,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Geometry Ref",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "modulus_mm",
+        "geometry_ref"
+      ],
+      "title": "CastingHotspot",
+      "type": "object"
+    },
+    "CastingIngateSite": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.:-]+$",
+          "title": "Id",
+          "type": "string"
+        },
+        "region": {
+          "maxLength": 512,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Region",
+          "type": "string"
+        },
+        "geometry_ref": {
+          "maxLength": 512,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Geometry Ref",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "region",
+        "geometry_ref"
+      ],
+      "title": "CastingIngateSite",
+      "type": "object"
+    },
+    "CastingParameterMetadata": {
+      "additionalProperties": false,
+      "properties": {
+        "unit": {
+          "maxLength": 32,
+          "title": "Unit",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "Confirmed",
+            "Derived",
+            "Proposed",
+            "Missing",
+            "Conflicted"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "source_ref": {
+          "maxLength": 512,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Source Ref",
+          "type": "string"
+        },
+        "missing_reason": {
+          "maxLength": 512,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Missing Reason",
+          "type": "string"
+        }
+      },
+      "title": "CastingParameterMetadata",
+      "type": "object"
+    },
+    "CastingRiserSite": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.:-]+$",
+          "title": "Id",
+          "type": "string"
+        },
+        "feeds": {
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_.:-]+$",
+            "type": "string"
+          },
+          "maxItems": 16,
+          "minItems": 1,
+          "title": "Feeds",
+          "type": "array"
+        },
+        "max_diameter_mm": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "gt": 0,
+          "title": "Max Diameter Mm"
+        },
+        "geometry_ref": {
+          "maxLength": 512,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Geometry Ref",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "feeds",
+        "max_diameter_mm",
+        "geometry_ref"
+      ],
+      "title": "CastingRiserSite",
+      "type": "object"
+    },
+    "CastingSourceRefs": {
+      "additionalProperties": false,
+      "properties": {
+        "material": {
+          "maxLength": 512,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Material",
+          "type": "string"
+        },
+        "geometry": {
+          "maxLength": 512,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Geometry",
+          "type": "string"
+        },
+        "process": {
+          "maxLength": 512,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Process",
+          "type": "string"
+        },
+        "printer": {
+          "maxLength": 512,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Printer",
+          "type": "string"
+        }
+      },
+      "required": [
+        "material",
+        "geometry",
+        "process",
+        "printer"
+      ],
+      "title": "CastingSourceRefs",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "case_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9_.:-]+$",
+      "title": "Case Id",
+      "type": "string"
+    },
+    "snapshot_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9_.:-]+$",
+      "title": "Snapshot Id",
+      "type": "string"
+    },
+    "product_name": {
+      "anyOf": [
+        {
+          "maxLength": 512,
+          "minLength": 1,
+          "pattern": "\\S",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Product Name"
+    },
+    "material_family": {
+      "maxLength": 512,
+      "minLength": 1,
+      "pattern": "\\S",
+      "title": "Material Family",
+      "type": "string"
+    },
+    "manufacturing_process": {
+      "maxLength": 512,
+      "minLength": 1,
+      "pattern": "\\S",
+      "title": "Manufacturing Process",
+      "type": "string"
+    },
+    "pouring_method": {
+      "maxLength": 512,
+      "minLength": 1,
+      "pattern": "\\S",
+      "title": "Pouring Method",
+      "type": "string"
+    },
+    "casting_mass_kg": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "number"
+        }
+      ],
+      "gt": 0,
+      "title": "Casting Mass Kg"
+    },
+    "casting_envelope_mm": {
+      "items": {
+        "anyOf": [
+          {
+            "type": "integer"
+          },
+          {
+            "type": "number"
+          }
+        ],
+        "gt": 0
+      },
+      "maxItems": 3,
+      "minItems": 3,
+      "title": "Casting Envelope Mm",
+      "type": "array"
+    },
+    "main_wall_mm": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "number"
+        }
+      ],
+      "gt": 0,
+      "title": "Main Wall Mm"
+    },
+    "max_wall_mm": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "number"
+        }
+      ],
+      "gt": 0,
+      "title": "Max Wall Mm"
+    },
+    "min_wall_mm": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "number"
+        }
+      ],
+      "gt": 0,
+      "title": "Min Wall Mm"
+    },
+    "liquid_density_kg_m3": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "number"
+        }
+      ],
+      "gt": 0,
+      "title": "Liquid Density Kg M3"
+    },
+    "effective_head_mm": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "number"
+        }
+      ],
+      "gt": 0,
+      "title": "Effective Head Mm"
+    },
+    "target_pour_time_s": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "number"
+        }
+      ],
+      "gt": 0,
+      "title": "Target Pour Time S"
+    },
+    "pour_temperature_degC": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "number"
+        }
+      ],
+      "gt": 0,
+      "title": "Pour Temperature Degc"
+    },
+    "gating_metal_estimate_kg": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "number"
+        }
+      ],
+      "ge": 0,
+      "title": "Gating Metal Estimate Kg"
+    },
+    "sand_mass_estimate_kg": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "number"
+        }
+      ],
+      "gt": 0,
+      "title": "Sand Mass Estimate Kg"
+    },
+    "print_block_mm": {
+      "items": {
+        "anyOf": [
+          {
+            "type": "integer"
+          },
+          {
+            "type": "number"
+          }
+        ],
+        "gt": 0
+      },
+      "maxItems": 3,
+      "minItems": 3,
+      "title": "Print Block Mm",
+      "type": "array"
+    },
+    "sand_cover_mm": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "number"
+        }
+      ],
+      "gt": 0,
+      "title": "Sand Cover Mm"
+    },
+    "thermal_curve_status": {
+      "anyOf": [
+        {
+          "maxLength": 512,
+          "minLength": 1,
+          "pattern": "\\S",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Thermal Curve Status"
+    },
+    "source_refs": {
+      "$ref": "#/$defs/CastingSourceRefs"
+    },
+    "hotspots": {
+      "items": {
+        "$ref": "#/$defs/CastingHotspot"
+      },
+      "maxItems": 16,
+      "minItems": 1,
+      "title": "Hotspots",
+      "type": "array"
+    },
+    "riser_sites": {
+      "items": {
+        "$ref": "#/$defs/CastingRiserSite"
+      },
+      "maxItems": 24,
+      "title": "Riser Sites",
+      "type": "array"
+    },
+    "ingate_sites": {
+      "items": {
+        "$ref": "#/$defs/CastingIngateSite"
+      },
+      "maxItems": 32,
+      "title": "Ingate Sites",
+      "type": "array"
+    },
+    "forbidden_gate_regions": {
+      "items": {
+        "maxLength": 512,
+        "minLength": 1,
+        "pattern": "\\S",
+        "type": "string"
+      },
+      "maxItems": 64,
+      "title": "Forbidden Gate Regions",
+      "type": "array"
+    },
+    "parameter_metadata": {
+      "maxProperties": 64,
+      "patternProperties": {
+        "^(material_family|casting_mass_kg|main_wall_mm|min_wall_mm|max_wall_mm|liquid_density_kg_m3|casting_envelope_mm|target_pour_time_s|effective_head_mm|pour_temperature_degC|gating_metal_estimate_kg|sand_mass_estimate_kg|print_block_mm|sand_cover_mm|riser_sites|ingate_sites|forbidden_gate_regions|hotspots\\.(0|[1-9][0-9]*)\\.(modulus_mm|geometry_ref))$": {
+          "$ref": "#/$defs/CastingParameterMetadata"
+        }
+      },
+      "propertyNames": {
+        "maxLength": 128
+      },
+      "title": "Parameter Metadata",
+      "type": "object"
+    }
+  },
+  "required": [
+    "case_id",
+    "snapshot_id",
+    "material_family",
+    "manufacturing_process",
+    "pouring_method",
+    "casting_mass_kg",
+    "casting_envelope_mm",
+    "main_wall_mm",
+    "max_wall_mm",
+    "min_wall_mm",
+    "liquid_density_kg_m3",
+    "effective_head_mm",
+    "target_pour_time_s",
+    "pour_temperature_degC",
+    "gating_metal_estimate_kg",
+    "sand_mass_estimate_kg",
+    "print_block_mm",
+    "sand_cover_mm",
+    "source_refs",
+    "hotspots",
+    "riser_sites",
+    "ingate_sites",
+    "forbidden_gate_regions"
+  ],
+  "title": "CastingDesignInput",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:rag-system:casting:input:v1",
+  "description": "input-v1 传输结构契约。仍须通过原始引擎 admission；单位转换、规则适用性、参数确认、字段关系由引擎判定。文件最多 262144 字节、嵌套深度最多 16，拒绝重复键和非有限数值。"
+}

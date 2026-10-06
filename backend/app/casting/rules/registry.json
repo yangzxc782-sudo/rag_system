@@ -1,0 +1,30 @@
+{
+  "registry_version": 1,
+  "project_defaults": {
+    "project-default": "PMP-TRIAL-RULES@1"
+  },
+  "entries": [
+    {
+      "key": "PMP-TRIAL-RULES@1",
+      "rule_id": "PMP-TRIAL-RULES",
+      "rule_version": "1",
+      "enabled": true,
+      "usage": "active_project_rule",
+      "project_key": "project-default",
+      "enterprise_key": null,
+      "scope": {
+        "material_family": "ZG270-500",
+        "manufacturing_process": "3d-printed-sand",
+        "pouring_method": "gravity"
+      },
+      "relative_path": "project-default/PMP-TRIAL-RULES/1/rules.json",
+      "sha256": "a8023cb854eee6e1b7690b8cd9993b087af6535cd1cbb3c4dd3ae66a0ff263b2",
+      "engine_id": "casting-v5.1-cli",
+      "engine_content_sha256": "40b034b272cc9c4af3411338af5a4508303bb7e155257c8f33a4d60c6798745f",
+      "source_ref": "project-test-rulebook",
+      "source_edition": "case-v1",
+      "upstream_notice": "合成项目试验阈值，不是国家标准或生产工艺批准值",
+      "activation_basis": "Project owner explicitly selected these supplied rules as the current formal project rules."
+    }
+  ]
+}

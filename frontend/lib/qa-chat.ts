@@ -52,6 +52,10 @@ export class ChatSession {
     if (status.thread_id !== this.threadId || (status.input && status.input.request_id !== status.request_id)) {
       throw new QaApiError("INVALID_RESPONSE");
     }
+    if (status.input && this.state.pending?.request_id === status.request_id
+      && (status.input.casting_input_file_id ?? null) !== (this.state.pending.casting_input_file_id ?? null)) {
+      throw new QaApiError("INVALID_RESPONSE");
+    }
     const pending = status.input ?? (this.state.pending?.request_id === status.request_id ? this.state.pending : null);
     this.update(signal, { status, pending, missingRequest: false });
     if (signal.aborted) return;
@@ -143,9 +147,10 @@ export class ChatSession {
     if (!this.canRetry || !this.state.pending) return false;
     return this.post(this.state.pending);
   }
-  async send(question: string, limit: number, documentId: string | null) {
+  async send(question: string, limit: number, documentId: string | null, castingInputFileId?: string | null) {
     if (this.blocked) return false;
-    return this.post({ request_id: crypto.randomUUID(), question, limit, document_id: documentId });
+    return this.post({ request_id: crypto.randomUUID(), question, limit, document_id: documentId,
+      ...(castingInputFileId ? { casting_input_file_id: castingInputFileId } : {}) });
   }
   private async post(input: TurnInput) {
     const signal = this.controller.signal;
@@ -166,6 +171,12 @@ export class ChatSession {
         }
         if (error instanceof QaApiError && error.code === "IDEMPOTENCY_CONFLICT") {
           this.update(signal, { error: qaErrorMessage(error), retryForbidden: true });
+        }
+        if (error instanceof QaApiError && ["CASTING_FEATURE_DISABLED", "CASTING_FILE_NOT_FOUND", "CASTING_FILE_NOT_READY", "CASTING_INPUT_INVALID"]
+          .includes(error.code) && this.state.missingRequest && !signal.aborted) {
+          // Confirmed unaccepted input: allow correction without resubmitting a stale file.
+          clearPending(this.threadId, input.request_id);
+          this.update(signal, { pending: null, status: null, missingRequest: false, retryForbidden: true, error: qaErrorMessage(error) });
         }
       }
     } finally { this.update(signal, { working: false }); }

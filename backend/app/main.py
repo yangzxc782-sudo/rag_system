@@ -59,7 +59,23 @@ def _lifespan(settings: Settings):
                 from app.services.conversations import Conversations
                 service = Conversations(conversation) if conversation is not None and conversation.rag_nodes is not None else None
                 app.state.conversations = service
+                casting_storage = None
+                app.state.casting_design = None
                 try:
+                    if settings.casting_design_enabled:
+                        import os
+                        from app.core.config import BACKEND_DIR
+                        from app.services.casting_design import CastingDesignService
+                        from app.services.casting_engine import CastingEngine
+                        from app.services.casting_files import CastingFiles, CastingObjectStorage
+                        casting_storage = CastingObjectStorage(settings)
+                        files = CastingFiles(conversation.session_factory, casting_storage, bucket=settings.minio_bucket)
+                        python = settings.casting_python_executable or BACKEND_DIR / ".venv-casting" / (
+                            "Scripts/python.exe" if os.name == "nt" else "bin/python")
+                        app.state.casting_design = CastingDesignService(files,
+                            CastingEngine(python_executable=python, work_root=settings.casting_work_root),
+                            project_key=settings.casting_project_key)
+                        conversation.casting_service = app.state.casting_design
                     if bool(getattr(settings, "document_deletion_executor_enabled", False)):
                         executor = DocumentDeletionExecutor(settings=settings)
                         app.state.document_deletion_executor = executor
@@ -67,8 +83,13 @@ def _lifespan(settings: Settings):
                     yield
                 finally:
                     try:
-                        if service is not None:
-                            service.close()
+                        try:
+                            if casting_storage is not None:
+                                casting_storage.close()
+                        finally:
+                            app.state.casting_design = None
+                            if service is not None:
+                                service.close()
                     finally:
                         app.state.conversations = None
                         app.state.conversation_graph = None

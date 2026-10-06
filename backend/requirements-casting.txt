@@ -1,0 +1,10 @@
+# Isolated casting engine only. Verified against the supplied v5.1 CLI.
+# Do not install these packages into the web backend environment.
+html5rdf==1.2.1
+owlrl==7.6.2
+packaging==26.3
+prettytable==3.18.0
+pyparsing==3.3.3
+pyshacl==0.40.1
+rdflib==7.6.0
+wcwidth==0.9.1

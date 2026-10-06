@@ -44,6 +44,7 @@ class LocalLLMProvider:
         self.model = metadata.model
         self.temperature = float(getattr(settings, "llm_temperature"))
         self.max_tokens = int(getattr(settings, "llm_max_tokens"))
+        self.capabilities = LLMCapabilities(True, True, bool(getattr(settings, "llm_local_supports_tools", False)), False, False)
         api_key = str(getattr(settings, "llm_api_key", "")).strip() or "ollama"
         self._transport = OpenAIChatTransport(
             base_url=str(getattr(settings, "llm_base_url")).strip(),

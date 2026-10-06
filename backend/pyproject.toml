@@ -41,11 +41,23 @@ dev = [
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["app*"]
+exclude = ["app.casting.vendor*"]
+
+[tool.setuptools.package-data]
+"app.casting" = [
+  "engine-manifest.json",
+  "rules/registry.json",
+  "rules/*/*/*/rules.json",
+  "schemas/*.json",
+  "vendor/v5_1/*",
+  "vendor/v5_1/examples/*",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
 markers = [
+  "casting_engine: isolated casting engine subprocess tests; requires requirements-casting.txt",
   "phase13_integration: synthetic PostgreSQL tests gated by a fresh isolated Phase 13 instance",
   "integration: destructive Phase 10 tests gated by dedicated targets and rollout authorization",
   "phase10_knowledge_deferred: Deferred by project owner pending Knowledge Item Library refactor.",

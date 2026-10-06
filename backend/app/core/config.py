@@ -131,6 +131,8 @@ class Settings(BaseSettings):
     llm_remote_model: str = ""
     llm_remote_timeout_seconds: int = 60
     llm_remote_supports_json_mode: bool = False
+    llm_remote_supports_tools: bool = False
+    llm_local_supports_tools: bool = False
     llm_remote_allow_insecure_http: bool = False
 
     rag_top_k: int = 8
@@ -142,7 +144,11 @@ class Settings(BaseSettings):
 
     # Phase 13: opt in only after the separately authorized 0010 migration.
     conversation_enabled: bool = False
-    conversation_graph_version: Literal["phase13_m2_v1", "phase13_m3_v2"] = "phase13_m3_v2"
+    casting_design_enabled: bool = False
+    casting_work_root: Path = BACKEND_DIR / ".casting-runs.tmp"
+    casting_python_executable: Path | None = None
+    casting_project_key: str = Field(default="project-default", min_length=1, max_length=128)
+    conversation_graph_version: Literal["phase13_m2_v1", "phase13_m3_v2", "casting_v1_v3"] = "phase13_m3_v2"
     conversation_answer_max_input_tokens: int = Field(default=8192, ge=1024, le=100000)
     conversation_answer_graph_tokens: int = Field(default=1024, ge=0, le=50000)
     conversation_answer_safety_tokens: int = Field(default=1024, ge=128, le=8192)
@@ -199,6 +205,8 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_search_settings(self) -> "Settings":
+        if self.casting_design_enabled and not self.conversation_enabled:
+            raise ValueError("casting_design_enabled requires conversation_enabled")
         if self.conversation_checkpoint_pool_min_size > self.conversation_checkpoint_pool_max_size:
             raise ValueError("conversation checkpoint pool min_size exceeds max_size")
         self.search_vector_space = self.search_vector_space.strip().lower()

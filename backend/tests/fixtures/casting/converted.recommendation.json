@@ -1,0 +1,3644 @@
+{
+  "case_id": "PMP-DV-920-01",
+  "snapshot_id": "PMP-S1",
+  "rule_set": "PMP-TRIAL-RULES",
+  "rule_version": "1",
+  "input_fingerprint": "880a14e57d9cf665eab8524eb6174ce3eecea2e3f013187c07509b0c48e74c0b",
+  "rules_fingerprint": "088d4770d147c3238f287442c1e353b522b8d719ccb5cc4c2445c011a9dfc161",
+  "input_facts": {
+    "casting_mass_kg": 630.0,
+    "main_wall_mm": 24,
+    "max_wall_mm": 110,
+    "min_wall_mm": 18,
+    "liquid_density_kg_m3": 7000,
+    "target_pour_time_s": 37,
+    "effective_head_mm": 450,
+    "gating_metal_estimate_kg": 90,
+    "sand_mass_estimate_kg": 4650,
+    "hotspot_moduli_mm": {
+      "HS-01": 30,
+      "HS-02": 32,
+      "HS-03": 34,
+      "HS-04": 31,
+      "HS-05": 29,
+      "HS-06": 33
+    },
+    "riser_sites": [
+      [
+        "RS-01",
+        [
+          "HS-01"
+        ],
+        230
+      ],
+      [
+        "RS-02",
+        [
+          "HS-02"
+        ],
+        230
+      ],
+      [
+        "RS-03",
+        [
+          "HS-03"
+        ],
+        230
+      ],
+      [
+        "RS-04",
+        [
+          "HS-04"
+        ],
+        230
+      ],
+      [
+        "RS-05",
+        [
+          "HS-05"
+        ],
+        230
+      ],
+      [
+        "RS-06",
+        [
+          "HS-06"
+        ],
+        230
+      ],
+      [
+        "RS-05-06-SHARED",
+        [
+          "HS-05",
+          "HS-06"
+        ],
+        230
+      ]
+    ],
+    "ingate_sites": [
+      [
+        "IG-01",
+        "outer-rib-1"
+      ],
+      [
+        "IG-02",
+        "outer-rib-2"
+      ],
+      [
+        "IG-03",
+        "outer-rib-3"
+      ],
+      [
+        "IG-04",
+        "outer-rib-4"
+      ],
+      [
+        "IG-05",
+        "outer-rib-5"
+      ],
+      [
+        "IG-06",
+        "outer-rib-6"
+      ],
+      [
+        "IG-FLANGE",
+        "flange-face-L"
+      ]
+    ],
+    "forbidden_gate_regions": [
+      "flange-face-L",
+      "flange-face-R",
+      "pressure-NDT-zone"
+    ],
+    "print_block_mm": [
+      1450,
+      1100,
+      790
+    ],
+    "sand_cover_mm": 45
+  },
+  "input_digest": {
+    "casting_mass_kg": 630.0,
+    "hotspots": 6,
+    "available_riser_sites": 7,
+    "available_ingate_sites": 7
+  },
+  "ranking_basis": "先满足项目硬约束；其后按出品率降序、冒口数量升序排序",
+  "recommended_candidate_id": "PMP-S1-C01",
+  "candidates": [
+    {
+      "strategy": "local-min",
+      "site_ids": [
+        "RS-01",
+        "RS-02",
+        "RS-03",
+        "RS-04",
+        "RS-05",
+        "RS-06"
+      ],
+      "risers": [
+        {
+          "site_id": "RS-01",
+          "site_ref": "cad://PMP-DV-920-01/RS-01",
+          "feeds": [
+            "HS-01"
+          ],
+          "catalog_id": "R170",
+          "diameter_mm": 170,
+          "height_mm": 220,
+          "modulus_mm": 35.619,
+          "required_modulus_mm": 34.5,
+          "metal_mass_kg": 34.955
+        },
+        {
+          "site_id": "RS-02",
+          "site_ref": "cad://PMP-DV-920-01/RS-02",
+          "feeds": [
+            "HS-02"
+          ],
+          "catalog_id": "R180",
+          "diameter_mm": 180,
+          "height_mm": 230,
+          "modulus_mm": 37.636,
+          "required_modulus_mm": 36.8,
+          "metal_mass_kg": 40.97
+        },
+        {
+          "site_id": "RS-03",
+          "site_ref": "cad://PMP-DV-920-01/RS-03",
+          "feeds": [
+            "HS-03"
+          ],
+          "catalog_id": "R190",
+          "diameter_mm": 190,
+          "height_mm": 240,
+          "modulus_mm": 39.652,
+          "required_modulus_mm": 39.1,
+          "metal_mass_kg": 47.633
+        },
+        {
+          "site_id": "RS-04",
+          "site_ref": "cad://PMP-DV-920-01/RS-04",
+          "feeds": [
+            "HS-04"
+          ],
+          "catalog_id": "R180",
+          "diameter_mm": 180,
+          "height_mm": 230,
+          "modulus_mm": 37.636,
+          "required_modulus_mm": 35.65,
+          "metal_mass_kg": 40.97
+        },
+        {
+          "site_id": "RS-05",
+          "site_ref": "cad://PMP-DV-920-01/RS-05",
+          "feeds": [
+            "HS-05"
+          ],
+          "catalog_id": "R160",
+          "diameter_mm": 160,
+          "height_mm": 210,
+          "modulus_mm": 33.6,
+          "required_modulus_mm": 33.35,
+          "metal_mass_kg": 29.556
+        },
+        {
+          "site_id": "RS-06",
+          "site_ref": "cad://PMP-DV-920-01/RS-06",
+          "feeds": [
+            "HS-06"
+          ],
+          "catalog_id": "R190",
+          "diameter_mm": 190,
+          "height_mm": 240,
+          "modulus_mm": 39.652,
+          "required_modulus_mm": 37.95,
+          "metal_mass_kg": 47.633
+        }
+      ],
+      "riser_count": 6,
+      "gating": {
+        "form": "gravity-bottom-gated",
+        "sprue_throat_area_mm2": 2200,
+        "sprue_equivalent_diameter_mm": 52.93,
+        "required_sprue_area_mm2": 2082.77,
+        "runner_count": 2,
+        "runner_section_mm": [
+          55,
+          40
+        ],
+        "runner_total_area_mm2": 4400,
+        "ingate_count": 6,
+        "ingate_section_mm": [
+          30,
+          20
+        ],
+        "ingate_total_area_mm2": 3600,
+        "area_ratio": [
+          1,
+          2.0,
+          1.636
+        ],
+        "ingates": [
+          {
+            "site_id": "IG-01",
+            "region": "outer-rib-1",
+            "geometry_ref": "cad://PMP-DV-920-01/IG-01",
+            "section_mm": [
+              30,
+              20
+            ]
+          },
+          {
+            "site_id": "IG-02",
+            "region": "outer-rib-2",
+            "geometry_ref": "cad://PMP-DV-920-01/IG-02",
+            "section_mm": [
+              30,
+              20
+            ]
+          },
+          {
+            "site_id": "IG-03",
+            "region": "outer-rib-3",
+            "geometry_ref": "cad://PMP-DV-920-01/IG-03",
+            "section_mm": [
+              30,
+              20
+            ]
+          },
+          {
+            "site_id": "IG-04",
+            "region": "outer-rib-4",
+            "geometry_ref": "cad://PMP-DV-920-01/IG-04",
+            "section_mm": [
+              30,
+              20
+            ]
+          },
+          {
+            "site_id": "IG-05",
+            "region": "outer-rib-5",
+            "geometry_ref": "cad://PMP-DV-920-01/IG-05",
+            "section_mm": [
+              30,
+              20
+            ]
+          },
+          {
+            "site_id": "IG-06",
+            "region": "outer-rib-6",
+            "geometry_ref": "cad://PMP-DV-920-01/IG-06",
+            "section_mm": [
+              30,
+              20
+            ]
+          }
+        ],
+        "pour_time_s": 37,
+        "effective_head_mm": 450,
+        "pour_temperature_degC": 1585,
+        "filter_count": 2,
+        "filter_type": "F-100-TRIAL",
+        "pouring_basin_count": 1
+      },
+      "gross_pour_mass_kg": 961.72,
+      "riser_metal_mass_kg": 241.72,
+      "gating_metal_estimate_kg": 90,
+      "yield_percent": 65.51,
+      "sand_metal_ratio": 4.84,
+      "checks": {
+        "R-RISER-01": true,
+        "R-COVER-01": true,
+        "R-FLOW-01": true,
+        "R-RATIO-01": true,
+        "R-YIELD-01": true,
+        "R-PRINT-01": true,
+        "R-EXCLUSION-01": true
+      },
+      "preliminary_feasible": true,
+      "trace": {
+        "input_parameters": [
+          "PD_MaterialRequirement",
+          "PD_CastingMass",
+          "PD_CastingModulus",
+          "PD_LiquidMetalDensity"
+        ],
+        "other_input_fields": [
+          "target_pour_time_s",
+          "effective_head_mm",
+          "gating_metal_estimate_kg",
+          "print_block_mm",
+          "riser_sites",
+          "ingate_sites"
+        ],
+        "rule_ids": [
+          "R-RISER-01",
+          "R-COVER-01",
+          "R-FLOW-01",
+          "R-RATIO-01",
+          "R-YIELD-01",
+          "R-PRINT-01",
+          "R-EXCLUSION-01"
+        ],
+        "selection_reason": "每处热节按项目模数比从允许位置及规格目录选型；浇道按估算总浇注量与截面目录选型"
+      },
+      "ontology_status": "NeedsReview",
+      "real_cae": "Pending",
+      "used_input_snapshot": "PMP-S1",
+      "used_rule_version": "1",
+      "pending_evidence": [
+        "真实温度相关热物性曲线",
+        "CAD三维干涉与补缩距离校核",
+        "充型凝固CAE",
+        "过滤器容量和砂型试制",
+        "客户NDT验收等级确认"
+      ],
+      "id": "PMP-S1-C01",
+      "rank": 1,
+      "model_ref": "cad://proposed/PMP-S1/candidate-01",
+      "explanations": [
+        {
+          "kind": "riser",
+          "rule_id": "R-RISER-01",
+          "version": "1",
+          "site_id": "RS-01",
+          "output_node": "PV_PMP-S1-C01_riser_spec_1",
+          "inputs": [
+            {
+              "id": "HS-01",
+              "modulus_mm": 30,
+              "path": "hotspots.0.modulus_mm",
+              "source_ref": "cad-rev-B"
+            }
+          ],
+          "required_modulus_mm": 34.5,
+          "ratio": 1.15,
+          "max_diameter_mm": 230,
+          "formula": "M_required = ratio × max(M_hotspot); M_catalog = r × h / (2h + r)",
+          "strategy": "local-min",
+          "selected": "R170",
+          "options": [
+            {
+              "catalog_id": "R160",
+              "modulus_mm": 33.599999999999994,
+              "diameter_mm": 160,
+              "selected": false,
+              "reasons": [
+                "模数不足"
+              ],
+              "outcome": "Excluded"
+            },
+            {
+              "catalog_id": "R170",
+              "modulus_mm": 35.61904761904761,
+              "diameter_mm": 170,
+              "selected": true,
+              "reasons": [],
+              "outcome": "Selected"
+            },
+            {
+              "catalog_id": "R180",
+              "modulus_mm": 37.63636363636365,
+              "diameter_mm": 180,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R190",
+              "modulus_mm": 39.65217391304348,
+              "diameter_mm": 190,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R200",
+              "modulus_mm": 41.666666666666664,
+              "diameter_mm": 200,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R210",
+              "modulus_mm": 43.68,
+              "diameter_mm": 210,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R216",
+              "modulus_mm": 44.99999999999999,
+              "diameter_mm": 216,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R220",
+              "modulus_mm": 45.97014925373134,
+              "diameter_mm": 220,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R230",
+              "modulus_mm": 47.985611510791365,
+              "diameter_mm": 230,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            }
+          ],
+          "source_ref": "project-test-rulebook",
+          "source_edition": "case-v1",
+          "reason": "每个位置按金属质量选最小可行规格"
+        },
+        {
+          "kind": "riser",
+          "rule_id": "R-RISER-01",
+          "version": "1",
+          "site_id": "RS-02",
+          "output_node": "PV_PMP-S1-C01_riser_spec_2",
+          "inputs": [
+            {
+              "id": "HS-02",
+              "modulus_mm": 32,
+              "path": "hotspots.1.modulus_mm",
+              "source_ref": "cad-rev-B"
+            }
+          ],
+          "required_modulus_mm": 36.8,
+          "ratio": 1.15,
+          "max_diameter_mm": 230,
+          "formula": "M_required = ratio × max(M_hotspot); M_catalog = r × h / (2h + r)",
+          "strategy": "local-min",
+          "selected": "R180",
+          "options": [
+            {
+              "catalog_id": "R160",
+              "modulus_mm": 33.599999999999994,
+              "diameter_mm": 160,
+              "selected": false,
+              "reasons": [
+                "模数不足"
+              ],
+              "outcome": "Excluded"
+            },
+            {
+              "catalog_id": "R170",
+              "modulus_mm": 35.61904761904761,
+              "diameter_mm": 170,
+              "selected": false,
+              "reasons": [
+                "模数不足"
+              ],
+              "outcome": "Excluded"
+            },
+            {
+              "catalog_id": "R180",
+              "modulus_mm": 37.63636363636365,
+              "diameter_mm": 180,
+              "selected": true,
+              "reasons": [],
+              "outcome": "Selected"
+            },
+            {
+              "catalog_id": "R190",
+              "modulus_mm": 39.65217391304348,
+              "diameter_mm": 190,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R200",
+              "modulus_mm": 41.666666666666664,
+              "diameter_mm": 200,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R210",
+              "modulus_mm": 43.68,
+              "diameter_mm": 210,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R216",
+              "modulus_mm": 44.99999999999999,
+              "diameter_mm": 216,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R220",
+              "modulus_mm": 45.97014925373134,
+              "diameter_mm": 220,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R230",
+              "modulus_mm": 47.985611510791365,
+              "diameter_mm": 230,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            }
+          ],
+          "source_ref": "project-test-rulebook",
+          "source_edition": "case-v1",
+          "reason": "每个位置按金属质量选最小可行规格"
+        },
+        {
+          "kind": "riser",
+          "rule_id": "R-RISER-01",
+          "version": "1",
+          "site_id": "RS-03",
+          "output_node": "PV_PMP-S1-C01_riser_spec_3",
+          "inputs": [
+            {
+              "id": "HS-03",
+              "modulus_mm": 34,
+              "path": "hotspots.2.modulus_mm",
+              "source_ref": "cad-rev-B"
+            }
+          ],
+          "required_modulus_mm": 39.099999999999994,
+          "ratio": 1.15,
+          "max_diameter_mm": 230,
+          "formula": "M_required = ratio × max(M_hotspot); M_catalog = r × h / (2h + r)",
+          "strategy": "local-min",
+          "selected": "R190",
+          "options": [
+            {
+              "catalog_id": "R160",
+              "modulus_mm": 33.599999999999994,
+              "diameter_mm": 160,
+              "selected": false,
+              "reasons": [
+                "模数不足"
+              ],
+              "outcome": "Excluded"
+            },
+            {
+              "catalog_id": "R170",
+              "modulus_mm": 35.61904761904761,
+              "diameter_mm": 170,
+              "selected": false,
+              "reasons": [
+                "模数不足"
+              ],
+              "outcome": "Excluded"
+            },
+            {
+              "catalog_id": "R180",
+              "modulus_mm": 37.63636363636365,
+              "diameter_mm": 180,
+              "selected": false,
+              "reasons": [
+                "模数不足"
+              ],
+              "outcome": "Excluded"
+            },
+            {
+              "catalog_id": "R190",
+              "modulus_mm": 39.65217391304348,
+              "diameter_mm": 190,
+              "selected": true,
+              "reasons": [],
+              "outcome": "Selected"
+            },
+            {
+              "catalog_id": "R200",
+              "modulus_mm": 41.666666666666664,
+              "diameter_mm": 200,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R210",
+              "modulus_mm": 43.68,
+              "diameter_mm": 210,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R216",
+              "modulus_mm": 44.99999999999999,
+              "diameter_mm": 216,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R220",
+              "modulus_mm": 45.97014925373134,
+              "diameter_mm": 220,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R230",
+              "modulus_mm": 47.985611510791365,
+              "diameter_mm": 230,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            }
+          ],
+          "source_ref": "project-test-rulebook",
+          "source_edition": "case-v1",
+          "reason": "每个位置按金属质量选最小可行规格"
+        },
+        {
+          "kind": "riser",
+          "rule_id": "R-RISER-01",
+          "version": "1",
+          "site_id": "RS-04",
+          "output_node": "PV_PMP-S1-C01_riser_spec_4",
+          "inputs": [
+            {
+              "id": "HS-04",
+              "modulus_mm": 31,
+              "path": "hotspots.3.modulus_mm",
+              "source_ref": "cad-rev-B"
+            }
+          ],
+          "required_modulus_mm": 35.65,
+          "ratio": 1.15,
+          "max_diameter_mm": 230,
+          "formula": "M_required = ratio × max(M_hotspot); M_catalog = r × h / (2h + r)",
+          "strategy": "local-min",
+          "selected": "R180",
+          "options": [
+            {
+              "catalog_id": "R160",
+              "modulus_mm": 33.599999999999994,
+              "diameter_mm": 160,
+              "selected": false,
+              "reasons": [
+                "模数不足"
+              ],
+              "outcome": "Excluded"
+            },
+            {
+              "catalog_id": "R170",
+              "modulus_mm": 35.61904761904761,
+              "diameter_mm": 170,
+              "selected": false,
+              "reasons": [
+                "模数不足"
+              ],
+              "outcome": "Excluded"
+            },
+            {
+              "catalog_id": "R180",
+              "modulus_mm": 37.63636363636365,
+              "diameter_mm": 180,
+              "selected": true,
+              "reasons": [],
+              "outcome": "Selected"
+            },
+            {
+              "catalog_id": "R190",
+              "modulus_mm": 39.65217391304348,
+              "diameter_mm": 190,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R200",
+              "modulus_mm": 41.666666666666664,
+              "diameter_mm": 200,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R210",
+              "modulus_mm": 43.68,
+              "diameter_mm": 210,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R216",
+              "modulus_mm": 44.99999999999999,
+              "diameter_mm": 216,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R220",
+              "modulus_mm": 45.97014925373134,
+              "diameter_mm": 220,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R230",
+              "modulus_mm": 47.985611510791365,
+              "diameter_mm": 230,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            }
+          ],
+          "source_ref": "project-test-rulebook",
+          "source_edition": "case-v1",
+          "reason": "每个位置按金属质量选最小可行规格"
+        },
+        {
+          "kind": "riser",
+          "rule_id": "R-RISER-01",
+          "version": "1",
+          "site_id": "RS-05",
+          "output_node": "PV_PMP-S1-C01_riser_spec_5",
+          "inputs": [
+            {
+              "id": "HS-05",
+              "modulus_mm": 29,
+              "path": "hotspots.4.modulus_mm",
+              "source_ref": "cad-rev-B"
+            }
+          ],
+          "required_modulus_mm": 33.349999999999994,
+          "ratio": 1.15,
+          "max_diameter_mm": 230,
+          "formula": "M_required = ratio × max(M_hotspot); M_catalog = r × h / (2h + r)",
+          "strategy": "local-min",
+          "selected": "R160",
+          "options": [
+            {
+              "catalog_id": "R160",
+              "modulus_mm": 33.599999999999994,
+              "diameter_mm": 160,
+              "selected": true,
+              "reasons": [],
+              "outcome": "Selected"
+            },
+            {
+              "catalog_id": "R170",
+              "modulus_mm": 35.61904761904761,
+              "diameter_mm": 170,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R180",
+              "modulus_mm": 37.63636363636365,
+              "diameter_mm": 180,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R190",
+              "modulus_mm": 39.65217391304348,
+              "diameter_mm": 190,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R200",
+              "modulus_mm": 41.666666666666664,
+              "diameter_mm": 200,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R210",
+              "modulus_mm": 43.68,
+              "diameter_mm": 210,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R216",
+              "modulus_mm": 44.99999999999999,
+              "diameter_mm": 216,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R220",
+              "modulus_mm": 45.97014925373134,
+              "diameter_mm": 220,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R230",
+              "modulus_mm": 47.985611510791365,
+              "diameter_mm": 230,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            }
+          ],
+          "source_ref": "project-test-rulebook",
+          "source_edition": "case-v1",
+          "reason": "每个位置按金属质量选最小可行规格"
+        },
+        {
+          "kind": "riser",
+          "rule_id": "R-RISER-01",
+          "version": "1",
+          "site_id": "RS-06",
+          "output_node": "PV_PMP-S1-C01_riser_spec_6",
+          "inputs": [
+            {
+              "id": "HS-06",
+              "modulus_mm": 33,
+              "path": "hotspots.5.modulus_mm",
+              "source_ref": "cad-rev-B"
+            }
+          ],
+          "required_modulus_mm": 37.949999999999996,
+          "ratio": 1.15,
+          "max_diameter_mm": 230,
+          "formula": "M_required = ratio × max(M_hotspot); M_catalog = r × h / (2h + r)",
+          "strategy": "local-min",
+          "selected": "R190",
+          "options": [
+            {
+              "catalog_id": "R160",
+              "modulus_mm": 33.599999999999994,
+              "diameter_mm": 160,
+              "selected": false,
+              "reasons": [
+                "模数不足"
+              ],
+              "outcome": "Excluded"
+            },
+            {
+              "catalog_id": "R170",
+              "modulus_mm": 35.61904761904761,
+              "diameter_mm": 170,
+              "selected": false,
+              "reasons": [
+                "模数不足"
+              ],
+              "outcome": "Excluded"
+            },
+            {
+              "catalog_id": "R180",
+              "modulus_mm": 37.63636363636365,
+              "diameter_mm": 180,
+              "selected": false,
+              "reasons": [
+                "模数不足"
+              ],
+              "outcome": "Excluded"
+            },
+            {
+              "catalog_id": "R190",
+              "modulus_mm": 39.65217391304348,
+              "diameter_mm": 190,
+              "selected": true,
+              "reasons": [],
+              "outcome": "Selected"
+            },
+            {
+              "catalog_id": "R200",
+              "modulus_mm": 41.666666666666664,
+              "diameter_mm": 200,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R210",
+              "modulus_mm": 43.68,
+              "diameter_mm": 210,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R216",
+              "modulus_mm": 44.99999999999999,
+              "diameter_mm": 216,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R220",
+              "modulus_mm": 45.97014925373134,
+              "diameter_mm": 220,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R230",
+              "modulus_mm": 47.985611510791365,
+              "diameter_mm": 230,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            }
+          ],
+          "source_ref": "project-test-rulebook",
+          "source_edition": "case-v1",
+          "reason": "每个位置按金属质量选最小可行规格"
+        },
+        {
+          "kind": "gating",
+          "rule_id": "R-FLOW-01",
+          "version": "1",
+          "formula": "A = G / (rho × t × Cd × sqrt(2 × 9.81 × H_m)) × 1e6",
+          "inputs": {
+            "gross_mass_kg": 961.717,
+            "density_kg_m3": 7000,
+            "time_s": 37,
+            "head_mm": 450,
+            "discharge_coefficient": 0.6
+          },
+          "margin": 1.0,
+          "required_area_mm2": 2082.77,
+          "selected_area_mm2": 2200,
+          "source_ref": "project-test-rulebook",
+          "source_edition": "case-v1",
+          "reason": "按直浇道面积、内浇口面积、横浇道面积升序搜索首个满足流量裕量与截面比的组合；总质量包含所选冒口"
+        }
+      ]
+    },
+    {
+      "strategy": "local-plus-one",
+      "site_ids": [
+        "RS-01",
+        "RS-02",
+        "RS-03",
+        "RS-04",
+        "RS-05",
+        "RS-06"
+      ],
+      "risers": [
+        {
+          "site_id": "RS-01",
+          "site_ref": "cad://PMP-DV-920-01/RS-01",
+          "feeds": [
+            "HS-01"
+          ],
+          "catalog_id": "R180",
+          "diameter_mm": 180,
+          "height_mm": 230,
+          "modulus_mm": 37.636,
+          "required_modulus_mm": 34.5,
+          "metal_mass_kg": 40.97
+        },
+        {
+          "site_id": "RS-02",
+          "site_ref": "cad://PMP-DV-920-01/RS-02",
+          "feeds": [
+            "HS-02"
+          ],
+          "catalog_id": "R190",
+          "diameter_mm": 190,
+          "height_mm": 240,
+          "modulus_mm": 39.652,
+          "required_modulus_mm": 36.8,
+          "metal_mass_kg": 47.633
+        },
+        {
+          "site_id": "RS-03",
+          "site_ref": "cad://PMP-DV-920-01/RS-03",
+          "feeds": [
+            "HS-03"
+          ],
+          "catalog_id": "R200",
+          "diameter_mm": 200,
+          "height_mm": 250,
+          "modulus_mm": 41.667,
+          "required_modulus_mm": 39.1,
+          "metal_mass_kg": 54.978
+        },
+        {
+          "site_id": "RS-04",
+          "site_ref": "cad://PMP-DV-920-01/RS-04",
+          "feeds": [
+            "HS-04"
+          ],
+          "catalog_id": "R190",
+          "diameter_mm": 190,
+          "height_mm": 240,
+          "modulus_mm": 39.652,
+          "required_modulus_mm": 35.65,
+          "metal_mass_kg": 47.633
+        },
+        {
+          "site_id": "RS-05",
+          "site_ref": "cad://PMP-DV-920-01/RS-05",
+          "feeds": [
+            "HS-05"
+          ],
+          "catalog_id": "R170",
+          "diameter_mm": 170,
+          "height_mm": 220,
+          "modulus_mm": 35.619,
+          "required_modulus_mm": 33.35,
+          "metal_mass_kg": 34.955
+        },
+        {
+          "site_id": "RS-06",
+          "site_ref": "cad://PMP-DV-920-01/RS-06",
+          "feeds": [
+            "HS-06"
+          ],
+          "catalog_id": "R200",
+          "diameter_mm": 200,
+          "height_mm": 250,
+          "modulus_mm": 41.667,
+          "required_modulus_mm": 37.95,
+          "metal_mass_kg": 54.978
+        }
+      ],
+      "riser_count": 6,
+      "gating": {
+        "form": "gravity-bottom-gated",
+        "sprue_throat_area_mm2": 2200,
+        "sprue_equivalent_diameter_mm": 52.93,
+        "required_sprue_area_mm2": 2168.16,
+        "runner_count": 2,
+        "runner_section_mm": [
+          55,
+          40
+        ],
+        "runner_total_area_mm2": 4400,
+        "ingate_count": 6,
+        "ingate_section_mm": [
+          30,
+          20
+        ],
+        "ingate_total_area_mm2": 3600,
+        "area_ratio": [
+          1,
+          2.0,
+          1.636
+        ],
+        "ingates": [
+          {
+            "site_id": "IG-01",
+            "region": "outer-rib-1",
+            "geometry_ref": "cad://PMP-DV-920-01/IG-01",
+            "section_mm": [
+              30,
+              20
+            ]
+          },
+          {
+            "site_id": "IG-02",
+            "region": "outer-rib-2",
+            "geometry_ref": "cad://PMP-DV-920-01/IG-02",
+            "section_mm": [
+              30,
+              20
+            ]
+          },
+          {
+            "site_id": "IG-03",
+            "region": "outer-rib-3",
+            "geometry_ref": "cad://PMP-DV-920-01/IG-03",
+            "section_mm": [
+              30,
+              20
+            ]
+          },
+          {
+            "site_id": "IG-04",
+            "region": "outer-rib-4",
+            "geometry_ref": "cad://PMP-DV-920-01/IG-04",
+            "section_mm": [
+              30,
+              20
+            ]
+          },
+          {
+            "site_id": "IG-05",
+            "region": "outer-rib-5",
+            "geometry_ref": "cad://PMP-DV-920-01/IG-05",
+            "section_mm": [
+              30,
+              20
+            ]
+          },
+          {
+            "site_id": "IG-06",
+            "region": "outer-rib-6",
+            "geometry_ref": "cad://PMP-DV-920-01/IG-06",
+            "section_mm": [
+              30,
+              20
+            ]
+          }
+        ],
+        "pour_time_s": 37,
+        "effective_head_mm": 450,
+        "pour_temperature_degC": 1585,
+        "filter_count": 2,
+        "filter_type": "F-100-TRIAL",
+        "pouring_basin_count": 1
+      },
+      "gross_pour_mass_kg": 1001.15,
+      "riser_metal_mass_kg": 281.15,
+      "gating_metal_estimate_kg": 90,
+      "yield_percent": 62.93,
+      "sand_metal_ratio": 4.64,
+      "checks": {
+        "R-RISER-01": true,
+        "R-COVER-01": true,
+        "R-FLOW-01": true,
+        "R-RATIO-01": true,
+        "R-YIELD-01": true,
+        "R-PRINT-01": true,
+        "R-EXCLUSION-01": true
+      },
+      "preliminary_feasible": true,
+      "trace": {
+        "input_parameters": [
+          "PD_MaterialRequirement",
+          "PD_CastingMass",
+          "PD_CastingModulus",
+          "PD_LiquidMetalDensity"
+        ],
+        "other_input_fields": [
+          "target_pour_time_s",
+          "effective_head_mm",
+          "gating_metal_estimate_kg",
+          "print_block_mm",
+          "riser_sites",
+          "ingate_sites"
+        ],
+        "rule_ids": [
+          "R-RISER-01",
+          "R-COVER-01",
+          "R-FLOW-01",
+          "R-RATIO-01",
+          "R-YIELD-01",
+          "R-PRINT-01",
+          "R-EXCLUSION-01"
+        ],
+        "selection_reason": "每处热节按项目模数比从允许位置及规格目录选型；浇道按估算总浇注量与截面目录选型"
+      },
+      "ontology_status": "NeedsReview",
+      "real_cae": "Pending",
+      "used_input_snapshot": "PMP-S1",
+      "used_rule_version": "1",
+      "pending_evidence": [
+        "真实温度相关热物性曲线",
+        "CAD三维干涉与补缩距离校核",
+        "充型凝固CAE",
+        "过滤器容量和砂型试制",
+        "客户NDT验收等级确认"
+      ],
+      "id": "PMP-S1-C02",
+      "rank": 2,
+      "model_ref": "cad://proposed/PMP-S1/candidate-02",
+      "explanations": [
+        {
+          "kind": "riser",
+          "rule_id": "R-RISER-01",
+          "version": "1",
+          "site_id": "RS-01",
+          "output_node": "PV_PMP-S1-C02_riser_spec_1",
+          "inputs": [
+            {
+              "id": "HS-01",
+              "modulus_mm": 30,
+              "path": "hotspots.0.modulus_mm",
+              "source_ref": "cad-rev-B"
+            }
+          ],
+          "required_modulus_mm": 34.5,
+          "ratio": 1.15,
+          "max_diameter_mm": 230,
+          "formula": "M_required = ratio × max(M_hotspot); M_catalog = r × h / (2h + r)",
+          "strategy": "local-plus-one",
+          "selected": "R180",
+          "options": [
+            {
+              "catalog_id": "R160",
+              "modulus_mm": 33.599999999999994,
+              "diameter_mm": 160,
+              "selected": false,
+              "reasons": [
+                "模数不足"
+              ],
+              "outcome": "Excluded"
+            },
+            {
+              "catalog_id": "R170",
+              "modulus_mm": 35.61904761904761,
+              "diameter_mm": 170,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R180",
+              "modulus_mm": 37.63636363636365,
+              "diameter_mm": 180,
+              "selected": true,
+              "reasons": [],
+              "outcome": "Selected"
+            },
+            {
+              "catalog_id": "R190",
+              "modulus_mm": 39.65217391304348,
+              "diameter_mm": 190,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R200",
+              "modulus_mm": 41.666666666666664,
+              "diameter_mm": 200,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R210",
+              "modulus_mm": 43.68,
+              "diameter_mm": 210,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R216",
+              "modulus_mm": 44.99999999999999,
+              "diameter_mm": 216,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R220",
+              "modulus_mm": 45.97014925373134,
+              "diameter_mm": 220,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R230",
+              "modulus_mm": 47.985611510791365,
+              "diameter_mm": 230,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            }
+          ],
+          "source_ref": "project-test-rulebook",
+          "source_edition": "case-v1",
+          "reason": "每个位置选最小可行规格的下一档"
+        },
+        {
+          "kind": "riser",
+          "rule_id": "R-RISER-01",
+          "version": "1",
+          "site_id": "RS-02",
+          "output_node": "PV_PMP-S1-C02_riser_spec_2",
+          "inputs": [
+            {
+              "id": "HS-02",
+              "modulus_mm": 32,
+              "path": "hotspots.1.modulus_mm",
+              "source_ref": "cad-rev-B"
+            }
+          ],
+          "required_modulus_mm": 36.8,
+          "ratio": 1.15,
+          "max_diameter_mm": 230,
+          "formula": "M_required = ratio × max(M_hotspot); M_catalog = r × h / (2h + r)",
+          "strategy": "local-plus-one",
+          "selected": "R190",
+          "options": [
+            {
+              "catalog_id": "R160",
+              "modulus_mm": 33.599999999999994,
+              "diameter_mm": 160,
+              "selected": false,
+              "reasons": [
+                "模数不足"
+              ],
+              "outcome": "Excluded"
+            },
+            {
+              "catalog_id": "R170",
+              "modulus_mm": 35.61904761904761,
+              "diameter_mm": 170,
+              "selected": false,
+              "reasons": [
+                "模数不足"
+              ],
+              "outcome": "Excluded"
+            },
+            {
+              "catalog_id": "R180",
+              "modulus_mm": 37.63636363636365,
+              "diameter_mm": 180,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R190",
+              "modulus_mm": 39.65217391304348,
+              "diameter_mm": 190,
+              "selected": true,
+              "reasons": [],
+              "outcome": "Selected"
+            },
+            {
+              "catalog_id": "R200",
+              "modulus_mm": 41.666666666666664,
+              "diameter_mm": 200,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R210",
+              "modulus_mm": 43.68,
+              "diameter_mm": 210,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R216",
+              "modulus_mm": 44.99999999999999,
+              "diameter_mm": 216,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R220",
+              "modulus_mm": 45.97014925373134,
+              "diameter_mm": 220,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R230",
+              "modulus_mm": 47.985611510791365,
+              "diameter_mm": 230,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            }
+          ],
+          "source_ref": "project-test-rulebook",
+          "source_edition": "case-v1",
+          "reason": "每个位置选最小可行规格的下一档"
+        },
+        {
+          "kind": "riser",
+          "rule_id": "R-RISER-01",
+          "version": "1",
+          "site_id": "RS-03",
+          "output_node": "PV_PMP-S1-C02_riser_spec_3",
+          "inputs": [
+            {
+              "id": "HS-03",
+              "modulus_mm": 34,
+              "path": "hotspots.2.modulus_mm",
+              "source_ref": "cad-rev-B"
+            }
+          ],
+          "required_modulus_mm": 39.099999999999994,
+          "ratio": 1.15,
+          "max_diameter_mm": 230,
+          "formula": "M_required = ratio × max(M_hotspot); M_catalog = r × h / (2h + r)",
+          "strategy": "local-plus-one",
+          "selected": "R200",
+          "options": [
+            {
+              "catalog_id": "R160",
+              "modulus_mm": 33.599999999999994,
+              "diameter_mm": 160,
+              "selected": false,
+              "reasons": [
+                "模数不足"
+              ],
+              "outcome": "Excluded"
+            },
+            {
+              "catalog_id": "R170",
+              "modulus_mm": 35.61904761904761,
+              "diameter_mm": 170,
+              "selected": false,
+              "reasons": [
+                "模数不足"
+              ],
+              "outcome": "Excluded"
+            },
+            {
+              "catalog_id": "R180",
+              "modulus_mm": 37.63636363636365,
+              "diameter_mm": 180,
+              "selected": false,
+              "reasons": [
+                "模数不足"
+              ],
+              "outcome": "Excluded"
+            },
+            {
+              "catalog_id": "R190",
+              "modulus_mm": 39.65217391304348,
+              "diameter_mm": 190,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R200",
+              "modulus_mm": 41.666666666666664,
+              "diameter_mm": 200,
+              "selected": true,
+              "reasons": [],
+              "outcome": "Selected"
+            },
+            {
+              "catalog_id": "R210",
+              "modulus_mm": 43.68,
+              "diameter_mm": 210,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R216",
+              "modulus_mm": 44.99999999999999,
+              "diameter_mm": 216,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R220",
+              "modulus_mm": 45.97014925373134,
+              "diameter_mm": 220,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R230",
+              "modulus_mm": 47.985611510791365,
+              "diameter_mm": 230,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            }
+          ],
+          "source_ref": "project-test-rulebook",
+          "source_edition": "case-v1",
+          "reason": "每个位置选最小可行规格的下一档"
+        },
+        {
+          "kind": "riser",
+          "rule_id": "R-RISER-01",
+          "version": "1",
+          "site_id": "RS-04",
+          "output_node": "PV_PMP-S1-C02_riser_spec_4",
+          "inputs": [
+            {
+              "id": "HS-04",
+              "modulus_mm": 31,
+              "path": "hotspots.3.modulus_mm",
+              "source_ref": "cad-rev-B"
+            }
+          ],
+          "required_modulus_mm": 35.65,
+          "ratio": 1.15,
+          "max_diameter_mm": 230,
+          "formula": "M_required = ratio × max(M_hotspot); M_catalog = r × h / (2h + r)",
+          "strategy": "local-plus-one",
+          "selected": "R190",
+          "options": [
+            {
+              "catalog_id": "R160",
+              "modulus_mm": 33.599999999999994,
+              "diameter_mm": 160,
+              "selected": false,
+              "reasons": [
+                "模数不足"
+              ],
+              "outcome": "Excluded"
+            },
+            {
+              "catalog_id": "R170",
+              "modulus_mm": 35.61904761904761,
+              "diameter_mm": 170,
+              "selected": false,
+              "reasons": [
+                "模数不足"
+              ],
+              "outcome": "Excluded"
+            },
+            {
+              "catalog_id": "R180",
+              "modulus_mm": 37.63636363636365,
+              "diameter_mm": 180,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R190",
+              "modulus_mm": 39.65217391304348,
+              "diameter_mm": 190,
+              "selected": true,
+              "reasons": [],
+              "outcome": "Selected"
+            },
+            {
+              "catalog_id": "R200",
+              "modulus_mm": 41.666666666666664,
+              "diameter_mm": 200,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R210",
+              "modulus_mm": 43.68,
+              "diameter_mm": 210,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R216",
+              "modulus_mm": 44.99999999999999,
+              "diameter_mm": 216,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R220",
+              "modulus_mm": 45.97014925373134,
+              "diameter_mm": 220,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R230",
+              "modulus_mm": 47.985611510791365,
+              "diameter_mm": 230,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            }
+          ],
+          "source_ref": "project-test-rulebook",
+          "source_edition": "case-v1",
+          "reason": "每个位置选最小可行规格的下一档"
+        },
+        {
+          "kind": "riser",
+          "rule_id": "R-RISER-01",
+          "version": "1",
+          "site_id": "RS-05",
+          "output_node": "PV_PMP-S1-C02_riser_spec_5",
+          "inputs": [
+            {
+              "id": "HS-05",
+              "modulus_mm": 29,
+              "path": "hotspots.4.modulus_mm",
+              "source_ref": "cad-rev-B"
+            }
+          ],
+          "required_modulus_mm": 33.349999999999994,
+          "ratio": 1.15,
+          "max_diameter_mm": 230,
+          "formula": "M_required = ratio × max(M_hotspot); M_catalog = r × h / (2h + r)",
+          "strategy": "local-plus-one",
+          "selected": "R170",
+          "options": [
+            {
+              "catalog_id": "R160",
+              "modulus_mm": 33.599999999999994,
+              "diameter_mm": 160,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R170",
+              "modulus_mm": 35.61904761904761,
+              "diameter_mm": 170,
+              "selected": true,
+              "reasons": [],
+              "outcome": "Selected"
+            },
+            {
+              "catalog_id": "R180",
+              "modulus_mm": 37.63636363636365,
+              "diameter_mm": 180,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R190",
+              "modulus_mm": 39.65217391304348,
+              "diameter_mm": 190,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R200",
+              "modulus_mm": 41.666666666666664,
+              "diameter_mm": 200,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R210",
+              "modulus_mm": 43.68,
+              "diameter_mm": 210,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R216",
+              "modulus_mm": 44.99999999999999,
+              "diameter_mm": 216,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R220",
+              "modulus_mm": 45.97014925373134,
+              "diameter_mm": 220,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R230",
+              "modulus_mm": 47.985611510791365,
+              "diameter_mm": 230,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            }
+          ],
+          "source_ref": "project-test-rulebook",
+          "source_edition": "case-v1",
+          "reason": "每个位置选最小可行规格的下一档"
+        },
+        {
+          "kind": "riser",
+          "rule_id": "R-RISER-01",
+          "version": "1",
+          "site_id": "RS-06",
+          "output_node": "PV_PMP-S1-C02_riser_spec_6",
+          "inputs": [
+            {
+              "id": "HS-06",
+              "modulus_mm": 33,
+              "path": "hotspots.5.modulus_mm",
+              "source_ref": "cad-rev-B"
+            }
+          ],
+          "required_modulus_mm": 37.949999999999996,
+          "ratio": 1.15,
+          "max_diameter_mm": 230,
+          "formula": "M_required = ratio × max(M_hotspot); M_catalog = r × h / (2h + r)",
+          "strategy": "local-plus-one",
+          "selected": "R200",
+          "options": [
+            {
+              "catalog_id": "R160",
+              "modulus_mm": 33.599999999999994,
+              "diameter_mm": 160,
+              "selected": false,
+              "reasons": [
+                "模数不足"
+              ],
+              "outcome": "Excluded"
+            },
+            {
+              "catalog_id": "R170",
+              "modulus_mm": 35.61904761904761,
+              "diameter_mm": 170,
+              "selected": false,
+              "reasons": [
+                "模数不足"
+              ],
+              "outcome": "Excluded"
+            },
+            {
+              "catalog_id": "R180",
+              "modulus_mm": 37.63636363636365,
+              "diameter_mm": 180,
+              "selected": false,
+              "reasons": [
+                "模数不足"
+              ],
+              "outcome": "Excluded"
+            },
+            {
+              "catalog_id": "R190",
+              "modulus_mm": 39.65217391304348,
+              "diameter_mm": 190,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R200",
+              "modulus_mm": 41.666666666666664,
+              "diameter_mm": 200,
+              "selected": true,
+              "reasons": [],
+              "outcome": "Selected"
+            },
+            {
+              "catalog_id": "R210",
+              "modulus_mm": 43.68,
+              "diameter_mm": 210,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R216",
+              "modulus_mm": 44.99999999999999,
+              "diameter_mm": 216,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R220",
+              "modulus_mm": 45.97014925373134,
+              "diameter_mm": 220,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R230",
+              "modulus_mm": 47.985611510791365,
+              "diameter_mm": 230,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            }
+          ],
+          "source_ref": "project-test-rulebook",
+          "source_edition": "case-v1",
+          "reason": "每个位置选最小可行规格的下一档"
+        },
+        {
+          "kind": "gating",
+          "rule_id": "R-FLOW-01",
+          "version": "1",
+          "formula": "A = G / (rho × t × Cd × sqrt(2 × 9.81 × H_m)) × 1e6",
+          "inputs": {
+            "gross_mass_kg": 1001.1469999999999,
+            "density_kg_m3": 7000,
+            "time_s": 37,
+            "head_mm": 450,
+            "discharge_coefficient": 0.6
+          },
+          "margin": 1.0,
+          "required_area_mm2": 2168.16,
+          "selected_area_mm2": 2200,
+          "source_ref": "project-test-rulebook",
+          "source_edition": "case-v1",
+          "reason": "按直浇道面积、内浇口面积、横浇道面积升序搜索首个满足流量裕量与截面比的组合；总质量包含所选冒口"
+        }
+      ]
+    },
+    {
+      "strategy": "uniform",
+      "site_ids": [
+        "RS-01",
+        "RS-02",
+        "RS-03",
+        "RS-04",
+        "RS-05",
+        "RS-06"
+      ],
+      "risers": [
+        {
+          "site_id": "RS-01",
+          "site_ref": "cad://PMP-DV-920-01/RS-01",
+          "feeds": [
+            "HS-01"
+          ],
+          "catalog_id": "R190",
+          "diameter_mm": 190,
+          "height_mm": 240,
+          "modulus_mm": 39.652,
+          "required_modulus_mm": 34.5,
+          "metal_mass_kg": 47.633
+        },
+        {
+          "site_id": "RS-02",
+          "site_ref": "cad://PMP-DV-920-01/RS-02",
+          "feeds": [
+            "HS-02"
+          ],
+          "catalog_id": "R190",
+          "diameter_mm": 190,
+          "height_mm": 240,
+          "modulus_mm": 39.652,
+          "required_modulus_mm": 36.8,
+          "metal_mass_kg": 47.633
+        },
+        {
+          "site_id": "RS-03",
+          "site_ref": "cad://PMP-DV-920-01/RS-03",
+          "feeds": [
+            "HS-03"
+          ],
+          "catalog_id": "R190",
+          "diameter_mm": 190,
+          "height_mm": 240,
+          "modulus_mm": 39.652,
+          "required_modulus_mm": 39.1,
+          "metal_mass_kg": 47.633
+        },
+        {
+          "site_id": "RS-04",
+          "site_ref": "cad://PMP-DV-920-01/RS-04",
+          "feeds": [
+            "HS-04"
+          ],
+          "catalog_id": "R190",
+          "diameter_mm": 190,
+          "height_mm": 240,
+          "modulus_mm": 39.652,
+          "required_modulus_mm": 35.65,
+          "metal_mass_kg": 47.633
+        },
+        {
+          "site_id": "RS-05",
+          "site_ref": "cad://PMP-DV-920-01/RS-05",
+          "feeds": [
+            "HS-05"
+          ],
+          "catalog_id": "R190",
+          "diameter_mm": 190,
+          "height_mm": 240,
+          "modulus_mm": 39.652,
+          "required_modulus_mm": 33.35,
+          "metal_mass_kg": 47.633
+        },
+        {
+          "site_id": "RS-06",
+          "site_ref": "cad://PMP-DV-920-01/RS-06",
+          "feeds": [
+            "HS-06"
+          ],
+          "catalog_id": "R190",
+          "diameter_mm": 190,
+          "height_mm": 240,
+          "modulus_mm": 39.652,
+          "required_modulus_mm": 37.95,
+          "metal_mass_kg": 47.633
+        }
+      ],
+      "riser_count": 6,
+      "gating": {
+        "form": "gravity-bottom-gated",
+        "sprue_throat_area_mm2": 2200,
+        "sprue_equivalent_diameter_mm": 52.93,
+        "required_sprue_area_mm2": 2178.23,
+        "runner_count": 2,
+        "runner_section_mm": [
+          55,
+          40
+        ],
+        "runner_total_area_mm2": 4400,
+        "ingate_count": 6,
+        "ingate_section_mm": [
+          30,
+          20
+        ],
+        "ingate_total_area_mm2": 3600,
+        "area_ratio": [
+          1,
+          2.0,
+          1.636
+        ],
+        "ingates": [
+          {
+            "site_id": "IG-01",
+            "region": "outer-rib-1",
+            "geometry_ref": "cad://PMP-DV-920-01/IG-01",
+            "section_mm": [
+              30,
+              20
+            ]
+          },
+          {
+            "site_id": "IG-02",
+            "region": "outer-rib-2",
+            "geometry_ref": "cad://PMP-DV-920-01/IG-02",
+            "section_mm": [
+              30,
+              20
+            ]
+          },
+          {
+            "site_id": "IG-03",
+            "region": "outer-rib-3",
+            "geometry_ref": "cad://PMP-DV-920-01/IG-03",
+            "section_mm": [
+              30,
+              20
+            ]
+          },
+          {
+            "site_id": "IG-04",
+            "region": "outer-rib-4",
+            "geometry_ref": "cad://PMP-DV-920-01/IG-04",
+            "section_mm": [
+              30,
+              20
+            ]
+          },
+          {
+            "site_id": "IG-05",
+            "region": "outer-rib-5",
+            "geometry_ref": "cad://PMP-DV-920-01/IG-05",
+            "section_mm": [
+              30,
+              20
+            ]
+          },
+          {
+            "site_id": "IG-06",
+            "region": "outer-rib-6",
+            "geometry_ref": "cad://PMP-DV-920-01/IG-06",
+            "section_mm": [
+              30,
+              20
+            ]
+          }
+        ],
+        "pour_time_s": 37,
+        "effective_head_mm": 450,
+        "pour_temperature_degC": 1585,
+        "filter_count": 2,
+        "filter_type": "F-100-TRIAL",
+        "pouring_basin_count": 1
+      },
+      "gross_pour_mass_kg": 1005.8,
+      "riser_metal_mass_kg": 285.8,
+      "gating_metal_estimate_kg": 90,
+      "yield_percent": 62.64,
+      "sand_metal_ratio": 4.62,
+      "checks": {
+        "R-RISER-01": true,
+        "R-COVER-01": true,
+        "R-FLOW-01": true,
+        "R-RATIO-01": true,
+        "R-YIELD-01": true,
+        "R-PRINT-01": true,
+        "R-EXCLUSION-01": true
+      },
+      "preliminary_feasible": true,
+      "trace": {
+        "input_parameters": [
+          "PD_MaterialRequirement",
+          "PD_CastingMass",
+          "PD_CastingModulus",
+          "PD_LiquidMetalDensity"
+        ],
+        "other_input_fields": [
+          "target_pour_time_s",
+          "effective_head_mm",
+          "gating_metal_estimate_kg",
+          "print_block_mm",
+          "riser_sites",
+          "ingate_sites"
+        ],
+        "rule_ids": [
+          "R-RISER-01",
+          "R-COVER-01",
+          "R-FLOW-01",
+          "R-RATIO-01",
+          "R-YIELD-01",
+          "R-PRINT-01",
+          "R-EXCLUSION-01"
+        ],
+        "selection_reason": "每处热节按项目模数比从允许位置及规格目录选型；浇道按估算总浇注量与截面目录选型"
+      },
+      "ontology_status": "NeedsReview",
+      "real_cae": "Pending",
+      "used_input_snapshot": "PMP-S1",
+      "used_rule_version": "1",
+      "pending_evidence": [
+        "真实温度相关热物性曲线",
+        "CAD三维干涉与补缩距离校核",
+        "充型凝固CAE",
+        "过滤器容量和砂型试制",
+        "客户NDT验收等级确认"
+      ],
+      "id": "PMP-S1-C03",
+      "rank": 3,
+      "model_ref": "cad://proposed/PMP-S1/candidate-03",
+      "explanations": [
+        {
+          "kind": "riser",
+          "rule_id": "R-RISER-01",
+          "version": "1",
+          "site_id": "RS-01",
+          "output_node": "PV_PMP-S1-C03_riser_spec_1",
+          "inputs": [
+            {
+              "id": "HS-01",
+              "modulus_mm": 30,
+              "path": "hotspots.0.modulus_mm",
+              "source_ref": "cad-rev-B"
+            }
+          ],
+          "required_modulus_mm": 34.5,
+          "ratio": 1.15,
+          "max_diameter_mm": 230,
+          "formula": "M_required = ratio × max(M_hotspot); M_catalog = r × h / (2h + r)",
+          "strategy": "uniform",
+          "selected": "R190",
+          "options": [
+            {
+              "catalog_id": "R160",
+              "modulus_mm": 33.599999999999994,
+              "diameter_mm": 160,
+              "selected": false,
+              "reasons": [
+                "模数不足"
+              ],
+              "outcome": "Excluded"
+            },
+            {
+              "catalog_id": "R170",
+              "modulus_mm": 35.61904761904761,
+              "diameter_mm": 170,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R180",
+              "modulus_mm": 37.63636363636365,
+              "diameter_mm": 180,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R190",
+              "modulus_mm": 39.65217391304348,
+              "diameter_mm": 190,
+              "selected": true,
+              "reasons": [],
+              "outcome": "Selected"
+            },
+            {
+              "catalog_id": "R200",
+              "modulus_mm": 41.666666666666664,
+              "diameter_mm": 200,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R210",
+              "modulus_mm": 43.68,
+              "diameter_mm": 210,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R216",
+              "modulus_mm": 44.99999999999999,
+              "diameter_mm": 216,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R220",
+              "modulus_mm": 45.97014925373134,
+              "diameter_mm": 220,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R230",
+              "modulus_mm": 47.985611510791365,
+              "diameter_mm": 230,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            }
+          ],
+          "source_ref": "project-test-rulebook",
+          "source_edition": "case-v1",
+          "reason": "所有位置可共同使用的最小规格"
+        },
+        {
+          "kind": "riser",
+          "rule_id": "R-RISER-01",
+          "version": "1",
+          "site_id": "RS-02",
+          "output_node": "PV_PMP-S1-C03_riser_spec_2",
+          "inputs": [
+            {
+              "id": "HS-02",
+              "modulus_mm": 32,
+              "path": "hotspots.1.modulus_mm",
+              "source_ref": "cad-rev-B"
+            }
+          ],
+          "required_modulus_mm": 36.8,
+          "ratio": 1.15,
+          "max_diameter_mm": 230,
+          "formula": "M_required = ratio × max(M_hotspot); M_catalog = r × h / (2h + r)",
+          "strategy": "uniform",
+          "selected": "R190",
+          "options": [
+            {
+              "catalog_id": "R160",
+              "modulus_mm": 33.599999999999994,
+              "diameter_mm": 160,
+              "selected": false,
+              "reasons": [
+                "模数不足"
+              ],
+              "outcome": "Excluded"
+            },
+            {
+              "catalog_id": "R170",
+              "modulus_mm": 35.61904761904761,
+              "diameter_mm": 170,
+              "selected": false,
+              "reasons": [
+                "模数不足"
+              ],
+              "outcome": "Excluded"
+            },
+            {
+              "catalog_id": "R180",
+              "modulus_mm": 37.63636363636365,
+              "diameter_mm": 180,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R190",
+              "modulus_mm": 39.65217391304348,
+              "diameter_mm": 190,
+              "selected": true,
+              "reasons": [],
+              "outcome": "Selected"
+            },
+            {
+              "catalog_id": "R200",
+              "modulus_mm": 41.666666666666664,
+              "diameter_mm": 200,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R210",
+              "modulus_mm": 43.68,
+              "diameter_mm": 210,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R216",
+              "modulus_mm": 44.99999999999999,
+              "diameter_mm": 216,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R220",
+              "modulus_mm": 45.97014925373134,
+              "diameter_mm": 220,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R230",
+              "modulus_mm": 47.985611510791365,
+              "diameter_mm": 230,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            }
+          ],
+          "source_ref": "project-test-rulebook",
+          "source_edition": "case-v1",
+          "reason": "所有位置可共同使用的最小规格"
+        },
+        {
+          "kind": "riser",
+          "rule_id": "R-RISER-01",
+          "version": "1",
+          "site_id": "RS-03",
+          "output_node": "PV_PMP-S1-C03_riser_spec_3",
+          "inputs": [
+            {
+              "id": "HS-03",
+              "modulus_mm": 34,
+              "path": "hotspots.2.modulus_mm",
+              "source_ref": "cad-rev-B"
+            }
+          ],
+          "required_modulus_mm": 39.099999999999994,
+          "ratio": 1.15,
+          "max_diameter_mm": 230,
+          "formula": "M_required = ratio × max(M_hotspot); M_catalog = r × h / (2h + r)",
+          "strategy": "uniform",
+          "selected": "R190",
+          "options": [
+            {
+              "catalog_id": "R160",
+              "modulus_mm": 33.599999999999994,
+              "diameter_mm": 160,
+              "selected": false,
+              "reasons": [
+                "模数不足"
+              ],
+              "outcome": "Excluded"
+            },
+            {
+              "catalog_id": "R170",
+              "modulus_mm": 35.61904761904761,
+              "diameter_mm": 170,
+              "selected": false,
+              "reasons": [
+                "模数不足"
+              ],
+              "outcome": "Excluded"
+            },
+            {
+              "catalog_id": "R180",
+              "modulus_mm": 37.63636363636365,
+              "diameter_mm": 180,
+              "selected": false,
+              "reasons": [
+                "模数不足"
+              ],
+              "outcome": "Excluded"
+            },
+            {
+              "catalog_id": "R190",
+              "modulus_mm": 39.65217391304348,
+              "diameter_mm": 190,
+              "selected": true,
+              "reasons": [],
+              "outcome": "Selected"
+            },
+            {
+              "catalog_id": "R200",
+              "modulus_mm": 41.666666666666664,
+              "diameter_mm": 200,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R210",
+              "modulus_mm": 43.68,
+              "diameter_mm": 210,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R216",
+              "modulus_mm": 44.99999999999999,
+              "diameter_mm": 216,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R220",
+              "modulus_mm": 45.97014925373134,
+              "diameter_mm": 220,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R230",
+              "modulus_mm": 47.985611510791365,
+              "diameter_mm": 230,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            }
+          ],
+          "source_ref": "project-test-rulebook",
+          "source_edition": "case-v1",
+          "reason": "所有位置可共同使用的最小规格"
+        },
+        {
+          "kind": "riser",
+          "rule_id": "R-RISER-01",
+          "version": "1",
+          "site_id": "RS-04",
+          "output_node": "PV_PMP-S1-C03_riser_spec_4",
+          "inputs": [
+            {
+              "id": "HS-04",
+              "modulus_mm": 31,
+              "path": "hotspots.3.modulus_mm",
+              "source_ref": "cad-rev-B"
+            }
+          ],
+          "required_modulus_mm": 35.65,
+          "ratio": 1.15,
+          "max_diameter_mm": 230,
+          "formula": "M_required = ratio × max(M_hotspot); M_catalog = r × h / (2h + r)",
+          "strategy": "uniform",
+          "selected": "R190",
+          "options": [
+            {
+              "catalog_id": "R160",
+              "modulus_mm": 33.599999999999994,
+              "diameter_mm": 160,
+              "selected": false,
+              "reasons": [
+                "模数不足"
+              ],
+              "outcome": "Excluded"
+            },
+            {
+              "catalog_id": "R170",
+              "modulus_mm": 35.61904761904761,
+              "diameter_mm": 170,
+              "selected": false,
+              "reasons": [
+                "模数不足"
+              ],
+              "outcome": "Excluded"
+            },
+            {
+              "catalog_id": "R180",
+              "modulus_mm": 37.63636363636365,
+              "diameter_mm": 180,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R190",
+              "modulus_mm": 39.65217391304348,
+              "diameter_mm": 190,
+              "selected": true,
+              "reasons": [],
+              "outcome": "Selected"
+            },
+            {
+              "catalog_id": "R200",
+              "modulus_mm": 41.666666666666664,
+              "diameter_mm": 200,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R210",
+              "modulus_mm": 43.68,
+              "diameter_mm": 210,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R216",
+              "modulus_mm": 44.99999999999999,
+              "diameter_mm": 216,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R220",
+              "modulus_mm": 45.97014925373134,
+              "diameter_mm": 220,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R230",
+              "modulus_mm": 47.985611510791365,
+              "diameter_mm": 230,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            }
+          ],
+          "source_ref": "project-test-rulebook",
+          "source_edition": "case-v1",
+          "reason": "所有位置可共同使用的最小规格"
+        },
+        {
+          "kind": "riser",
+          "rule_id": "R-RISER-01",
+          "version": "1",
+          "site_id": "RS-05",
+          "output_node": "PV_PMP-S1-C03_riser_spec_5",
+          "inputs": [
+            {
+              "id": "HS-05",
+              "modulus_mm": 29,
+              "path": "hotspots.4.modulus_mm",
+              "source_ref": "cad-rev-B"
+            }
+          ],
+          "required_modulus_mm": 33.349999999999994,
+          "ratio": 1.15,
+          "max_diameter_mm": 230,
+          "formula": "M_required = ratio × max(M_hotspot); M_catalog = r × h / (2h + r)",
+          "strategy": "uniform",
+          "selected": "R190",
+          "options": [
+            {
+              "catalog_id": "R160",
+              "modulus_mm": 33.599999999999994,
+              "diameter_mm": 160,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R170",
+              "modulus_mm": 35.61904761904761,
+              "diameter_mm": 170,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R180",
+              "modulus_mm": 37.63636363636365,
+              "diameter_mm": 180,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R190",
+              "modulus_mm": 39.65217391304348,
+              "diameter_mm": 190,
+              "selected": true,
+              "reasons": [],
+              "outcome": "Selected"
+            },
+            {
+              "catalog_id": "R200",
+              "modulus_mm": 41.666666666666664,
+              "diameter_mm": 200,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R210",
+              "modulus_mm": 43.68,
+              "diameter_mm": 210,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R216",
+              "modulus_mm": 44.99999999999999,
+              "diameter_mm": 216,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R220",
+              "modulus_mm": 45.97014925373134,
+              "diameter_mm": 220,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R230",
+              "modulus_mm": 47.985611510791365,
+              "diameter_mm": 230,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            }
+          ],
+          "source_ref": "project-test-rulebook",
+          "source_edition": "case-v1",
+          "reason": "所有位置可共同使用的最小规格"
+        },
+        {
+          "kind": "riser",
+          "rule_id": "R-RISER-01",
+          "version": "1",
+          "site_id": "RS-06",
+          "output_node": "PV_PMP-S1-C03_riser_spec_6",
+          "inputs": [
+            {
+              "id": "HS-06",
+              "modulus_mm": 33,
+              "path": "hotspots.5.modulus_mm",
+              "source_ref": "cad-rev-B"
+            }
+          ],
+          "required_modulus_mm": 37.949999999999996,
+          "ratio": 1.15,
+          "max_diameter_mm": 230,
+          "formula": "M_required = ratio × max(M_hotspot); M_catalog = r × h / (2h + r)",
+          "strategy": "uniform",
+          "selected": "R190",
+          "options": [
+            {
+              "catalog_id": "R160",
+              "modulus_mm": 33.599999999999994,
+              "diameter_mm": 160,
+              "selected": false,
+              "reasons": [
+                "模数不足"
+              ],
+              "outcome": "Excluded"
+            },
+            {
+              "catalog_id": "R170",
+              "modulus_mm": 35.61904761904761,
+              "diameter_mm": 170,
+              "selected": false,
+              "reasons": [
+                "模数不足"
+              ],
+              "outcome": "Excluded"
+            },
+            {
+              "catalog_id": "R180",
+              "modulus_mm": 37.63636363636365,
+              "diameter_mm": 180,
+              "selected": false,
+              "reasons": [
+                "模数不足"
+              ],
+              "outcome": "Excluded"
+            },
+            {
+              "catalog_id": "R190",
+              "modulus_mm": 39.65217391304348,
+              "diameter_mm": 190,
+              "selected": true,
+              "reasons": [],
+              "outcome": "Selected"
+            },
+            {
+              "catalog_id": "R200",
+              "modulus_mm": 41.666666666666664,
+              "diameter_mm": 200,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R210",
+              "modulus_mm": 43.68,
+              "diameter_mm": 210,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R216",
+              "modulus_mm": 44.99999999999999,
+              "diameter_mm": 216,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R220",
+              "modulus_mm": 45.97014925373134,
+              "diameter_mm": 220,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R230",
+              "modulus_mm": 47.985611510791365,
+              "diameter_mm": 230,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            }
+          ],
+          "source_ref": "project-test-rulebook",
+          "source_edition": "case-v1",
+          "reason": "所有位置可共同使用的最小规格"
+        },
+        {
+          "kind": "gating",
+          "rule_id": "R-FLOW-01",
+          "version": "1",
+          "formula": "A = G / (rho × t × Cd × sqrt(2 × 9.81 × H_m)) × 1e6",
+          "inputs": {
+            "gross_mass_kg": 1005.798,
+            "density_kg_m3": 7000,
+            "time_s": 37,
+            "head_mm": 450,
+            "discharge_coefficient": 0.6
+          },
+          "margin": 1.0,
+          "required_area_mm2": 2178.23,
+          "selected_area_mm2": 2200,
+          "source_ref": "project-test-rulebook",
+          "source_edition": "case-v1",
+          "reason": "按直浇道面积、内浇口面积、横浇道面积升序搜索首个满足流量裕量与截面比的组合；总质量包含所选冒口"
+        }
+      ]
+    },
+    {
+      "strategy": "uniform-plus-one",
+      "site_ids": [
+        "RS-01",
+        "RS-02",
+        "RS-03",
+        "RS-04",
+        "RS-05",
+        "RS-06"
+      ],
+      "risers": [
+        {
+          "site_id": "RS-01",
+          "site_ref": "cad://PMP-DV-920-01/RS-01",
+          "feeds": [
+            "HS-01"
+          ],
+          "catalog_id": "R200",
+          "diameter_mm": 200,
+          "height_mm": 250,
+          "modulus_mm": 41.667,
+          "required_modulus_mm": 34.5,
+          "metal_mass_kg": 54.978
+        },
+        {
+          "site_id": "RS-02",
+          "site_ref": "cad://PMP-DV-920-01/RS-02",
+          "feeds": [
+            "HS-02"
+          ],
+          "catalog_id": "R200",
+          "diameter_mm": 200,
+          "height_mm": 250,
+          "modulus_mm": 41.667,
+          "required_modulus_mm": 36.8,
+          "metal_mass_kg": 54.978
+        },
+        {
+          "site_id": "RS-03",
+          "site_ref": "cad://PMP-DV-920-01/RS-03",
+          "feeds": [
+            "HS-03"
+          ],
+          "catalog_id": "R200",
+          "diameter_mm": 200,
+          "height_mm": 250,
+          "modulus_mm": 41.667,
+          "required_modulus_mm": 39.1,
+          "metal_mass_kg": 54.978
+        },
+        {
+          "site_id": "RS-04",
+          "site_ref": "cad://PMP-DV-920-01/RS-04",
+          "feeds": [
+            "HS-04"
+          ],
+          "catalog_id": "R200",
+          "diameter_mm": 200,
+          "height_mm": 250,
+          "modulus_mm": 41.667,
+          "required_modulus_mm": 35.65,
+          "metal_mass_kg": 54.978
+        },
+        {
+          "site_id": "RS-05",
+          "site_ref": "cad://PMP-DV-920-01/RS-05",
+          "feeds": [
+            "HS-05"
+          ],
+          "catalog_id": "R200",
+          "diameter_mm": 200,
+          "height_mm": 250,
+          "modulus_mm": 41.667,
+          "required_modulus_mm": 33.35,
+          "metal_mass_kg": 54.978
+        },
+        {
+          "site_id": "RS-06",
+          "site_ref": "cad://PMP-DV-920-01/RS-06",
+          "feeds": [
+            "HS-06"
+          ],
+          "catalog_id": "R200",
+          "diameter_mm": 200,
+          "height_mm": 250,
+          "modulus_mm": 41.667,
+          "required_modulus_mm": 37.95,
+          "metal_mass_kg": 54.978
+        }
+      ],
+      "riser_count": 6,
+      "gating": {
+        "form": "gravity-bottom-gated",
+        "sprue_throat_area_mm2": 2500,
+        "sprue_equivalent_diameter_mm": 56.42,
+        "required_sprue_area_mm2": 2273.67,
+        "runner_count": 2,
+        "runner_section_mm": [
+          50,
+          50
+        ],
+        "runner_total_area_mm2": 5000,
+        "ingate_count": 6,
+        "ingate_section_mm": [
+          32,
+          22
+        ],
+        "ingate_total_area_mm2": 4224,
+        "area_ratio": [
+          1,
+          2.0,
+          1.69
+        ],
+        "ingates": [
+          {
+            "site_id": "IG-01",
+            "region": "outer-rib-1",
+            "geometry_ref": "cad://PMP-DV-920-01/IG-01",
+            "section_mm": [
+              32,
+              22
+            ]
+          },
+          {
+            "site_id": "IG-02",
+            "region": "outer-rib-2",
+            "geometry_ref": "cad://PMP-DV-920-01/IG-02",
+            "section_mm": [
+              32,
+              22
+            ]
+          },
+          {
+            "site_id": "IG-03",
+            "region": "outer-rib-3",
+            "geometry_ref": "cad://PMP-DV-920-01/IG-03",
+            "section_mm": [
+              32,
+              22
+            ]
+          },
+          {
+            "site_id": "IG-04",
+            "region": "outer-rib-4",
+            "geometry_ref": "cad://PMP-DV-920-01/IG-04",
+            "section_mm": [
+              32,
+              22
+            ]
+          },
+          {
+            "site_id": "IG-05",
+            "region": "outer-rib-5",
+            "geometry_ref": "cad://PMP-DV-920-01/IG-05",
+            "section_mm": [
+              32,
+              22
+            ]
+          },
+          {
+            "site_id": "IG-06",
+            "region": "outer-rib-6",
+            "geometry_ref": "cad://PMP-DV-920-01/IG-06",
+            "section_mm": [
+              32,
+              22
+            ]
+          }
+        ],
+        "pour_time_s": 37,
+        "effective_head_mm": 450,
+        "pour_temperature_degC": 1585,
+        "filter_count": 2,
+        "filter_type": "F-100-TRIAL",
+        "pouring_basin_count": 1
+      },
+      "gross_pour_mass_kg": 1049.87,
+      "riser_metal_mass_kg": 329.87,
+      "gating_metal_estimate_kg": 90,
+      "yield_percent": 60.01,
+      "sand_metal_ratio": 4.43,
+      "checks": {
+        "R-RISER-01": true,
+        "R-COVER-01": true,
+        "R-FLOW-01": true,
+        "R-RATIO-01": true,
+        "R-YIELD-01": true,
+        "R-PRINT-01": true,
+        "R-EXCLUSION-01": true
+      },
+      "preliminary_feasible": true,
+      "trace": {
+        "input_parameters": [
+          "PD_MaterialRequirement",
+          "PD_CastingMass",
+          "PD_CastingModulus",
+          "PD_LiquidMetalDensity"
+        ],
+        "other_input_fields": [
+          "target_pour_time_s",
+          "effective_head_mm",
+          "gating_metal_estimate_kg",
+          "print_block_mm",
+          "riser_sites",
+          "ingate_sites"
+        ],
+        "rule_ids": [
+          "R-RISER-01",
+          "R-COVER-01",
+          "R-FLOW-01",
+          "R-RATIO-01",
+          "R-YIELD-01",
+          "R-PRINT-01",
+          "R-EXCLUSION-01"
+        ],
+        "selection_reason": "每处热节按项目模数比从允许位置及规格目录选型；浇道按估算总浇注量与截面目录选型"
+      },
+      "ontology_status": "NeedsReview",
+      "real_cae": "Pending",
+      "used_input_snapshot": "PMP-S1",
+      "used_rule_version": "1",
+      "pending_evidence": [
+        "真实温度相关热物性曲线",
+        "CAD三维干涉与补缩距离校核",
+        "充型凝固CAE",
+        "过滤器容量和砂型试制",
+        "客户NDT验收等级确认"
+      ],
+      "id": "PMP-S1-C04",
+      "rank": 4,
+      "model_ref": "cad://proposed/PMP-S1/candidate-04",
+      "explanations": [
+        {
+          "kind": "riser",
+          "rule_id": "R-RISER-01",
+          "version": "1",
+          "site_id": "RS-01",
+          "output_node": "PV_PMP-S1-C04_riser_spec_1",
+          "inputs": [
+            {
+              "id": "HS-01",
+              "modulus_mm": 30,
+              "path": "hotspots.0.modulus_mm",
+              "source_ref": "cad-rev-B"
+            }
+          ],
+          "required_modulus_mm": 34.5,
+          "ratio": 1.15,
+          "max_diameter_mm": 230,
+          "formula": "M_required = ratio × max(M_hotspot); M_catalog = r × h / (2h + r)",
+          "strategy": "uniform-plus-one",
+          "selected": "R200",
+          "options": [
+            {
+              "catalog_id": "R160",
+              "modulus_mm": 33.599999999999994,
+              "diameter_mm": 160,
+              "selected": false,
+              "reasons": [
+                "模数不足"
+              ],
+              "outcome": "Excluded"
+            },
+            {
+              "catalog_id": "R170",
+              "modulus_mm": 35.61904761904761,
+              "diameter_mm": 170,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R180",
+              "modulus_mm": 37.63636363636365,
+              "diameter_mm": 180,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R190",
+              "modulus_mm": 39.65217391304348,
+              "diameter_mm": 190,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R200",
+              "modulus_mm": 41.666666666666664,
+              "diameter_mm": 200,
+              "selected": true,
+              "reasons": [],
+              "outcome": "Selected"
+            },
+            {
+              "catalog_id": "R210",
+              "modulus_mm": 43.68,
+              "diameter_mm": 210,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R216",
+              "modulus_mm": 44.99999999999999,
+              "diameter_mm": 216,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R220",
+              "modulus_mm": 45.97014925373134,
+              "diameter_mm": 220,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R230",
+              "modulus_mm": 47.985611510791365,
+              "diameter_mm": 230,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            }
+          ],
+          "source_ref": "project-test-rulebook",
+          "source_edition": "case-v1",
+          "reason": "所有位置可共同使用的最小规格的下一档"
+        },
+        {
+          "kind": "riser",
+          "rule_id": "R-RISER-01",
+          "version": "1",
+          "site_id": "RS-02",
+          "output_node": "PV_PMP-S1-C04_riser_spec_2",
+          "inputs": [
+            {
+              "id": "HS-02",
+              "modulus_mm": 32,
+              "path": "hotspots.1.modulus_mm",
+              "source_ref": "cad-rev-B"
+            }
+          ],
+          "required_modulus_mm": 36.8,
+          "ratio": 1.15,
+          "max_diameter_mm": 230,
+          "formula": "M_required = ratio × max(M_hotspot); M_catalog = r × h / (2h + r)",
+          "strategy": "uniform-plus-one",
+          "selected": "R200",
+          "options": [
+            {
+              "catalog_id": "R160",
+              "modulus_mm": 33.599999999999994,
+              "diameter_mm": 160,
+              "selected": false,
+              "reasons": [
+                "模数不足"
+              ],
+              "outcome": "Excluded"
+            },
+            {
+              "catalog_id": "R170",
+              "modulus_mm": 35.61904761904761,
+              "diameter_mm": 170,
+              "selected": false,
+              "reasons": [
+                "模数不足"
+              ],
+              "outcome": "Excluded"
+            },
+            {
+              "catalog_id": "R180",
+              "modulus_mm": 37.63636363636365,
+              "diameter_mm": 180,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R190",
+              "modulus_mm": 39.65217391304348,
+              "diameter_mm": 190,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R200",
+              "modulus_mm": 41.666666666666664,
+              "diameter_mm": 200,
+              "selected": true,
+              "reasons": [],
+              "outcome": "Selected"
+            },
+            {
+              "catalog_id": "R210",
+              "modulus_mm": 43.68,
+              "diameter_mm": 210,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R216",
+              "modulus_mm": 44.99999999999999,
+              "diameter_mm": 216,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R220",
+              "modulus_mm": 45.97014925373134,
+              "diameter_mm": 220,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R230",
+              "modulus_mm": 47.985611510791365,
+              "diameter_mm": 230,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            }
+          ],
+          "source_ref": "project-test-rulebook",
+          "source_edition": "case-v1",
+          "reason": "所有位置可共同使用的最小规格的下一档"
+        },
+        {
+          "kind": "riser",
+          "rule_id": "R-RISER-01",
+          "version": "1",
+          "site_id": "RS-03",
+          "output_node": "PV_PMP-S1-C04_riser_spec_3",
+          "inputs": [
+            {
+              "id": "HS-03",
+              "modulus_mm": 34,
+              "path": "hotspots.2.modulus_mm",
+              "source_ref": "cad-rev-B"
+            }
+          ],
+          "required_modulus_mm": 39.099999999999994,
+          "ratio": 1.15,
+          "max_diameter_mm": 230,
+          "formula": "M_required = ratio × max(M_hotspot); M_catalog = r × h / (2h + r)",
+          "strategy": "uniform-plus-one",
+          "selected": "R200",
+          "options": [
+            {
+              "catalog_id": "R160",
+              "modulus_mm": 33.599999999999994,
+              "diameter_mm": 160,
+              "selected": false,
+              "reasons": [
+                "模数不足"
+              ],
+              "outcome": "Excluded"
+            },
+            {
+              "catalog_id": "R170",
+              "modulus_mm": 35.61904761904761,
+              "diameter_mm": 170,
+              "selected": false,
+              "reasons": [
+                "模数不足"
+              ],
+              "outcome": "Excluded"
+            },
+            {
+              "catalog_id": "R180",
+              "modulus_mm": 37.63636363636365,
+              "diameter_mm": 180,
+              "selected": false,
+              "reasons": [
+                "模数不足"
+              ],
+              "outcome": "Excluded"
+            },
+            {
+              "catalog_id": "R190",
+              "modulus_mm": 39.65217391304348,
+              "diameter_mm": 190,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R200",
+              "modulus_mm": 41.666666666666664,
+              "diameter_mm": 200,
+              "selected": true,
+              "reasons": [],
+              "outcome": "Selected"
+            },
+            {
+              "catalog_id": "R210",
+              "modulus_mm": 43.68,
+              "diameter_mm": 210,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R216",
+              "modulus_mm": 44.99999999999999,
+              "diameter_mm": 216,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R220",
+              "modulus_mm": 45.97014925373134,
+              "diameter_mm": 220,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R230",
+              "modulus_mm": 47.985611510791365,
+              "diameter_mm": 230,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            }
+          ],
+          "source_ref": "project-test-rulebook",
+          "source_edition": "case-v1",
+          "reason": "所有位置可共同使用的最小规格的下一档"
+        },
+        {
+          "kind": "riser",
+          "rule_id": "R-RISER-01",
+          "version": "1",
+          "site_id": "RS-04",
+          "output_node": "PV_PMP-S1-C04_riser_spec_4",
+          "inputs": [
+            {
+              "id": "HS-04",
+              "modulus_mm": 31,
+              "path": "hotspots.3.modulus_mm",
+              "source_ref": "cad-rev-B"
+            }
+          ],
+          "required_modulus_mm": 35.65,
+          "ratio": 1.15,
+          "max_diameter_mm": 230,
+          "formula": "M_required = ratio × max(M_hotspot); M_catalog = r × h / (2h + r)",
+          "strategy": "uniform-plus-one",
+          "selected": "R200",
+          "options": [
+            {
+              "catalog_id": "R160",
+              "modulus_mm": 33.599999999999994,
+              "diameter_mm": 160,
+              "selected": false,
+              "reasons": [
+                "模数不足"
+              ],
+              "outcome": "Excluded"
+            },
+            {
+              "catalog_id": "R170",
+              "modulus_mm": 35.61904761904761,
+              "diameter_mm": 170,
+              "selected": false,
+              "reasons": [
+                "模数不足"
+              ],
+              "outcome": "Excluded"
+            },
+            {
+              "catalog_id": "R180",
+              "modulus_mm": 37.63636363636365,
+              "diameter_mm": 180,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R190",
+              "modulus_mm": 39.65217391304348,
+              "diameter_mm": 190,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R200",
+              "modulus_mm": 41.666666666666664,
+              "diameter_mm": 200,
+              "selected": true,
+              "reasons": [],
+              "outcome": "Selected"
+            },
+            {
+              "catalog_id": "R210",
+              "modulus_mm": 43.68,
+              "diameter_mm": 210,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R216",
+              "modulus_mm": 44.99999999999999,
+              "diameter_mm": 216,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R220",
+              "modulus_mm": 45.97014925373134,
+              "diameter_mm": 220,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R230",
+              "modulus_mm": 47.985611510791365,
+              "diameter_mm": 230,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            }
+          ],
+          "source_ref": "project-test-rulebook",
+          "source_edition": "case-v1",
+          "reason": "所有位置可共同使用的最小规格的下一档"
+        },
+        {
+          "kind": "riser",
+          "rule_id": "R-RISER-01",
+          "version": "1",
+          "site_id": "RS-05",
+          "output_node": "PV_PMP-S1-C04_riser_spec_5",
+          "inputs": [
+            {
+              "id": "HS-05",
+              "modulus_mm": 29,
+              "path": "hotspots.4.modulus_mm",
+              "source_ref": "cad-rev-B"
+            }
+          ],
+          "required_modulus_mm": 33.349999999999994,
+          "ratio": 1.15,
+          "max_diameter_mm": 230,
+          "formula": "M_required = ratio × max(M_hotspot); M_catalog = r × h / (2h + r)",
+          "strategy": "uniform-plus-one",
+          "selected": "R200",
+          "options": [
+            {
+              "catalog_id": "R160",
+              "modulus_mm": 33.599999999999994,
+              "diameter_mm": 160,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R170",
+              "modulus_mm": 35.61904761904761,
+              "diameter_mm": 170,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R180",
+              "modulus_mm": 37.63636363636365,
+              "diameter_mm": 180,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R190",
+              "modulus_mm": 39.65217391304348,
+              "diameter_mm": 190,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R200",
+              "modulus_mm": 41.666666666666664,
+              "diameter_mm": 200,
+              "selected": true,
+              "reasons": [],
+              "outcome": "Selected"
+            },
+            {
+              "catalog_id": "R210",
+              "modulus_mm": 43.68,
+              "diameter_mm": 210,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R216",
+              "modulus_mm": 44.99999999999999,
+              "diameter_mm": 216,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R220",
+              "modulus_mm": 45.97014925373134,
+              "diameter_mm": 220,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R230",
+              "modulus_mm": 47.985611510791365,
+              "diameter_mm": 230,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            }
+          ],
+          "source_ref": "project-test-rulebook",
+          "source_edition": "case-v1",
+          "reason": "所有位置可共同使用的最小规格的下一档"
+        },
+        {
+          "kind": "riser",
+          "rule_id": "R-RISER-01",
+          "version": "1",
+          "site_id": "RS-06",
+          "output_node": "PV_PMP-S1-C04_riser_spec_6",
+          "inputs": [
+            {
+              "id": "HS-06",
+              "modulus_mm": 33,
+              "path": "hotspots.5.modulus_mm",
+              "source_ref": "cad-rev-B"
+            }
+          ],
+          "required_modulus_mm": 37.949999999999996,
+          "ratio": 1.15,
+          "max_diameter_mm": 230,
+          "formula": "M_required = ratio × max(M_hotspot); M_catalog = r × h / (2h + r)",
+          "strategy": "uniform-plus-one",
+          "selected": "R200",
+          "options": [
+            {
+              "catalog_id": "R160",
+              "modulus_mm": 33.599999999999994,
+              "diameter_mm": 160,
+              "selected": false,
+              "reasons": [
+                "模数不足"
+              ],
+              "outcome": "Excluded"
+            },
+            {
+              "catalog_id": "R170",
+              "modulus_mm": 35.61904761904761,
+              "diameter_mm": 170,
+              "selected": false,
+              "reasons": [
+                "模数不足"
+              ],
+              "outcome": "Excluded"
+            },
+            {
+              "catalog_id": "R180",
+              "modulus_mm": 37.63636363636365,
+              "diameter_mm": 180,
+              "selected": false,
+              "reasons": [
+                "模数不足"
+              ],
+              "outcome": "Excluded"
+            },
+            {
+              "catalog_id": "R190",
+              "modulus_mm": 39.65217391304348,
+              "diameter_mm": 190,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R200",
+              "modulus_mm": 41.666666666666664,
+              "diameter_mm": 200,
+              "selected": true,
+              "reasons": [],
+              "outcome": "Selected"
+            },
+            {
+              "catalog_id": "R210",
+              "modulus_mm": 43.68,
+              "diameter_mm": 210,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R216",
+              "modulus_mm": 44.99999999999999,
+              "diameter_mm": 216,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R220",
+              "modulus_mm": 45.97014925373134,
+              "diameter_mm": 220,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            },
+            {
+              "catalog_id": "R230",
+              "modulus_mm": 47.985611510791365,
+              "diameter_mm": 230,
+              "selected": false,
+              "reasons": [],
+              "outcome": "FeasibleAlternative"
+            }
+          ],
+          "source_ref": "project-test-rulebook",
+          "source_edition": "case-v1",
+          "reason": "所有位置可共同使用的最小规格的下一档"
+        },
+        {
+          "kind": "gating",
+          "rule_id": "R-FLOW-01",
+          "version": "1",
+          "formula": "A = G / (rho × t × Cd × sqrt(2 × 9.81 × H_m)) × 1e6",
+          "inputs": {
+            "gross_mass_kg": 1049.868,
+            "density_kg_m3": 7000,
+            "time_s": 37,
+            "head_mm": 450,
+            "discharge_coefficient": 0.6
+          },
+          "margin": 1.0,
+          "required_area_mm2": 2273.67,
+          "selected_area_mm2": 2500,
+          "source_ref": "project-test-rulebook",
+          "source_edition": "case-v1",
+          "reason": "按直浇道面积、内浇口面积、横浇道面积升序搜索首个满足流量裕量与截面比的组合；总质量包含所选冒口"
+        }
+      ]
+    }
+  ],
+  "rejected_attempts": [],
+  "generation_boundary": "仅为参数驱动的初步方案生成；未生成可制造CAD实体，未运行真实CAE，未批准发布",
+  "admission": {
+    "conforms": true,
+    "issues": [],
+    "summary": "Validation Report\nConforms: True\n",
+    "conversions": [
+      {
+        "path": "casting_mass_kg",
+        "original_value": 630000,
+        "original_unit": "g",
+        "value": 630.0,
+        "unit": "kg"
+      }
+    ],
+    "rule_selection": [
+      {
+        "rule_id": "R-COVER-01",
+        "result": "Applicable",
+        "version": "1",
+        "reason": "材料、造型及浇注方式匹配；RDF 规则所需输入通过 SHACL 准入"
+      },
+      {
+        "rule_id": "R-EXCLUSION-01",
+        "result": "Applicable",
+        "version": "1",
+        "reason": "材料、造型及浇注方式匹配；RDF 规则所需输入通过 SHACL 准入"
+      },
+      {
+        "rule_id": "R-FLOW-01",
+        "result": "Applicable",
+        "version": "1",
+        "reason": "材料、造型及浇注方式匹配；RDF 规则所需输入通过 SHACL 准入"
+      },
+      {
+        "rule_id": "R-PRINT-01",
+        "result": "Applicable",
+        "version": "1",
+        "reason": "材料、造型及浇注方式匹配；RDF 规则所需输入通过 SHACL 准入"
+      },
+      {
+        "rule_id": "R-RATIO-01",
+        "result": "Applicable",
+        "version": "1",
+        "reason": "材料、造型及浇注方式匹配；RDF 规则所需输入通过 SHACL 准入"
+      },
+      {
+        "rule_id": "R-RISER-01",
+        "result": "Applicable",
+        "version": "1",
+        "reason": "材料、造型及浇注方式匹配；RDF 规则所需输入通过 SHACL 准入"
+      },
+      {
+        "rule_id": "R-YIELD-01",
+        "result": "Applicable",
+        "version": "1",
+        "reason": "材料、造型及浇注方式匹配；RDF 规则所需输入通过 SHACL 准入"
+      }
+    ]
+  },
+  "run_id": "PMP-S1",
+  "ontology_triples": 3241
+}

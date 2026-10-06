@@ -1,0 +1,55 @@
+{
+  "case_id": "PMP-DV-920-01",
+  "snapshot_id": "PMP-S1",
+  "product_name": "大型双蜗壳泵体",
+  "material_family": "ZG270-500",
+  "manufacturing_process": "3d-printed-sand",
+  "pouring_method": "gravity",
+  "casting_mass_kg": 630,
+  "casting_envelope_mm": [920, 720, 610],
+  "main_wall_mm": 24,
+  "max_wall_mm": 110,
+  "min_wall_mm": 18,
+  "liquid_density_kg_m3": 7000,
+  "effective_head_mm": 450,
+  "target_pour_time_s": 37,
+  "pour_temperature_degC": 1585,
+  "gating_metal_estimate_kg": 90,
+  "sand_mass_estimate_kg": 4650,
+  "print_block_mm": [1450, 1100, 790],
+  "sand_cover_mm": 45,
+  "thermal_curve_status": "Missing",
+  "source_refs": {
+    "material": "client-spec-R1",
+    "geometry": "cad-rev-B",
+    "process": "process-card-P1",
+    "printer": "printer-capability-P1"
+  },
+  "hotspots": [
+    {"id": "HS-01", "modulus_mm": 30, "geometry_ref": "cad://PMP-DV-920-01/HS-01"},
+    {"id": "HS-02", "modulus_mm": 32, "geometry_ref": "cad://PMP-DV-920-01/HS-02"},
+    {"id": "HS-03", "modulus_mm": 34, "geometry_ref": "cad://PMP-DV-920-01/HS-03"},
+    {"id": "HS-04", "modulus_mm": 31, "geometry_ref": "cad://PMP-DV-920-01/HS-04"},
+    {"id": "HS-05", "modulus_mm": 29, "geometry_ref": "cad://PMP-DV-920-01/HS-05"},
+    {"id": "HS-06", "modulus_mm": 33, "geometry_ref": "cad://PMP-DV-920-01/HS-06"}
+  ],
+  "riser_sites": [
+    {"id": "RS-01", "feeds": ["HS-01"], "max_diameter_mm": 230, "geometry_ref": "cad://PMP-DV-920-01/RS-01"},
+    {"id": "RS-02", "feeds": ["HS-02"], "max_diameter_mm": 230, "geometry_ref": "cad://PMP-DV-920-01/RS-02"},
+    {"id": "RS-03", "feeds": ["HS-03"], "max_diameter_mm": 230, "geometry_ref": "cad://PMP-DV-920-01/RS-03"},
+    {"id": "RS-04", "feeds": ["HS-04"], "max_diameter_mm": 230, "geometry_ref": "cad://PMP-DV-920-01/RS-04"},
+    {"id": "RS-05", "feeds": ["HS-05"], "max_diameter_mm": 230, "geometry_ref": "cad://PMP-DV-920-01/RS-05"},
+    {"id": "RS-06", "feeds": ["HS-06"], "max_diameter_mm": 230, "geometry_ref": "cad://PMP-DV-920-01/RS-06"},
+    {"id": "RS-05-06-SHARED", "feeds": ["HS-05", "HS-06"], "max_diameter_mm": 230, "geometry_ref": "cad://PMP-DV-920-01/RS-05-06"}
+  ],
+  "ingate_sites": [
+    {"id": "IG-01", "region": "outer-rib-1", "geometry_ref": "cad://PMP-DV-920-01/IG-01"},
+    {"id": "IG-02", "region": "outer-rib-2", "geometry_ref": "cad://PMP-DV-920-01/IG-02"},
+    {"id": "IG-03", "region": "outer-rib-3", "geometry_ref": "cad://PMP-DV-920-01/IG-03"},
+    {"id": "IG-04", "region": "outer-rib-4", "geometry_ref": "cad://PMP-DV-920-01/IG-04"},
+    {"id": "IG-05", "region": "outer-rib-5", "geometry_ref": "cad://PMP-DV-920-01/IG-05"},
+    {"id": "IG-06", "region": "outer-rib-6", "geometry_ref": "cad://PMP-DV-920-01/IG-06"},
+    {"id": "IG-FLANGE", "region": "flange-face-L", "geometry_ref": "cad://PMP-DV-920-01/IG-FLANGE"}
+  ],
+  "forbidden_gate_regions": ["flange-face-L", "flange-face-R", "pressure-NDT-zone"]
+}

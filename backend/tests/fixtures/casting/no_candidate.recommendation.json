@@ -1,0 +1,137 @@
+{
+  "case_id": "PMP-DV-920-01",
+  "snapshot_id": "PMP-S1",
+  "rule_set": "PMP-TRIAL-RULES",
+  "rule_version": "1",
+  "input_fingerprint": "40cd182587541d1c217b34acdd4b6436bd3ee67a15ee2e1a7d4ef07501fb425e",
+  "rules_fingerprint": "088d4770d147c3238f287442c1e353b522b8d719ccb5cc4c2445c011a9dfc161",
+  "input_facts": {
+    "casting_mass_kg": 630,
+    "main_wall_mm": 24,
+    "max_wall_mm": 110,
+    "min_wall_mm": 18,
+    "liquid_density_kg_m3": 7000,
+    "target_pour_time_s": 37,
+    "effective_head_mm": 450,
+    "gating_metal_estimate_kg": 90,
+    "sand_mass_estimate_kg": 4650,
+    "hotspot_moduli_mm": {
+      "HS-01": 30,
+      "HS-02": 32,
+      "HS-03": 34,
+      "HS-04": 31,
+      "HS-05": 29,
+      "HS-06": 33
+    },
+    "riser_sites": [],
+    "ingate_sites": [
+      [
+        "IG-01",
+        "outer-rib-1"
+      ],
+      [
+        "IG-02",
+        "outer-rib-2"
+      ],
+      [
+        "IG-03",
+        "outer-rib-3"
+      ],
+      [
+        "IG-04",
+        "outer-rib-4"
+      ],
+      [
+        "IG-05",
+        "outer-rib-5"
+      ],
+      [
+        "IG-06",
+        "outer-rib-6"
+      ],
+      [
+        "IG-FLANGE",
+        "flange-face-L"
+      ]
+    ],
+    "forbidden_gate_regions": [
+      "flange-face-L",
+      "flange-face-R",
+      "pressure-NDT-zone"
+    ],
+    "print_block_mm": [
+      1450,
+      1100,
+      790
+    ],
+    "sand_cover_mm": 45
+  },
+  "input_digest": {
+    "casting_mass_kg": 630,
+    "hotspots": 6,
+    "available_riser_sites": 0,
+    "available_ingate_sites": 7
+  },
+  "ranking_basis": "先满足项目硬约束；其后按出品率降序、冒口数量升序排序",
+  "recommended_candidate_id": null,
+  "candidates": [],
+  "rejected_attempts": [
+    {
+      "stage": "site-selection",
+      "reason": "无覆盖全部热节的许可冒口布置"
+    }
+  ],
+  "generation_boundary": "仅为参数驱动的初步方案生成；未生成可制造CAD实体，未运行真实CAE，未批准发布",
+  "admission": {
+    "conforms": true,
+    "issues": [],
+    "summary": "Validation Report\nConforms: True\n",
+    "conversions": [],
+    "rule_selection": [
+      {
+        "rule_id": "R-COVER-01",
+        "result": "Applicable",
+        "version": "1",
+        "reason": "材料、造型及浇注方式匹配；RDF 规则所需输入通过 SHACL 准入"
+      },
+      {
+        "rule_id": "R-EXCLUSION-01",
+        "result": "Applicable",
+        "version": "1",
+        "reason": "材料、造型及浇注方式匹配；RDF 规则所需输入通过 SHACL 准入"
+      },
+      {
+        "rule_id": "R-FLOW-01",
+        "result": "Applicable",
+        "version": "1",
+        "reason": "材料、造型及浇注方式匹配；RDF 规则所需输入通过 SHACL 准入"
+      },
+      {
+        "rule_id": "R-PRINT-01",
+        "result": "Applicable",
+        "version": "1",
+        "reason": "材料、造型及浇注方式匹配；RDF 规则所需输入通过 SHACL 准入"
+      },
+      {
+        "rule_id": "R-RATIO-01",
+        "result": "Applicable",
+        "version": "1",
+        "reason": "材料、造型及浇注方式匹配；RDF 规则所需输入通过 SHACL 准入"
+      },
+      {
+        "rule_id": "R-RISER-01",
+        "result": "Applicable",
+        "version": "1",
+        "reason": "材料、造型及浇注方式匹配；RDF 规则所需输入通过 SHACL 准入"
+      },
+      {
+        "rule_id": "R-YIELD-01",
+        "result": "Applicable",
+        "version": "1",
+        "reason": "材料、造型及浇注方式匹配；RDF 规则所需输入通过 SHACL 准入"
+      }
+    ]
+  },
+  "run_id": "PMP-S1",
+  "ontology_triples": 925
+}

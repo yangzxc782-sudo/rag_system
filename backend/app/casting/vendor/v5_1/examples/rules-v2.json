@@ -1,0 +1,142 @@
+{
+  "rule_set_id": "PMP-TRIAL-RULES",
+  "version": "2",
+  "source_ref": "project-test-rulebook",
+  "source_edition": "case-v2",
+  "notice": "合成项目试验阈值，不是国家标准或生产工艺批准值",
+  "scope_material_family": "ZG270-500",
+  "scope_process": "3d-printed-sand",
+  "scope_pouring_method": "gravity",
+  "riser_modulus_ratio": 1.18,
+  "max_hotspots_per_riser": 1,
+  "max_riser_count": 6,
+  "riser_catalog": [
+    {
+      "id": "R160",
+      "diameter_mm": 160,
+      "height_mm": 210
+    },
+    {
+      "id": "R170",
+      "diameter_mm": 170,
+      "height_mm": 220
+    },
+    {
+      "id": "R180",
+      "diameter_mm": 180,
+      "height_mm": 230
+    },
+    {
+      "id": "R190",
+      "diameter_mm": 190,
+      "height_mm": 240
+    },
+    {
+      "id": "R200",
+      "diameter_mm": 200,
+      "height_mm": 250
+    },
+    {
+      "id": "R210",
+      "diameter_mm": 210,
+      "height_mm": 260
+    },
+    {
+      "id": "R216",
+      "diameter_mm": 216,
+      "height_mm": 270
+    },
+    {
+      "id": "R220",
+      "diameter_mm": 220,
+      "height_mm": 280
+    },
+    {
+      "id": "R230",
+      "diameter_mm": 230,
+      "height_mm": 290
+    }
+  ],
+  "riser_sizing_strategies": [
+    "local-min",
+    "uniform",
+    "local-plus-one",
+    "uniform-plus-one"
+  ],
+  "discharge_coefficient": 0.6,
+  "sprue_area_catalog_mm2": [
+    1800,
+    2000,
+    2200,
+    2500,
+    2800,
+    3200
+  ],
+  "min_sprue_area_margin": 1.0,
+  "runner_area_ratio_target": 2.0,
+  "runner_area_ratio_range": [
+    1.5,
+    2.5
+  ],
+  "ingate_area_ratio_target": 1.6,
+  "ingate_area_ratio_range": [
+    1.2,
+    2.0
+  ],
+  "ingate_count": 6,
+  "ingate_profiles_mm": [
+    [
+      30,
+      20
+    ],
+    [
+      32,
+      22
+    ],
+    [
+      35,
+      24
+    ],
+    [
+      40,
+      25
+    ]
+  ],
+  "runner_profiles_mm": [
+    [
+      55,
+      40
+    ],
+    [
+      50,
+      50
+    ],
+    [
+      60,
+      50
+    ],
+    [
+      65,
+      50
+    ]
+  ],
+  "runner_count": 2,
+  "yield_range": [
+    0.55,
+    0.68
+  ],
+  "sand_metal_ratio_range": [
+    3.5,
+    5.5
+  ],
+  "max_print_block_mm": [
+    1500,
+    1200,
+    850
+  ],
+  "min_sand_cover_mm": 35,
+  "filter_count": 2,
+  "filter_type": "F-100-TRIAL",
+  "pouring_basin_count": 1,
+  "note": "补缩距离、冒口颈、流动稳定性、过滤器承载量、CAD干涉与真实CAE均需外部验证"
+}

@@ -37,6 +37,8 @@ from app.schemas.query_rewrite import (
     REWRITE_ARTIFACT_KEY, REWRITE_POLICY_KEY, RewriteArtifactDetails, RewritePolicyDetails,
 )
 from app.schemas.conversation_rag import StageDetails, STAGE_ADAPTER, STAGE_KINDS
+from app.schemas.casting_graph import CASTING_ARTIFACT_ADAPTER, CASTING_GRAPH_VERSION, ROUTE_KEY, TOOL_KEY
+from app.schemas.casting_answer import GENERATION_KEY, RESULT_KEY, CastingAnswerDraft, CastingGenerationDetails, CastingResultDetails
 
 
 _ACTIVE = ("running", "finalizing", "needs_recovery")
@@ -65,6 +67,13 @@ def fingerprint(value: Any) -> str:
     """Canonical JSON identity; rejects non-JSON and non-finite numbers."""
     encoded = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
     return sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def turn_fingerprint(question, limit, document_id, casting_input_file_id=None):
+    value = {"question": question, "limit": limit, "document_id": str(document_id) if document_id else None}
+    if casting_input_file_id is not None:
+        value["casting_input_file_id"] = str(casting_input_file_id)
+    return fingerprint(value)  # Legacy requests retain their exact identity.
 
 
 def _metrics(value: PersistenceMetrics | dict[str, Any] | None) -> dict[str, Any]:
@@ -211,18 +220,24 @@ class ConversationRepository:
         self, session_id: UUID, request_id: UUID, question: str, *,
         limit: int = 8, document_id: UUID | None = None,
         rewrite_policy: RewritePolicyDetails | None = None,
+        casting_input_file_id: UUID | None = None,
+        casting_enabled: bool = False, graph_version: str | None = None,
     ) -> QATurn:
         self._transaction()
         if (not isinstance(request_id, UUID) or not isinstance(question, str) or not question.strip()
                 or type(limit) is not int or not 1 <= limit <= 50
                 or (document_id is not None and not isinstance(document_id, UUID))):
             raise _error("QA_REQUEST_INVALID", "Invalid turn parameters.", 422)
-        identity = fingerprint({"question": question, "limit": limit, "document_id": str(document_id) if document_id else None})
+        if casting_input_file_id is not None and (not casting_enabled or not isinstance(casting_input_file_id, UUID)):
+            raise _error("CASTING_INPUT_INVALID", "Casting input requires the enabled engineering path.", 422)
+        identity = turn_fingerprint(question, limit, document_id, casting_input_file_id)
         session = self.get_session(session_id, for_update=True)
         existing = self.get_turn_by_request(session_id, request_id)
         if existing is not None:
             if existing.request_fingerprint != identity:
                 raise _error("QA_REQUEST_CONFLICT", "Request parameters conflict with the saved turn.")
+            if casting_enabled:
+                self.db.refresh(existing, attribute_names=["graph_version", "requested_casting_input_file_id", "effective_casting_input_file_id"])
             return existing
         if self.db.scalar(select(QATurn.id).where(QATurn.session_id == session_id, QATurn.status.in_(_ACTIVE)).limit(1)):
             raise _error("QA_THREAD_BUSY", "Resolve the active turn before creating another.")
@@ -231,6 +246,11 @@ class ConversationRepository:
             turn_no=session.next_turn_no, question=question, retrieval_limit=limit, document_id=document_id,
             status="running", attempt_no=1,
         )
+        if casting_enabled:
+            from app.services.casting_repository import CastingRepository
+            turn.graph_version = graph_version
+            turn.requested_casting_input_file_id = casting_input_file_id
+            turn.effective_casting_input_file_id = CastingRepository(self.db).select_input(session_id, casting_input_file_id)
         self.db.add(turn)
         self.db.flush()
         self.db.add(QAMessage(
@@ -243,6 +263,8 @@ class ConversationRepository:
         self.db.flush()
         if rewrite_policy is not None:
             self.save_rewrite_policy(turn, rewrite_policy)
+        if casting_enabled:
+            self.db.refresh(turn, attribute_names=["graph_version", "requested_casting_input_file_id", "effective_casting_input_file_id"])
         return turn
 
     def list_messages(self, session_id: UUID, *, limit: int = 50, before_seq: int | None = None) -> list[QAMessage]:
@@ -343,6 +365,37 @@ class ConversationRepository:
                 metrics = parsed.model_dump(mode="json", exclude_none=True)
             except (ValidationError, TypeError, ValueError) as exc:
                 raise _error("QA_METADATA_INVALID", "Invalid typed rewrite artifact.", 422) from exc
+        elif getattr(details, "artifact_type", None) in {"casting_route", "casting_tool"} or (
+            isinstance(details, dict) and details.get("artifact_type") in {"casting_route", "casting_tool"}
+        ):
+            try:
+                value = details.model_dump(mode="json") if hasattr(details, "model_dump") else details
+                parsed = CASTING_ARTIFACT_ADAPTER.validate_json(json.dumps(value))
+                expected = ROUTE_KEY if parsed.artifact_type == "casting_route" else TOOL_KEY
+                if (kind, key, schema_version) != ("context", expected, 3):
+                    raise ValueError("Casting stage identity mismatch")
+                if (parsed.artifact_type == "casting_route") != (parent_artifact_id is None):
+                    raise ValueError("Casting stage parent mismatch")
+                metrics = parsed.model_dump(mode="json")
+                if len(json.dumps(metrics).encode()) > 8192:
+                    raise ValueError("Casting metadata exceeds budget")
+            except (ValidationError, TypeError, ValueError) as exc:
+                raise _error("QA_METADATA_INVALID", "Invalid casting stage metadata.", 422) from exc
+        elif getattr(details, "artifact_type", None) in {"casting_generation", "casting_result"} or (
+            isinstance(details, dict) and details.get("artifact_type") in {"casting_generation", "casting_result"}
+        ):
+            try:
+                value = details.model_dump(mode="json") if hasattr(details, "model_dump") else details
+                is_generation = value["artifact_type"] == "casting_generation"
+                model = CastingGenerationDetails if is_generation else CastingResultDetails
+                parsed = model.model_validate_json(json.dumps(value))
+                if (kind, key, schema_version) != ("generation" if is_generation else "result", GENERATION_KEY if is_generation else RESULT_KEY, 3):
+                    raise ValueError("Engineering stage identity mismatch")
+                if parent_artifact_id is None:
+                    raise ValueError("Engineering stage needs parent")
+                metrics = parsed.model_dump(mode="json")
+            except (ValidationError, TypeError, ValueError) as exc:
+                raise _error("QA_METADATA_INVALID", "Invalid casting answer metadata.", 422) from exc
         elif getattr(details, "artifact_type", None) in STAGE_KINDS or (
             isinstance(details, dict) and details.get("artifact_type") in STAGE_KINDS
         ):
@@ -357,6 +410,9 @@ class ConversationRepository:
         else:
             metrics = _metrics(details)
         _, turn = self._locked_turn(session_id, turn_id, expected_attempt)
+        if metrics.get("artifact_type") in {"casting_route", "casting_tool", "casting_generation", "casting_result"}:
+            if turn.graph_version != CASTING_GRAPH_VERSION:
+                raise _error("CASTING_GRAPH_VERSION_MISMATCH", "Casting artifacts require a v3 turn.")
         if turn.status != "running":
             raise _error("QA_STATE_CONFLICT", "Artifacts can only be saved for a running turn.")
         if parent_artifact_id is not None:
@@ -426,12 +482,16 @@ class ConversationRepository:
             raise _error("QA_MESSAGE_NOT_FOUND", "User message not found in this turn.", 404)
         return row
 
-    def list_completed_turns(self, session_id: UUID, *, before_turn_no: int, limit: int = 6) -> list[QATurn]:
+    def list_completed_turns(self, session_id: UUID, *, before_turn_no: int, limit: int = 6,
+                             rag_only: bool = False) -> list[QATurn]:
         self._page(limit, 0)
         self.get_session(session_id)
-        return list(self.db.scalars(select(QATurn).options(self._history_turn_columns()).where(
+        statement = select(QATurn).options(self._history_turn_columns()).where(
             QATurn.session_id == session_id, QATurn.status == "completed", QATurn.turn_no < before_turn_no,
-        ).order_by(QATurn.turn_no.desc()).limit(limit)).all())
+        )
+        if rag_only:
+            statement = statement.where(QATurn.outcome != "casting_design")
+        return list(self.db.scalars(statement.order_by(QATurn.turn_no.desc()).limit(limit)).all())
 
     @staticmethod
     def _history_turn_columns():
@@ -499,9 +559,12 @@ class ConversationRepository:
                 raise _error("QA_SNAPSHOT_INVALID", "Evidence payload must be an object.", 422)
             if item.kind == "answer_draft":
                 try:
-                    draft = AnswerDraft.model_validate(item.payload)
+                    casting = item.payload.get("draft_type") == "casting_answer_v1"
+                    draft = CastingAnswerDraft.model_validate_json(json.dumps(item.payload)) if casting else AnswerDraft.model_validate(item.payload)
                 except ValidationError as exc:
                     raise _error("QA_DRAFT_INVALID", "Invalid answer draft.", 422) from exc
+                if casting and (refs or item.schema_version != 3):
+                    raise _error("CASTING_PROVENANCE_INVALID", "Engineering drafts require their separate source contract.", 422)
                 if not draft.text.strip() or (draft.outcome == "answer") != bool(refs):
                     raise _error("QA_SOURCE_REQUIRED", "Answer drafts need sources; clarification/no-context drafts must be source-free.", 422)
             elif not refs:
@@ -545,6 +608,9 @@ class ConversationRepository:
             raise _error("QA_ATTEMPT_CONFLICT", "Cannot append evidence to an old attempt.")
         ids = []
         for item, refs, identity in prepared:
+            if item.payload.get("draft_type") == "casting_answer_v1":
+                from app.services.casting_provenance import validate_source
+                validate_source(self, turn, CastingAnswerDraft.model_validate_json(json.dumps(item.payload)), artifact)
             row = self.db.scalar(select(QAEvidenceSnapshot).where(
                 QAEvidenceSnapshot.artifact_id == artifact_id, QAEvidenceSnapshot.snapshot_key == item.key,
             ).execution_options(populate_existing=True))
@@ -629,7 +695,7 @@ class ConversationRepository:
 
     def publish_answer(
         self, session_id: UUID, turn_id: UUID, snapshot_id: UUID, *, expected_attempt: int,
-        finalize: bool = False,
+        finalize: bool = False, casting_proof=None,
     ) -> QAMessage:
         self._transaction()
         existing = self.get_answer(session_id, turn_id)
@@ -660,9 +726,22 @@ class ConversationRepository:
         artifact = self.get_artifact(session_id, turn_id, row.artifact_id)
         if row.status != "available" or artifact.attempt_no != expected_attempt:
             raise _error("QA_EVIDENCE_UNAVAILABLE", "Answer draft is deleted or belongs to an old attempt.")
-        draft = AnswerDraft.model_validate(row.payload)
-        if (draft.outcome == "answer") != bool(view.sources):
-            raise _error("QA_SOURCE_REQUIRED", "Answer source provenance is inconsistent.")
+        if row.payload.get("draft_type") == "casting_answer_v1":
+            from app.services.casting_provenance import validate_source, validate_result_link, validate_snapshot_hash
+            from app.schemas.casting_answer import CastingPublicationProof
+            draft = CastingAnswerDraft.model_validate_json(json.dumps(row.payload))
+            if (view.sources or row.schema_version != 3 or not isinstance(casting_proof, CastingPublicationProof)
+                    or (casting_proof.thread_id, casting_proof.turn_id, casting_proof.attempt_no, casting_proof.snapshot_id)
+                        != (session_id, turn_id, expected_attempt, snapshot_id)
+                    or casting_proof.draft != draft):
+                raise _error("CASTING_PROVENANCE_INVALID", "Engineering draft lacks a matching verified result.")
+            validate_snapshot_hash(row)
+            validate_source(self, turn, draft, artifact)
+            validate_result_link(self, turn, artifact.id, draft)
+        else:
+            draft = AnswerDraft.model_validate(row.payload)
+            if (draft.outcome == "answer") != bool(view.sources):
+                raise _error("QA_SOURCE_REQUIRED", "Answer source provenance is inconsistent.")
         message = QAMessage(
             id=uuid4(), session_id=session_id, turn_id=turn_id, answer_snapshot_id=snapshot_id,
             sequence_no=session.next_message_seq, role="assistant", content=draft.text,

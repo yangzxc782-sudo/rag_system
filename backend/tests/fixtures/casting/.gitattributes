@@ -1,0 +1,2 @@
+# Golden fixture hashes refer to exact UTF-8 bytes.
+*.json -text

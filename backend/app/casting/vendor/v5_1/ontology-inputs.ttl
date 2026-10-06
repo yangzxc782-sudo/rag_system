@@ -1,0 +1,39 @@
+@prefix ex: <https://example.org/casting#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+
+# JSON bindings are adapter metadata; parameter meaning remains in schema-v5.1.ttl.
+ex:PD_MaterialRequirement ex:inputPath "material_family"; ex:sourceGroup "material" .
+ex:PD_CastingMass ex:inputPath "casting_mass_kg"; ex:canonicalUnit "kg"; ex:sourceGroup "geometry" .
+ex:PD_CastingMainWall ex:inputPath "main_wall_mm"; ex:canonicalUnit "mm"; ex:sourceGroup "geometry" .
+ex:PD_CastingMinWall ex:inputPath "min_wall_mm"; ex:canonicalUnit "mm"; ex:sourceGroup "geometry" .
+ex:PD_CastingMaxWall ex:inputPath "max_wall_mm"; ex:canonicalUnit "mm"; ex:sourceGroup "geometry" .
+ex:PD_LiquidMetalDensity ex:inputPath "liquid_density_kg_m3"; ex:canonicalUnit "kg/m3"; ex:sourceGroup "process" .
+ex:PD_PartEnvelope ex:inputPath "casting_envelope_mm"; ex:canonicalUnit "mm"; ex:sourceGroup "geometry" .
+ex:PD_CastingModulus ex:inputPath "hotspots.*.modulus_mm"; ex:canonicalUnit "mm"; ex:sourceGroup "geometry" .
+ex:PD_HotSpotPosition ex:inputPath "hotspots.*.geometry_ref"; ex:sourceGroup "geometry" .
+ex:PD_DesignPouringTime ex:inputPath "target_pour_time_s"; ex:canonicalUnit "s"; ex:sourceGroup "process" .
+ex:PD_PressureHead ex:inputPath "effective_head_mm"; ex:canonicalUnit "mm"; ex:sourceGroup "process" .
+ex:PD_DesignPouringTemperature ex:inputPath "pour_temperature_degC"; ex:canonicalUnit "degC"; ex:sourceGroup "process" .
+
+ex:PD_GatingEstimate a ex:ParameterDefinition; rdfs:label "浇道金属估算质量"@zh; ex:parameterKind "numeric"; ex:quantityKind "mass"; ex:subjectKind "GatingRiseringSystem"; ex:inputPath "gating_metal_estimate_kg"; ex:canonicalUnit "kg"; ex:sourceGroup "process" .
+ex:PD_SandEstimate a ex:ParameterDefinition; rdfs:label "砂型估算质量"@zh; ex:parameterKind "numeric"; ex:quantityKind "mass"; ex:subjectKind "GatingRiseringSystem"; ex:inputPath "sand_mass_estimate_kg"; ex:canonicalUnit "kg"; ex:sourceGroup "printer" .
+ex:PD_PrintBlock a ex:ParameterDefinition; rdfs:label "打印块尺寸"@zh; ex:parameterKind "structured"; ex:quantityKind "length"; ex:subjectKind "GatingRiseringSystem"; ex:inputPath "print_block_mm"; ex:canonicalUnit "mm"; ex:sourceGroup "printer" .
+ex:PD_SandCover a ex:ParameterDefinition; rdfs:label "砂层覆盖"@zh; ex:parameterKind "numeric"; ex:quantityKind "length"; ex:subjectKind "GatingRiseringSystem"; ex:inputPath "sand_cover_mm"; ex:canonicalUnit "mm"; ex:sourceGroup "printer" .
+ex:PD_RiserSites a ex:ParameterDefinition; rdfs:label "允许冒口位置及补缩目标"@zh; ex:parameterKind "structured"; ex:quantityKind "site catalog"; ex:subjectKind "GatingRiseringSystem"; ex:inputPath "riser_sites"; ex:sourceGroup "geometry" .
+ex:PD_IngateSites a ex:ParameterDefinition; rdfs:label "允许内浇口位置"@zh; ex:parameterKind "structured"; ex:quantityKind "site catalog"; ex:subjectKind "GatingRiseringSystem"; ex:inputPath "ingate_sites"; ex:sourceGroup "geometry" .
+ex:PD_ForbiddenRegions a ex:ParameterDefinition; rdfs:label "禁布区域"@zh; ex:parameterKind "structured"; ex:quantityKind "region set"; ex:subjectKind "GatingRiseringSystem"; ex:inputPath "forbidden_gate_regions"; ex:sourceGroup "geometry" .
+ex:PD_ScreeningResult a ex:ParameterDefinition; rdfs:label "初筛规则检查结果"@zh; ex:parameterKind "structured"; ex:quantityKind "check result"; ex:subjectKind "GatingRiseringSystem" .
+
+ex:AdmissionShape a sh:NodeShape; sh:targetSubjectsOf ex:screeningRequired;
+ sh:sparql [sh:message "初筛必需参数必须已确认且具备来源；缺失、冲突或未确认值不能进入生成。"@zh;
+ sh:select """PREFIX ex:<https://example.org/casting#>
+ SELECT $this WHERE {$this ex:screeningRequired true.
+ FILTER NOT EXISTS {$this ex:status "Confirmed"; ex:sourceRef ?source. FILTER(STRLEN(STR(?source))>0)}}"""] .
+
+ex:RuleMethodShape a sh:NodeShape; sh:targetClass ex:RuleApplication;
+ sh:sparql [sh:message "Applicable 规则必须处于 Active 状态；如声明浇注方式，则必须与输入一致。"@zh;
+ sh:select """PREFIX ex:<https://example.org/casting#>
+ SELECT $this WHERE {$this ex:applicationResult "Applicable"; ex:appliesRule ?rule; ex:checkedSnapshot ?snapshot.
+ FILTER((EXISTS {$this ex:admissionCheck true} && NOT EXISTS {?rule ex:status "Active"}) ||
+ EXISTS {?rule ex:scopePouringMethod ?method. FILTER NOT EXISTS {?snapshot ex:pouringMethod ?method}})}"""] .

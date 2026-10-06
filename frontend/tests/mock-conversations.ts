@@ -37,7 +37,8 @@ export class MockConversations {
     if (this.states.has(key)) return this.states.get(key)!;
     const state = this.state(sid, input, status), messages = this.messages.get(sid) ?? [];
     messages.push({ message_id: state.user_message_id, sequence_no: messages.length + 1, role: "user", content: input.question,
-      created_at: timestamp, turn_id: state.turn_id, request_id: input.request_id, status, outcome: null, result: null });
+      created_at: timestamp, turn_id: state.turn_id, request_id: input.request_id, status, outcome: null, result: null,
+      ...(input.casting_input_file_id ? { casting_input_file_id: input.casting_input_file_id, effective_casting_input_file_id: input.casting_input_file_id } : {}) });
     this.states.set(key, state); this.messages.set(sid, messages); return state;
   }
   complete(sid: string, input: TurnInput, result = answer(input.question)) {

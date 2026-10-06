@@ -1,4 +1,6 @@
 from app.models.document import Document
+from app.models.casting_design_file import CastingDesignFile
+from app.models.casting_design_run import CastingDesignRun
 from app.models.document_asset import DocumentAsset
 from app.models.document_block import DocumentBlock
 from app.models.document_chunk import DocumentChunk
@@ -19,6 +21,8 @@ from app.models.qa_evidence_source import QAEvidenceSource
 from app.models.retrieval_log import RetrievalLog
 
 __all__ = [
+    "CastingDesignFile",
+    "CastingDesignRun",
     "Document",
     "DocumentAsset",
     "DocumentBlock",

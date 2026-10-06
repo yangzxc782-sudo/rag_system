@@ -42,7 +42,7 @@ class APILLMProvider:
                 getattr(settings, "llm_remote_supports_json_mode", False)
             ),
             supports_think=False,
-            supports_tools=False,
+            supports_tools=bool(getattr(settings, "llm_remote_supports_tools", False)),
             supports_parallel_tool_calls=False,
             supports_image_input=False,
         )

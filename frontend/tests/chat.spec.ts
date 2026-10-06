@@ -269,7 +269,7 @@ test("mobile layout and keyboard input remain usable", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   const api = new MockConversations(); await open(page, api); await send(page); await expect(messages(page)).toHaveCount(2);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-  await page.screenshot({ path: "../backend/.phase13-m5.tmp/mobile.png", fullPage: true });
+  await page.screenshot({ path: test.info().outputPath("mobile.png"), fullPage: true });
 });
 
 test("bounded polling stops, can_retry=false never submits automatically", async ({ page }) => {

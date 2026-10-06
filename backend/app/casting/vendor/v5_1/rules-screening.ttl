@@ -1,0 +1,19 @@
+@prefix ex: <https://example.org/casting#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+
+# Reusable prerequisite declarations. Concrete EngineeringRule instances receive
+# scope, source and version from the selected project rule configuration.
+ex:RT_Riser rdfs:label "冒口模数与规格选型"@zh; ex:ruleFamilyId "R-RISER-01"; ex:ruleKind "Selection";
+ ex:ruleRequires ex:PD_CastingModulus, ex:PD_RiserSites, ex:PD_LiquidMetalDensity .
+ex:RT_Cover rdfs:label "热节覆盖检查"@zh; ex:ruleFamilyId "R-COVER-01"; ex:ruleKind "HardConstraint";
+ ex:ruleRequires ex:PD_HotSpotPosition, ex:PD_RiserSites .
+ex:RT_Flow rdfs:label "直浇道流量与面积计算"@zh; ex:ruleFamilyId "R-FLOW-01"; ex:ruleKind "Calculation";
+ ex:ruleRequires ex:PD_CastingMass, ex:PD_GatingEstimate, ex:PD_LiquidMetalDensity, ex:PD_DesignPouringTime, ex:PD_PressureHead .
+ex:RT_Ratio rdfs:label "浇道截面比检查"@zh; ex:ruleFamilyId "R-RATIO-01"; ex:ruleKind "HardConstraint";
+ ex:ruleRequires ex:PD_IngateSites .
+ex:RT_Yield rdfs:label "出品率与砂金比检查"@zh; ex:ruleFamilyId "R-YIELD-01"; ex:ruleKind "HardConstraint";
+ ex:ruleRequires ex:PD_CastingMass, ex:PD_GatingEstimate, ex:PD_SandEstimate .
+ex:RT_Print rdfs:label "砂型打印能力检查"@zh; ex:ruleFamilyId "R-PRINT-01"; ex:ruleKind "HardConstraint";
+ ex:ruleRequires ex:PD_PrintBlock, ex:PD_SandCover .
+ex:RT_Exclusion rdfs:label "禁布区域检查"@zh; ex:ruleFamilyId "R-EXCLUSION-01"; ex:ruleKind "HardConstraint";
+ ex:ruleRequires ex:PD_IngateSites, ex:PD_ForbiddenRegions .

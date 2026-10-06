@@ -1,0 +1,34 @@
+{
+  "source": "Original attachment extracted and executed without modification, before vendoring.",
+  "archive_sha256": "679f5023546866b4b388a63d6bf16cfbc794ac12175fb1a104ccfa3c8af185ef",
+  "engine_content_sha256": "40b034b272cc9c4af3411338af5a4508303bb7e155257c8f33a4d60c6798745f",
+  "dependency_lock": "../../../requirements-casting.txt",
+  "python": "3.13.9",
+  "normalization": "Only admission.rule_selection is sorted by rule_id; all candidate values, order, checks, rejections, explanations and fingerprints are retained.",
+  "inputs": {
+    "baseline": "vendor input-v1.json unchanged",
+    "converted": "converted.input.json: casting_mass_kg=630000 and original per-field unit metadata",
+    "no_candidate": "no_candidate.input.json: riser_sites=[]"
+  },
+  "cases": [
+    {
+      "case": "baseline",
+      "upstream_output_sha256": "ef96296f6ec8025e7d8efb8cf85647b0f83910e81ca3078e064e38d1f18b50f6",
+      "fixture_sha256": "5ccc076cf7f3ffd74fc21b717db065955297243641e4cae3f7eb0653f99d7c42"
+    },
+    {
+      "case": "converted",
+      "upstream_output_sha256": "46a67a89703304b0a412322ff235cc8f541d6b2767854e27898422930162a8e4",
+      "fixture_sha256": "1b2d1f67c3f2eb14c926024699901060cf071e7749da0e186030d2a7db698cc9"
+    },
+    {
+      "case": "no_candidate",
+      "upstream_output_sha256": "ee10cccb49052991cb178e791279bdcc6f2e477f8e93c7de9801381fbd67b0a9",
+      "fixture_sha256": "b1c021348b02d0491ef6860d7348e607548acbaa4aec94c8ae6324ab9f2cee4a"
+    }
+  ],
+  "input_sha256": {
+    "converted": "48534f571f1dd658afac41d1aa2607d399848138787a55331e120daa8484ce28",
+    "no_candidate": "fa89b9d37266a4cfb99cb9f23f7fdbc79a55f8c02d78a73d3ec884abd52fdb0b"
+  }
+}
