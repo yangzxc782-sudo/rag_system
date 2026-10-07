@@ -1,87 +1,55 @@
-from __future__ import annotations
-
-from collections.abc import Callable, Sequence
-from copy import deepcopy
+"""Verified-source graph reads; no graph construction or legacy query fallback."""
 from dataclasses import replace
 import time
-from typing import Protocol
 
-from app.core.config import Settings
-from app.graph.models import (
-    GraphAnchorResult, GraphRetrievalRequest, GraphRetrievalResult,
-    GraphTriggerProvenance, KGRef, unsupported_ref_status,
-)
-
-
-class GraphRepository(Protocol):
-    def fetch_table_context(self, request: GraphRetrievalRequest) -> tuple[GraphAnchorResult, ...]: ...
+from app.graph.models import GraphAnchorResult, GraphRetrievalRequest, GraphRetrievalResult, VerifiedAnchor
+from app.services.graph_sources import GraphSourceAuthority
 
 
 class GraphRetrievalService:
-    """Group source references without Hybrid/RAG dependencies or graph writes.
-
-    First occurrence defines canonical order (the caller's M2 source ordering).
-    Inspect all duplicates before applying query limits. Clock budget controls
-    scheduling of the next graph group, not preemption of an active driver call.
-    The caller owns the repository lifecycle.
-    """
-
-    def __init__(self, settings: Settings, *, repository: GraphRepository,
-                 clock: Callable[[], float] | None = None):
-        self._settings = settings
-        self._repository = repository
+    def __init__(self, settings, *, repository, authority=None, clock=None):
+        self._settings, self._repository = settings, repository
+        self.authority = authority or GraphSourceAuthority(settings)
         self._clock = clock or time.monotonic
 
-    def retrieve(self, refs: list[KGRef], *,
-                 provenance: Sequence[GraphTriggerProvenance] = ()) -> GraphRetrievalResult:
+    def retrieve(self, anchors: tuple[VerifiedAnchor, ...]) -> GraphRetrievalResult:
         started = self._clock()
-        variants: dict[str, list[KGRef]] = {}
-        for ref in refs:
-            if not isinstance(ref, KGRef):
-                raise TypeError("Graph retrieval requires KGRef values")
-            values = variants.setdefault(ref.anchor_id, [])
-            if ref not in values:
-                values.append(ref)
-        origins = []
-        for item in provenance:
-            if item.anchor_id in variants and item not in origins:
-                origins.append(deepcopy(item))
-        results: dict[str, GraphAnchorResult] = {}
-        groups: dict[str, list[KGRef]] = {}
+        variants = {}
+        for a in anchors:
+            if not isinstance(a, VerifiedAnchor):
+                raise TypeError("Verified anchors required")
+            variants.setdefault((a.ref.graph_id, a.ref.anchor_id), []).append(a)
+        results, groups, ordered = {}, {}, {}
         selected = 0
-        for anchor_id, values in variants.items():
-            ref = values[0]
-            if not self._settings.graph_retrieval_enabled:
-                status = "disabled"
-            elif len(values) > 1:
-                # All variants remain diagnostic data; none is selected to query.
-                results[anchor_id] = GraphAnchorResult(ref=ref, status="conflicting_ref", conflicting_refs=tuple(values))
-                continue
-            else:
-                status = unsupported_ref_status(ref)
-                if status is None and selected >= self._settings.graph_retrieval_max_anchors:
-                    status = "limit_exceeded"
-            if status is not None:
-                results[anchor_id] = GraphAnchorResult(ref=ref, status=status)
+        for key, values in variants.items():
+            a = values[0]
+            conflict = any(v.ref != a.ref or v.source != a.source for v in values)
+            origins = tuple(dict.fromkeys(p for v in values for p in v.provenance))
+            a = replace(a, provenance=origins)
+            ordered[key] = a
+            status = ("disabled" if not self._settings.graph_retrieval_enabled else
+                      "conflicting_ref" if conflict else
+                      "limit_exceeded" if selected >= self._settings.graph_retrieval_max_anchors else None)
+            if status:
+                results[key] = GraphAnchorResult(a, status)
             else:
                 selected += 1
-                groups.setdefault(ref.graph_id, []).append(ref)
-        exhausted = False
-        for graph_id, anchors in groups.items():
-            if exhausted or self._clock() - started >= self._settings.graph_retrieval_total_budget_seconds:
-                exhausted = True
-                results.update({ref.anchor_id: GraphAnchorResult(ref=ref, status="budget_exhausted") for ref in anchors})
+                groups.setdefault(a.ref.graph_id, []).append(a)
+        for group in groups.values():
+            elapsed = self._clock() - started
+            remaining = self._settings.graph_retrieval_total_budget_seconds - elapsed
+            if elapsed >= self._settings.graph_retrieval_total_budget_seconds:
+                for a in group:
+                    results[(a.ref.graph_id, a.ref.anchor_id)] = GraphAnchorResult(a, "budget_exhausted")
                 continue
-            request = GraphRetrievalRequest(graph_id, tuple(anchors), tuple(
-                item for item in origins if item.anchor_id in {ref.anchor_id for ref in anchors}
-            ))
             try:
-                returned = self._repository.fetch_table_context(request)
-                for ref in anchors:
-                    matches = [item for item in returned if isinstance(item, GraphAnchorResult) and item.ref == ref]
-                    results[ref.anchor_id] = matches[0] if len(matches) == 1 else GraphAnchorResult(ref=ref, status="unavailable")
+                request = GraphRetrievalRequest(tuple(group), remaining_budget_ms=remaining * 1000)
+                returned = self._repository.fetch_anchor_context(request)
+                for a in group:
+                    matches = [r for r in returned if isinstance(r, GraphAnchorResult) and r.binding == a]
+                    results[(a.ref.graph_id, a.ref.anchor_id)] = (matches[0] if len(matches) == 1 else
+                        GraphAnchorResult(a, "unavailable"))
             except Exception:
-                results.update({ref.anchor_id: GraphAnchorResult(ref=ref, status="unavailable") for ref in anchors})
-        return GraphRetrievalResult(items=tuple(replace(results[anchor_id], provenance=tuple(
-            item for item in origins if item.anchor_id == anchor_id
-        )) for anchor_id in variants), enabled=self._settings.graph_retrieval_enabled)
+                for a in group:
+                    results[(a.ref.graph_id, a.ref.anchor_id)] = GraphAnchorResult(a, "unavailable")
+        return GraphRetrievalResult(tuple(results[key] for key in ordered), self._settings.graph_retrieval_enabled)

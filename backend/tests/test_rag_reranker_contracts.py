@@ -15,6 +15,7 @@ from app.services import hybrid_search, rag, reranking
 from tests.reranker_observation import RequestTrace
 from test_hybrid_search import FakeEmbeddingProvider, FakeSearchClient, make_hit, make_response
 from test_rag_graph_fusion import graph_service
+from graph_v2_support import with_content
 from test_rag_reranking import ask, harness, items, settings
 from test_rag_service import FakeLLMProvider
 from test_reranker_runtime import FakeTorch, FakeTokenizer, FakeModel
@@ -73,7 +74,7 @@ def test_short_candidates_never_refill(monkeypatch, count):
         assert answer.answer == h.config.rag_no_context_message
         assert not h.llm.calls and not h.service.calls
         h.getter.assert_not_called()
-        repo.fetch_table_context.assert_not_called()
+        repo.fetch_anchor_context.assert_not_called()
 
 
 @pytest.mark.parametrize('failure', [RuntimeError('fault'), 'timeout', 'busy', 'invalid_output'])
@@ -103,9 +104,9 @@ def test_invalid_partial_scores_never_apply(monkeypatch):
 def test_changed_order_citation_prompt_and_final_context_graph(monkeypatch, graph_enabled, budget):
     sources = items(4)
     if budget == 400:
-        sources[2] = replace(sources[2], content='C evidence ' * 400)
+        sources[2] = with_content(sources[2], 'C evidence ' * 400)
     h = harness(monkeypatch, sources, config=config(
-        graph_retrieval_enabled=graph_enabled, rag_context_max_chars=budget))
+        graph_retrieval_enabled=graph_enabled, pdf_kg_search_enabled=True, rag_context_max_chars=budget))
     # A,B,C,D -> C,A,D,B: neither original nor reversed original ordering.
     order = [2, 0, 3, 1]
     h.service.transform = lambda result: replace(result, scores=tuple(
@@ -119,12 +120,12 @@ def test_changed_order_citation_prompt_and_final_context_graph(monkeypatch, grap
     assert trace.final_ids == [sources[i].chunk_id for i in [2, 0, 3]]
     assert trace.context_ids == trace.prompt_ids == [c.chunk_id for c in answer.citations] == expected
     assert [c.citation_id for c in answer.citations] == list(range(1, len(expected) + 1))
-    assert repo.fetch_table_context.call_count == int(graph_enabled)
+    assert repo.fetch_anchor_context.call_count == (len(expected) if graph_enabled else 0)
     assert len(trace.graph_calls) == int(graph_enabled)
     if graph_enabled:
         call = trace.graph_calls[0]
         assert [p['chunk_id'] for p in call['provenance']] == expected
-        assert [r['anchor_id'] for r in call['refs']] == [f'A{sources[i].chunk_index}' for i in ([2, 0, 3] if budget == 12000 else [2])]
+        assert [r['anchor_id'] for r in call['refs']] == [f'G{sources[i].chunk_index}::T-{sources[i].chunk_index}' for i in ([2, 0, 3] if budget == 12000 else [2])]
         assert sources[1].chunk_id not in str(call)  # Reranker eliminated B.
         if budget == 400:
             assert sources[0].chunk_id not in str(call)  # Context budget eliminated A,D.
@@ -170,14 +171,14 @@ def test_actual_filter_before_tokenizer_and_model(monkeypatch, tmp_path, keep_no
             assert trace.events.index('hybrid_return') < trace.events.index('reranker_input')
         else:
             assert answer.context_status == 'no_context' and not llm.calls
-            repo.fetch_table_context.assert_not_called()
+            repo.fetch_anchor_context.assert_not_called()
     finally:
         service.close()
 
 
 @pytest.mark.parametrize('stage', ['hybrid', 'llm', 'graph'])
 def test_existing_error_semantics(monkeypatch, stage):
-    h = harness(monkeypatch, config=config(graph_retrieval_enabled=True))
+    h = harness(monkeypatch, config=config(graph_retrieval_enabled=True, pdf_kg_search_enabled=True))
     graph, repo = graph_service(h.config)
     error = BusinessError(LLM_TIMEOUT if stage == 'llm' else HYBRID_SEARCH_FAILED, 'original', status_code=503)
     if stage == 'hybrid':

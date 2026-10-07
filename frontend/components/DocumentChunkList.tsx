@@ -51,7 +51,7 @@ export default function DocumentChunkList({ data, errorMessage }: DocumentChunkL
   if (!data || data.items.length === 0) {
     return (
       <div className="rounded-md border border-slate-200 bg-white px-5 py-10 text-center text-sm text-slate-500">
-        暂无 chunks，可点击解析文档。
+        暂无检索切片。解析清洗只保存来源，构图完成后才能生成切片。
       </div>
     );
   }

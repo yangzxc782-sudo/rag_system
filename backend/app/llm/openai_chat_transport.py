@@ -37,6 +37,12 @@ from app.llm.provider import (
 
 logger = logging.getLogger(__name__)
 _SAFE_REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
+_JSON_ERROR_MESSAGES = frozenset({
+    "Expecting value", "Extra data", "Expecting property name enclosed in double quotes",
+    "Expecting ':' delimiter", "Expecting ',' delimiter", "Unterminated string starting at",
+    "Invalid control character at", "Invalid \\escape", "Invalid \\uXXXX escape",
+    "Unexpected UTF-8 BOM (decode using utf-8-sig)",
+})
 
 
 class OpenAIChatTransport:
@@ -122,6 +128,7 @@ class OpenAIChatTransport:
             )
             raise mapped_error
 
+        json_diagnostics: dict[str, Any] = {}
         try:
             result = self._parse_result(
                 completion,
@@ -129,6 +136,7 @@ class OpenAIChatTransport:
                 model=model,
                 json_mode=request.json_mode,
                 request=request,
+                failure_diagnostics=json_diagnostics,
             )
         except BusinessError as error:
             _log_generation_failure(
@@ -136,6 +144,11 @@ class OpenAIChatTransport:
                 provider_name=provider_name,
                 model=model,
                 started_at=started_at,
+                json_diagnostics={
+                    **json_diagnostics,
+                    "json_mode": request.json_mode,
+                    "effective_max_tokens": _diagnostic_integer(payload["max_tokens"]),
+                } if json_diagnostics else None,
             )
             raise
 
@@ -213,6 +226,7 @@ class OpenAIChatTransport:
         model: str,
         json_mode: bool,
         request: LLMGenerateRequest | None = None,
+        failure_diagnostics: dict[str, Any] | None = None,
     ) -> LLMGenerateResult:
         choices = getattr(completion, "choices", None)
         if not choices:
@@ -268,11 +282,26 @@ class OpenAIChatTransport:
         if json_mode and not calls:
             parsed_content: Any = None
             json_parse_failed = False
+            decode_error_fields = None
             try:
                 parsed_content = json.loads(content)
+            except json.JSONDecodeError as exc:
+                json_parse_failed = True
+                # Copy positions only; never retain exc.doc or the exception in logs/detail.
+                decode_error_fields = (exc.msg, exc.pos, exc.lineno, exc.colno)
             except (TypeError, ValueError):
                 json_parse_failed = True
             if json_parse_failed or not isinstance(parsed_content, dict):
+                if failure_diagnostics is not None:
+                    try:
+                        failure_diagnostics.update(_build_json_failure_diagnostics(
+                            content, completion, choices[0],
+                            failure_kind="decode_error" if json_parse_failed else "top_level_not_object",
+                            parsed_content=parsed_content, decode_error_fields=decode_error_fields,
+                        ))
+                    except Exception:
+                        # Optional metadata must never replace the original failure.
+                        pass
                 _raise_json_invalid()
 
         usage_object = getattr(completion, "usage", None)
@@ -369,6 +398,55 @@ def _raise_empty_content(message: str, field: str) -> NoReturn:
     )
 
 
+def _diagnostic_attr(value: Any, name: str) -> Any:
+    try:
+        return getattr(value, name, None)
+    except Exception:
+        return None
+
+
+def _diagnostic_integer(value: Any) -> int | None:
+    return value if type(value) is int and 0 <= value <= 2**63 - 1 else None
+
+
+def _build_json_failure_diagnostics(
+    content: str, completion: Any, choice: Any, *, failure_kind: str,
+    parsed_content: Any = None, decode_error_fields: tuple | None = None,
+) -> dict[str, Any]:
+    """Allowlisted, content-free metadata for logging only, never public errors."""
+    stripped = content.strip()  # Shape observation only; json.loads receives original content.
+    finish_reason = _diagnostic_attr(choice, "finish_reason")
+    if type(finish_reason) is not str or finish_reason not in {
+        "stop", "length", "tool_calls", "content_filter", "function_call",
+    }:
+        finish_reason = None
+    usage = _diagnostic_attr(completion, "usage")
+    diagnostics = {
+        "json_failure_kind": failure_kind,
+        "finish_reason": finish_reason,
+        "content_type": "str",  # Already validated by the response parser.
+        "content_length": len(content),
+        "starts_with_object": stripped.startswith("{"),
+        "ends_with_object": stripped.endswith("}"),
+        "contains_fence": "```" in content,
+        **{name: _diagnostic_integer(_diagnostic_attr(usage, name))
+           for name in ("prompt_tokens", "completion_tokens", "total_tokens")},
+    }
+    if failure_kind == "top_level_not_object":
+        diagnostics["top_level_type"] = {
+            list: "list", str: "str", int: "int", float: "float", bool: "bool", type(None): "NoneType",
+        }.get(type(parsed_content), "unknown")
+    else:
+        msg, pos, lineno, colno = decode_error_fields or (None, None, None, None)
+        # Unknown/variable decoder messages may echo input. Only fixed messages are safe.
+        diagnostics.update(
+            json_error_msg=msg if type(msg) is str and msg in _JSON_ERROR_MESSAGES else "JSON decoding failed",
+            json_error_pos=_diagnostic_integer(pos), json_error_lineno=_diagnostic_integer(lineno),
+            json_error_colno=_diagnostic_integer(colno),
+        )
+    return diagnostics
+
+
 def _raise_json_invalid() -> NoReturn:
     raise BusinessError(
         LLM_JSON_INVALID,
@@ -416,25 +494,31 @@ def _log_generation_failure(
     provider_name: str,
     model: str,
     started_at: float,
+    json_diagnostics: dict[str, Any] | None = None,
 ) -> None:
     detail = error.detail if isinstance(error.detail, dict) else {}
     upstream_status = detail.get("upstream_status")
     if not isinstance(upstream_status, int):
         upstream_status = None
     retryable = detail.get("retryable") is True
-    logger.warning(
-        "LLM generation failed.",
-        extra={
-            "event": "llm_generation_failed",
-            "provider": provider_name,
-            "model": model,
-            "operation": "chat.completions",
-            "latency_ms": _latency_ms(started_at),
-            "error_code": error.code,
-            "upstream_status": upstream_status,
-            "retryable": retryable,
-        },
-    )
+    extra = {
+        "event": "llm_generation_failed",
+        "provider": provider_name,
+        "model": model,
+        "operation": "chat.completions",
+        "latency_ms": _latency_ms(started_at),
+        "error_code": error.code,
+        "upstream_status": upstream_status,
+        "retryable": retryable,
+    }
+    message = "LLM generation failed: code=%s error_type=%s upstream_status=%s retryable=%s"
+    args = (error.code, detail.get("error_type"), upstream_status, retryable)
+    if error.code == LLM_JSON_INVALID and json_diagnostics:
+        extra.update(json_diagnostics)
+        # A single structured field remains visible with the default console formatter.
+        message += " json_diagnostics=%s"
+        args += (json.dumps(json_diagnostics, ensure_ascii=True, separators=(",", ":")),)
+    logger.warning(message, *args, extra=extra)
 
 
 def _map_llm_error(exc: Exception) -> BusinessError:

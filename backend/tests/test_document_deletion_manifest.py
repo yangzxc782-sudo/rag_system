@@ -133,7 +133,7 @@ def test_manifest_builder_uses_persisted_exact_keys_and_all_recovery_ids() -> No
 
 def test_unknown_manifest_version_fails_without_guessing() -> None:
     payload = valid_payload()
-    payload["schema_version"] = 2
+    payload["schema_version"] = 99
 
     with pytest.raises(DocumentDeletionManifestError) as exc_info:
         DocumentDeletionManifest.from_payload(payload)

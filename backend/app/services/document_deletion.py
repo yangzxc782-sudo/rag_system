@@ -15,6 +15,8 @@ from app.core.errors import (
     DOCUMENT_DELETION_NOT_FAILED,
     DOCUMENT_DELETION_RETRY_REQUIRED,
     DOCUMENT_DELETION_STATE_INCONSISTENT,
+    DOCUMENT_PROCESSING_IN_PROGRESS,
+    DOCUMENT_FROZEN_SOURCE_PROTECTED,
     BusinessError,
 )
 from app.models.document import Document
@@ -135,11 +137,18 @@ def request_document_deletion(
             db.commit()
             return result
 
+        # A live parse must finish before its external assets can be enumerated.
+        if document.process_status == "parsing":
+            raise BusinessError(DOCUMENT_PROCESSING_IN_PROGRESS, "文档正在解析，暂不能删除。", status_code=409)
+        from app.services.document_version_deletion import check_processing_quiescent
+        check_processing_quiescent(db, document)
         manifest = build_document_deletion_manifest(
             db,
             document=document,
             settings=settings,
         )
+        from app.services.document_version_deletion import prepare_version_deletion
+        manifest = prepare_version_deletion(db, document, manifest)
         document.deletion_status = "deleting"
         document.updated_at = func.now()
         job = DocumentDeletionJob(
@@ -371,6 +380,11 @@ class DocumentDeletionSaga:
 
         checkpoint()
         if claimed.current_step == "delete_opensearch":
+            if manifest.versioned:
+                from app.services.document_version_deletion import VersionTargets, delete_versioned_indices, delete_versioned_graphs
+                targets = VersionTargets.model_validate(manifest.versioned)
+                delete_versioned_indices(targets, client=self._opensearch_client, checkpoint=checkpoint)
+                delete_versioned_graphs(targets, settings=self._settings, checkpoint=checkpoint)
             self._opensearch_delete(
                 manifest,
                 client=self._opensearch_client,
@@ -590,6 +604,10 @@ def finalize_postgresql_deletion(
         evidence_cleanup = DocumentQaEvidenceDeletionService(db).redact
     evidence_cleanup(claimed.document_id)
 
+    if manifest.versioned:
+        from app.models import DocumentProcessingJob
+        db.execute(delete(DocumentProcessingJob).where(DocumentProcessingJob.document_id == claimed.document_id))
+
     db.execute(
         delete(DocumentChunkBlock).where(
             or_(
@@ -622,6 +640,11 @@ def finalize_postgresql_deletion(
             )
         )
     )
+    if manifest.versioned:
+        from app.models import KGExtractionUnit, GraphBuild, SourceDocumentVersion
+        from app.models.document_chunk_set import ChunkSet
+        for model in (ChunkSet, KGExtractionUnit, GraphBuild, SourceDocumentVersion):
+            db.execute(delete(model).where(model.document_id == claimed.document_id))
     db.execute(
         delete(DocumentBlock).where(
             or_(

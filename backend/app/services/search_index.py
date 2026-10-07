@@ -29,6 +29,7 @@ from app.search_engine.index_schema import (
     get_index_name,
 )
 from app.services.document_operation_guard import DocumentOperationGuard
+from app.services.versioned_document_guard import require_legacy_document, FROZEN_PROCESS_STATUSES
 
 
 EMBEDDING_STATUS_EMBEDDED = "embedded"
@@ -283,6 +284,10 @@ def _rebuild_one_document(
         if document is None:
             db.rollback()
             return 0, 0, 0, 0, []
+        if skip_non_normal and document.process_status in FROZEN_PROCESS_STATUSES:
+            db.rollback()
+            return 0, 0, 0, 0, []
+        require_legacy_document(document)
         if check_index_exists:
             _ensure_rebuild_index_exists(client, index_name=index_name)
         deleted = (
@@ -433,6 +438,7 @@ def get_syncable_chunks_query(
         .join(DocumentChunk, DocumentChunk.document_id == Document.id)
         .where(
             Document.deletion_status == "normal",
+            Document.process_status.notin_(sorted(FROZEN_PROCESS_STATUSES)),
             DocumentChunk.embedding_status == EMBEDDING_STATUS_EMBEDDED,
             DocumentChunk.embedding.is_not(None),
             DocumentChunk.embedding_dim == embedding_dim,
@@ -459,6 +465,7 @@ def count_postgres_syncable_chunks(
         .join(Document, Document.id == DocumentChunk.document_id)
         .where(
             Document.deletion_status == "normal",
+            Document.process_status.notin_(sorted(FROZEN_PROCESS_STATUSES)),
             DocumentChunk.embedding_status == EMBEDDING_STATUS_EMBEDDED,
             DocumentChunk.embedding.is_not(None),
             DocumentChunk.embedding_dim == embedding_dim,

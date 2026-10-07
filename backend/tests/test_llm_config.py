@@ -6,7 +6,7 @@ import traceback
 from types import SimpleNamespace
 
 import pytest
-from pydantic import SecretStr
+from pydantic import SecretStr, ValidationError
 
 from app.core.errors import LLM_CONFIG_INVALID, BusinessError
 from app.core.config import Settings
@@ -34,6 +34,28 @@ def make_settings(**overrides: object) -> SimpleNamespace:
 
 def configuration_module():
     return importlib.import_module("app.llm.configuration")
+
+
+def test_kg_output_budget_defaults_independently_of_generic_llm(monkeypatch):
+    monkeypatch.delenv("KG_LLM_MAX_TOKENS", raising=False)
+    settings = Settings(_env_file=None, llm_max_tokens=1024)
+    assert settings.kg_llm_max_tokens == 8192
+    assert settings.llm_max_tokens == 1024
+
+
+def test_kg_output_budget_env_override(monkeypatch):
+    monkeypatch.setenv("KG_LLM_MAX_TOKENS", "4096")
+    settings = Settings(_env_file=None, llm_max_tokens=1024)
+    assert settings.kg_llm_max_tokens == 4096
+    assert settings.llm_max_tokens == 1024
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "1.5", "invalid"])
+def test_kg_output_budget_rejects_invalid_env(monkeypatch, value):
+    monkeypatch.setenv("KG_LLM_MAX_TOKENS", value)
+    with pytest.raises(ValidationError) as caught:
+        Settings(_env_file=None)
+    assert any(error["loc"] == ("kg_llm_max_tokens",) for error in caught.value.errors())
 
 
 def test_remote_capability_and_insecure_http_defaults_are_conservative() -> None:

@@ -20,6 +20,7 @@ from app.services import hybrid_search, rag, reranking
 from app.services.hybrid_search import HybridSearchItem, HybridSearchResult
 from test_hybrid_search import FakeEmbeddingProvider, FakeSearchClient, make_hit, make_response
 from test_rag_graph_fusion import graph_service, item as graph_item, prompts
+from graph_v2_support import with_content
 from test_rag_service import FakeLLMProvider
 
 
@@ -47,9 +48,7 @@ def settings(**changes):
 
 
 def items(count=4):
-    return [HybridSearchItem(**vars(graph_item(n, refs=[{
-        "anchor_id": f"A{n}", "graph_id": "G", "anchor_type": "table", "table_ref": "T-P8-1",
-    }], content=f"evidence-{n}"))) for n in range(1, count + 1)]
+    return [HybridSearchItem(**vars(graph_item(n, content=f"evidence-{n}"))) for n in range(1, count + 1)]
 
 
 class FakeRerankingService:
@@ -262,8 +261,8 @@ def test_short_candidate_pool_no_refill_and_empty_no_runtime(monkeypatch, count)
 @pytest.mark.parametrize("char_budget", [12000, 400])
 def test_final_text_context_drives_citations_prompt_and_graph(monkeypatch, char_budget):
     sources = items(3)
-    sources[2] = replace(sources[2], content="evidence-C " * 300)
-    cfg = settings(graph_retrieval_enabled=True, rag_context_max_chars=char_budget)
+    sources[2] = with_content(sources[2], "evidence-C " * 300)
+    cfg = settings(graph_retrieval_enabled=True, pdf_kg_search_enabled=True, rag_context_max_chars=char_budget)
     h = harness(monkeypatch, sources, config=cfg)
     graph, repo = graph_service(cfg)
     answer = ask(h, k=2, graph=graph)
@@ -271,11 +270,11 @@ def test_final_text_context_drives_citations_prompt_and_graph(monkeypatch, char_
     assert answer.retrieval.items == [sources[2], sources[1]]
     assert [c.chunk_id for c in answer.citations] == [s.chunk_id for s in retained]
     assert [c.citation_id for c in answer.citations] == list(range(1, len(retained) + 1))
-    repo.fetch_table_context.assert_called_once()
-    request = repo.fetch_table_context.call_args.args[0]
-    assert [p.chunk_id for p in request.provenance] == [s.chunk_id for s in retained]
-    assert [p.citation_id for p in request.provenance] == list(range(1, len(retained) + 1))
-    assert {ref.anchor_id for ref in request.anchors} == {f"A{s.chunk_index}" for s in retained}
+    assert repo.fetch_anchor_context.call_count == len(retained)
+    anchors = [a for call in repo.fetch_anchor_context.call_args_list for a in call.args[0].anchors]
+    assert [p.chunk_id for a in anchors for p in a.provenance] == [s.chunk_id for s in retained]
+    assert [p.citation_id for a in anchors for p in a.provenance] == list(range(1, len(retained) + 1))
+    assert {a.ref.anchor_id for a in anchors} == {f"G{s.chunk_index}::T-{s.chunk_index}" for s in retained}
     user_prompt = prompts(h.llm)[1]
     assert f"chunk_id: {sources[2].chunk_id}" in user_prompt
     assert f"chunk_id: {sources[0].chunk_id}" not in user_prompt
@@ -285,7 +284,10 @@ def test_final_text_context_drives_citations_prompt_and_graph(monkeypatch, char_
         assert f"chunk_id: {sources[1].chunk_id}" not in user_prompt
         assert len(answer.citations[0].content) < len(sources[2].content)
     public = RagAskData.from_service_result(answer).model_dump(mode="json")
-    used_graph = [json.loads(block) for block in user_prompt.split("【知识图谱辅助证据】\n")[1].split("\n\n")]
+    used_graph = ([json.loads(block) for block in user_prompt.split("【知识图谱辅助证据】\n")[1].split("\n\n")]
+                  if "【知识图谱辅助证据】" in user_prompt else [])
+    if char_budget == 400:
+        assert not used_graph and public["graph"]["diagnostics"][0]["use_status"] == "incomplete_coverage"
     assert [e["source_citations"] for e in public["graph"]["evidence"]] == [e["source_citations"] for e in used_graph]
     assert set(public) == {"question", "answer", "context_status", "citations", "retrieval", "llm", "graph"}
     for entry in public["retrieval"]["items"]:
@@ -344,12 +346,12 @@ def test_actual_hybrid_deletion_filter_before_rerank(monkeypatch, keep_normal):
     else:
         getter.assert_not_called()
         assert answer.context_status == "no_context" and not llm.calls
-        repo.fetch_table_context.assert_not_called()
+        repo.fetch_anchor_context.assert_not_called()
 
 
 def test_disabled_matches_legacy_context_prompt_citation_graph(monkeypatch):
     from app.rag.citations import build_citations
-    cfg = settings(reranker_enabled=False, graph_retrieval_enabled=True)
+    cfg = settings(reranker_enabled=False, graph_retrieval_enabled=True, pdf_kg_search_enabled=True)
     h = harness(monkeypatch, config=cfg)
     graph, repo = graph_service(cfg)
     answer = ask(h, graph=graph)
@@ -357,7 +359,7 @@ def test_disabled_matches_legacy_context_prompt_citation_graph(monkeypatch):
     assert answer.citations == build_citations(context)
     expected = rag.build_prompt("question", context, cfg, graph_context=answer.graph_context)
     assert prompts(h.llm) == (expected.system_prompt, expected.user_prompt)
-    assert [p.chunk_id for p in repo.fetch_table_context.call_args.args[0].provenance] == [c.chunk_id for c in context.chunks]
+    assert [p.chunk_id for call in repo.fetch_anchor_context.call_args_list for a in call.args[0].anchors for p in a.provenance] == [c.chunk_id for c in context.chunks]
     assert h.orders[0] is False
     h.getter.assert_not_called()
 

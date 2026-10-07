@@ -172,20 +172,22 @@ test("IDEMPOTENCY_CONFLICT stays visible and does not automatically resubmit", a
 
 test("graph disclosure is keyboard accessible and each answer owns its evidence", async ({ page }) => {
   const api = new MockConversations(), result = answer();
-  result.graph = { enabled: true, triggered: true, status: "success", truncated: false, evidence_count: 1, evidence: [{
-    graph_id: "G", anchor_id: "A1", anchor_type: "table", table_ref: "T1", source_citations: [1], document: { doc_id: A },
-    table: { table_id: "table-1", table_ref: "T1", page: 8, table_index: 1 },
-    entities: [{ id: "E1", name: "冒口", entity_type: "工艺结构", page: 8 }], relationships: [],
+  result.graph = { schema_version: 2, enabled: true, triggered: true, status: "success", truncated: false, evidence_count: 1,
+    diagnostics: [{ anchor_id: "G::C-1", graph_id: "G", mapped: true, query_status: "success", full_unit_covered: true, facts_used: true, use_status: "used" }], evidence: [{
+    anchor: { graph_id: "G", anchor_id: "G::C-1", anchor_type: "clause", clause_ref: "C-1" }, source_citations: [1],
+    source: { document_id: A, source_version: A, graph_build_id: A, unit_id: A, source_start: 0, source_end: 20 },
+    entities: [{ id: "E1", name: "冒口", entity_type: "铸造工艺", properties: {} }], relationships: [],
   }] };
   api.complete(A, input(), result); api.onTurn = async (route, sid, q) => { await ok(route, api.complete(sid, q, { ...result, question: q.question })); };
   await open(page, api);
   const graphs = page.getByRole("region", { name: "知识图谱检索结果", exact: true });
-  await graphs.first().locator("summary").focus(); await page.keyboard.press("Enter");
-  await expect(graphs.first().locator("details")).toHaveAttribute("open", "");
-  await expect(graphs.first().getByRole("cell", { name: "冒口", exact: true })).toBeVisible();
+  await graphs.first().locator("summary").first().focus(); await page.keyboard.press("Enter");
+  await expect(graphs.first().locator("details").first()).toHaveAttribute("open", "");
+  await expect(graphs.first().getByText("冒口", { exact: false })).toBeVisible();
+  await expect(graphs.first().getByText("条款 C-1", { exact: true })).toBeVisible();
   await send(page, "它的尺寸呢？"); await expect(graphs).toHaveCount(2);
-  await expect(graphs.last().locator("details")).not.toHaveAttribute("open", "");
-  await expect(graphs.first().locator("details")).toHaveAttribute("open", "");
+  await expect(graphs.last().locator("details").first()).not.toHaveAttribute("open", "");
+  await expect(graphs.first().locator("details").first()).toHaveAttribute("open", "");
 });
 
 test("late history read from A cannot replace B messages", async ({ page }) => {

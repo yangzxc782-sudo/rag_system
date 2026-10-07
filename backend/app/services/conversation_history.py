@@ -4,9 +4,9 @@ from datetime import datetime
 import json
 from uuid import UUID
 
-from app.rag.graph_context_builder import GraphContext
+from app.rag.graph_context_builder import GraphContext, retain_evidence
 from app.rag.graph_response import build_graph_response
-from app.schemas.conversation_rag import CitationPayload, EvidenceDetails, GenerationDetails, GraphPayload, ResultDetails
+from app.schemas.conversation_rag import CitationPayload, EvidenceDetails, GenerationDetails, ResultDetails, read_graph_payload
 from app.schemas.conversations import ConversationAnswer, EvidenceSourceStatus, SessionCreateResponse
 from app.schemas.rag import RagCitationItem, RagLlmInfo
 from app.services.conversation_repository import ConversationError
@@ -86,16 +86,22 @@ def published_answer(repo, turn):
                     raise ConversationError("QA_RESULT_INVALID", "Citation provenance mismatch.", status_code=409)
                 result.citations.append(RagCitationItem.from_service_citation(chunk))
             else:
-                graph = GraphPayload.model_validate_json(json.dumps(view.payload)).evidence
+                if type(view.payload.get("schema_version")) is not int or view.payload.get("schema_version") != 2:
+                    result.sources[-1].status = "unsupported_version"
+                    continue  # Preserve history; never reinterpret or repair its evidence.
+                graph = read_graph_payload(view.payload)
                 if set(graph_refs(graph)) != set(view.sources):
                     raise ConversationError("QA_RESULT_INVALID", "Graph provenance mismatch.", status_code=409)
                 graphs.append(graph)
     # A multi-source graph is an indivisible unit; also suppress it if any of its
     # prompt citations is no longer visible. Never re-number historical citations.
     visible = {c.citation_id for c in result.citations}
+    loaded_graphs = tuple(graphs)
     graphs = [g for g in graphs if set(g.source_citations) <= visible]
-    result.graph = build_graph_response(GraphContext(enabled=evidence.graph_enabled,
-        status="ok" if graphs else "empty", evidence=tuple(graphs), was_truncated=evidence.graph_truncated),
+    context = GraphContext(enabled=evidence.graph_enabled,
+        status="ok" if loaded_graphs else "empty", evidence=loaded_graphs, was_truncated=evidence.graph_truncated,
+        diagnostics=evidence.graph_diagnostics, source_error=evidence.graph_source_error)
+    result.graph = build_graph_response(retain_evidence(context, graphs, reason="source_invalid"),
         triggered=evidence.graph_triggered)
     if result.graph and graphs and len(graphs) != len(evidence.graph_keys):
         result.graph.status = "partial"

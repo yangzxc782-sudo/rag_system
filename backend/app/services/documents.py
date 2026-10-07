@@ -19,6 +19,7 @@ from app.core.errors import (
     BusinessError,
 )
 from app.models.document import Document
+from app.ingestion.file_types import DOCUMENT_FILE_EXTENSIONS, is_pdf_content
 from app.services.object_storage import upload_bytes_to_minio
 
 
@@ -26,10 +27,10 @@ def validate_file_extension(filename: str) -> str:
     settings = get_settings()
     extension = Path(filename).suffix.lower()
 
-    if extension not in settings.upload_allowed_extension_set:
+    if extension not in DOCUMENT_FILE_EXTENSIONS or extension not in settings.upload_allowed_extension_set:
         raise BusinessError(
             INVALID_FILE_TYPE,
-            "不支持的文件类型。",
+            "仅支持 PDF 文档。",
             detail={
                 "filename": filename,
                 "extension": extension,
@@ -104,6 +105,8 @@ def create_document_from_upload(
 
     file_size = len(content)
     validate_file_size(file_size)
+    if not is_pdf_content(content):
+        raise BusinessError(INVALID_FILE_TYPE, "文件内容不是 PDF。", status_code=415)
 
     file_hash = calculate_sha256(content)
     document_id = uuid4()

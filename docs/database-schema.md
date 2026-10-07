@@ -1,5 +1,33 @@
 # 数据库设计与阶段演进
 
+## PDF/KG M2 使用边界（复用 M0，无新增迁移）
+
+构图服务使用 `document_graph_builds` 保存首建身份、模板/规则/provider 指纹与写入回执，
+使用 `kg_extraction_units` 保存连续来源区间、预分配锚点、piece 检查点和不可变成功结果。
+`document_processing_jobs` 为每次 step 提供租约、递增 fencing token 和 attempt_count；
+成功停止在 queued/kg_ready，等待后续已授权阶段，不提前标记整个流程 succeeded。
+AnchorIndex 仍是 SQL ready/sealed 构图下的合格单元视图，不新增表、数组来源字段或 chunk。
+完整接口、恢复规则、Neo4j 归属与验证限制见 [M2 实施记录](pdf-only-kg-pipeline.md)。
+没有执行 0013、Neo4j 约束脚本、回填、迁移或删除业务数据。
+
+## PDF/KG M1 使用边界（无新增迁移）
+
+PDF 解析成功只写来源块、资产与 `document_source_versions`，状态为
+`cleaned_source_ready`，不再在 parse 请求内创建 chunk。冻结坐标、事务边界和
+验收见 [PDF/KG 分阶段实施](pdf-only-kg-pipeline.md)。M0 迁移仍未实际执行；缺少
+来源结构时明确拒绝处理，不自动迁移。legacy 数据与历史引用保持原样。
+
+## PDF/KG M0 持久化增量（迁移未执行）
+
+新增设计见 [PDF/KG 持久化基础](pdf-only-kg-pipeline.md)。
+revision `0013_pdf_kg_versions` 基于 `0012_casting_answers`，新增冻结来源、构图、
+连续区间抽取单元、切片版本和处理任务五张表；复用 documents 当前发布指针和
+document_chunks 的单一区间字段。AnchorIndex 是抽取单元的逻辑索引，不新增表。
+
+legacy 文档、chunk、向量、知识条目和 QA 来源不回填、不删除、不改写。
+迁移只编写，未获得业务数据库执行授权；不代表 PDF-only 或后续流水线已接通。
+以下各阶段记录保留其历史时点和结果，不以本次设计重写历史事实。
+
 ## Phase 13 M3 阶段产物（无数据库迁移）
 
 M3 继续使用 0009 业务表和 0010 Checkpoint 表，不新增表、列、索引或迁移。

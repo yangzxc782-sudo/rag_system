@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, func
+from sqlalchemy import BigInteger, CheckConstraint, DateTime, ForeignKey, ForeignKeyConstraint, Index, Integer, String, Text, UniqueConstraint, func, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from pgvector.sqlalchemy import VECTOR
@@ -20,10 +20,32 @@ if TYPE_CHECKING:
 
 class DocumentChunk(Base):
     __tablename__ = "document_chunks"
+    __mapper_args__ = {"eager_defaults": False}
     __table_args__ = (
         Index("ix_document_chunks_document_id", "document_id"),
         Index("ix_document_chunks_document_id_chunk_index", "document_id", "chunk_index"),
         Index("ix_document_chunks_parse_run_id", "parse_run_id"),
+        UniqueConstraint("chunk_set_id", "chunk_index", name="uq_document_chunks_set_index"),
+        ForeignKeyConstraint(
+            ["chunk_set_id", "document_id", "source_version"],
+            ["document_chunk_sets.id", "document_chunk_sets.document_id", "document_chunk_sets.source_version"],
+            name="fk_document_chunks_set_owner", ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["source_version", "document_id", "parse_run_id"],
+            ["document_source_versions.source_version", "document_source_versions.document_id", "document_source_versions.parse_run_id"],
+            name="fk_document_chunks_source_parse", ondelete="RESTRICT",
+        ),
+        CheckConstraint(
+            "(chunk_set_id IS NULL AND source_version IS NULL AND source_start IS NULL "
+            "AND source_end IS NULL AND content_sha256 IS NULL) OR "
+            "(chunk_set_id IS NOT NULL AND source_version IS NOT NULL AND source_start IS NOT NULL "
+            "AND source_end IS NOT NULL AND content_sha256 IS NOT NULL AND parse_run_id IS NOT NULL "
+            "AND source_start >= 0 AND source_end > source_start AND chunk_index >= 0 "
+            "AND char_length(content) = source_end - source_start AND content_sha256 ~ '^[a-f0-9]{64}$')",
+            name="ck_document_chunks_source_contract",
+        ),
+        Index("ix_document_chunks_source_interval", "source_version", "source_start", "source_end"),
     )
 
     id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
@@ -39,6 +61,13 @@ class DocumentChunk(Base):
     chunk_method: Mapped[str | None] = mapped_column(String(50))
     content_format: Mapped[str | None] = mapped_column(String(50))
     source_metadata: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    # Deferred server defaults also keep legacy INSERT/SELECT SQL usable before
+    # separately authorized migration. Versioned writers must set all five.
+    chunk_set_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), deferred=True, server_default=text("NULL"))
+    source_version: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), deferred=True, server_default=text("NULL"))
+    source_start: Mapped[int | None] = mapped_column(BigInteger, deferred=True, server_default=text("NULL"))
+    source_end: Mapped[int | None] = mapped_column(BigInteger, deferred=True, server_default=text("NULL"))
+    content_sha256: Mapped[str | None] = mapped_column(String(64), deferred=True, server_default=text("NULL"))
     embedding: Mapped[list[float] | None] = mapped_column(VECTOR(1024), nullable=True)
     embedding_model: Mapped[str | None] = mapped_column(String(255))
     embedding_dim: Mapped[int | None] = mapped_column(Integer)

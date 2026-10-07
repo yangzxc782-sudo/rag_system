@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 from app.core.config import Settings
 from app.rag.context_builder import RagContext
-from app.rag.graph_context_builder import GraphContext, format_graph_context_for_prompt
+from app.rag.graph_context_builder import GraphContext, format_graph_context_for_prompt, retain_evidence
 from app.rag.history_budget import HistoryContext, estimated_tokens
 from app.rag.conversation_prompt import input_budget, messages_for_answer, prompt_cost
 from app.services import rag
@@ -22,14 +22,29 @@ class EvidencePlan:
 
 
 def validate_graph_sources(graph: GraphContext, context: RagContext) -> GraphContext:
-    """Drop a whole graph unit if any trigger is outside the final text context."""
-    _, origins = rag.extract_graph_refs(context)
-    allowed = {(p.anchor_id, p.document_id, p.chunk_id, p.citation_id) for p in origins}
-    kept = tuple(item for item in graph.evidence if item.provenance and all(
-        p.anchor_id == item.ref.anchor_id and (p.anchor_id, p.document_id, p.chunk_id, p.citation_id) in allowed
-        for p in item.provenance))
-    return replace(graph, evidence=kept, status="ok" if kept else ("empty" if graph.enabled else "disabled"),
-                   was_truncated=graph.was_truncated or len(kept) != len(graph.evidence))
+    """Recheck exact final citation intervals; SQL authority is checked separately on restore."""
+    from app.extraction.kg_protocol import ANCHOR_ADAPTER
+    from app.ingestion.sequential_chunker import overlaps
+    chunks = {(c.document_id, c.chunk_id, c.citation_id): c for c in context.chunks}
+    def valid(item):
+        if not item.provenance or not item.binding.fully_covered:
+            return False
+        for p in item.provenance:
+            c = chunks.get((p.document_id, p.chunk_id, p.citation_id))
+            if (c is None or c.source_version != p.source_version or c.graph_build_id != p.graph_build_id
+                    or c.chunk_set_id != p.chunk_set_id or c.effective_start != p.effective_start
+                    or c.effective_end != p.effective_end
+                    or not overlaps(p.effective_start, p.effective_end, item.source.source_start, item.source.source_end)):
+                return False
+            try:
+                refs = [ANCHOR_ADAPTER.validate_python(r) for r in (c.source_metadata or {}).get("kg_refs", [])]
+                if item.ref not in refs:
+                    return False
+            except (ValueError, TypeError):
+                return False
+        return True
+    kept = tuple(item for item in graph.evidence if valid(item))
+    return retain_evidence(graph, kept, reason="source_invalid")
 
 
 class ChatEvidenceService:
@@ -76,11 +91,11 @@ class ChatEvidenceService:
         # Neo4j is called only now, from the FINAL retained text chunks.
         graph = (rag.build_graph_context_for_rag(context, settings, self.graph_retrieval)
                  if context.chunks and reserve else empty_graph)
-        triggered = bool(context.chunks and settings.graph_retrieval_enabled and reserve and rag.extract_graph_refs(context)[0])
+        triggered = bool(graph.diagnostics)
         try:
             graph = validate_graph_sources(graph, context)
             while graph.evidence and (estimated_tokens(format_graph_context_for_prompt(graph)) > reserve or cost(context, graph) > limit):
-                graph = replace(graph, evidence=graph.evidence[:-1], was_truncated=True)
+                graph = retain_evidence(graph, graph.evidence[:-1], reason="graph_budget")
             graph = replace(graph, status="ok" if graph.evidence else ("empty" if graph.enabled else "disabled"))
             graph = replace(graph, total_chars=len(format_graph_context_for_prompt(graph)))
         except Exception:

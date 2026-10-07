@@ -9,7 +9,12 @@ export default function RagAnswerPanel({ result, threadId }: { result: Conversat
   const visible = new Set(citations.map(c => c.citation_id));
   const graph = result.graph ? { ...result.graph,
     evidence: result.graph.evidence.filter(e => e.source_citations.every(id => visible.has(id))) } : null;
-  if (graph) graph.evidence_count = graph.evidence.length;
+  if (graph) {
+    graph.evidence_count = graph.evidence.length;
+    const kept = new Set(graph.evidence.map(e => JSON.stringify([e.anchor.graph_id, e.anchor.anchor_id])));
+    graph.diagnostics = graph.diagnostics.map(d => d.facts_used && !kept.has(JSON.stringify([d.graph_id, d.anchor_id]))
+      ? { ...d, facts_used: false, use_status: "source_invalid" } : d);
+  }
   return <div className="min-w-0">
     <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
       <span className="rounded bg-slate-100 px-2 py-1 text-slate-700">
@@ -23,7 +28,7 @@ export default function RagAnswerPanel({ result, threadId }: { result: Conversat
       <p>原回答已保留，部分证据现已不可用。</p>
       {missing.map(source => <p key={source.snapshot_id}>
         {source.kind === "citation" ? `引用 [${source.citation_id}]` : "图谱证据"}：
-        {source.status === "source_deleted" ? "来源已删除" : "来源暂不可用"}，不再展示摘录或相关图谱。
+        {source.status === "unsupported_version" ? "旧版证据无法恢复，请发起新一轮检索" : source.status === "source_deleted" ? "来源已删除" : "来源暂不可用"}，不再展示摘录或相关图谱。
       </p>)}
     </div>}
     <GraphEvidencePanel graph={graph} />

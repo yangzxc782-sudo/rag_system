@@ -23,7 +23,7 @@ from app.rag.query_rewrite import clarification_text
 from app.schemas.conversation_persistence import AnswerDraft, EvidenceSourceRef, PersistenceMetrics, SnapshotInput, TokenUsage
 from app.schemas.conversation_rag import (
     CandidatePayload, CitationPayload, EvidenceDetails, GenerationDetails, GraphPayload,
-    ResultDetails, RetrievalDetails, STAGE_ADAPTER, StagedConversationResult,
+    ResultDetails, RetrievalDetails, STAGE_ADAPTER, StagedConversationResult, read_graph_payload,
 )
 from app.services import rag
 from app.services.chat_evidence import ChatEvidenceService, EvidencePlan, validate_graph_sources
@@ -129,6 +129,9 @@ class ConversationRagNodes:
         artifact, details = saved
         if details.evidence_generation != identity.attempt_no:
             raise ConversationError("QA_EXECUTION_STALE", "Evidence generation mismatch.", status_code=409)
+        if details.graph_schema_version != 2:
+            raise ConversationError("QA_GRAPH_EVIDENCE_VERSION_UNSUPPORTED",
+                "旧版证据无法恢复执行，请发起新一轮检索。", status_code=409)
         chunks, units, refs = [], [], set()
         for key in details.citation_keys:
             view = self._view(repo, identity, artifact.id, key, "citation")
@@ -142,15 +145,24 @@ class ConversationRagNodes:
         context = replace(context, total_chars=len(format_context_for_prompt(context)))
         for key in details.graph_keys:
             view = self._view(repo, identity, artifact.id, key, "graph")
-            unit = GraphPayload.model_validate_json(json.dumps(view.payload)).evidence
+            unit = read_graph_payload(view.payload)
             self._require_sources(view, graph_refs(unit))
             units.append(unit)
             refs.update(view.sources)
         graph = GraphContext(enabled=details.graph_enabled, status="ok" if units else ("empty" if details.graph_enabled else "disabled"),
-            evidence=tuple(units), was_truncated=details.graph_truncated, max_chars=self.settings.rag_graph_context_max_chars)
+            evidence=tuple(units), was_truncated=details.graph_truncated, max_chars=self.settings.rag_graph_context_max_chars,
+            diagnostics=details.graph_diagnostics, source_error=details.graph_source_error)
         graph = replace(graph, total_chars=len(format_graph_context_for_prompt(graph)))
         if validate_graph_sources(graph, context).evidence != graph.evidence:
             raise ConversationError("QA_SOURCE_INVALID", "Graph evidence does not match current citations.", status_code=409)
+        if units:
+            from app.services.graph_sources import GraphSourceAuthority, validate_evidence_bindings
+            try:
+                bindings = GraphSourceAuthority(self.settings).resolve_in_session(repo.db, context, current=False)
+                if not validate_evidence_bindings(graph, bindings):
+                    raise ValueError("Source binding changed")
+            except ValueError as exc:
+                raise ConversationError("QA_SOURCE_INVALID", "Saved graph source binding is invalid.", status_code=409) from exc
         history = rehydrate_history(repo, turn, details.history_message_ids, pending, self.settings)
         plan = EvidencePlan(context, graph, history, details.graph_triggered)
         request = checked_request(turn.question, query, history, context, graph, self.settings)
@@ -220,7 +232,8 @@ class ConversationRagNodes:
                   for i, g in enumerate(plan.graph.evidence)]
         details = EvidenceDetails(evidence_generation=identity.attempt_no, citation_keys=[s.key for s in citations], graph_keys=[s.key for s in graphs],
             history_message_ids=plan.history.message_ids, graph_enabled=plan.graph.enabled, graph_triggered=plan.graph_triggered,
-            graph_truncated=plan.graph.was_truncated, input_estimated_tokens=prompt_cost(request.messages),
+            graph_truncated=plan.graph.was_truncated, graph_schema_version=2,
+            graph_diagnostics=plan.graph.diagnostics, graph_source_error=plan.graph.source_error, input_estimated_tokens=prompt_cost(request.messages),
             prompt_fingerprint=prompt_fingerprint(request.messages))
         ident = self._save(identity, "evidence", parent, details, [*citations, *graphs])
         return {"evidence_artifact_id": str(ident), "stage": "evidence_built", "outcome": "answer" if citations else "no_context"}

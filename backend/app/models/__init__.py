@@ -7,6 +7,11 @@ from app.models.document_chunk import DocumentChunk
 from app.models.document_chunk_block import DocumentChunkBlock
 from app.models.document_deletion_job import DocumentDeletionJob
 from app.models.document_parse_run import DocumentParseRun
+from app.models.document_source_version import SourceDocumentVersion
+from app.models.document_graph_build import GraphBuild
+from app.models.kg_extraction_unit import KGExtractionUnit
+from app.models.document_chunk_set import ChunkSet
+from app.models.document_processing_job import DocumentProcessingJob
 from app.models.knowledge_item import KnowledgeItem
 from app.models.knowledge_item_chunk import KnowledgeItemChunk
 from app.models.knowledge_item_review import KnowledgeItemReview
@@ -30,6 +35,11 @@ __all__ = [
     "DocumentChunkBlock",
     "DocumentDeletionJob",
     "DocumentParseRun",
+    "SourceDocumentVersion",
+    "GraphBuild",
+    "KGExtractionUnit",
+    "ChunkSet",
+    "DocumentProcessingJob",
     "KnowledgeItem",
     "KnowledgeItemChunk",
     "KnowledgeItemReview",

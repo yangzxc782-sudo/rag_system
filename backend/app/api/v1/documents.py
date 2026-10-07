@@ -60,6 +60,14 @@ from app.schemas.document_chunk import (
     DocumentParseData,
 )
 from app.schemas.document_deletion import DocumentDeletionStatusData
+from app.schemas.document_processing import ProcessDocumentRequest, ResumeProcessingRequest, ProcessingJobRead, ProcessingJobList
+from app.services.document_processing import (
+    request_processing, processing_status, list_processing_jobs, retry_processing, cancel_processing, manage_rechunk,
+)
+from app.schemas.document_graph_build import GraphBuildAdvance, GraphBuildCreate, GraphBuildStatus
+from app.services.document_graph_builds import advance_graph_build, graph_build_status, prepare_graph_build
+from app.schemas.document_chunk_set import ChunkSetCreate, ChunkSetAdvance, ChunkSetStatus
+from app.services.document_chunk_sets import prepare_chunk_set, advance_chunk_set, chunk_set_status, list_chunk_sets
 from app.services.document_deletion import (
     get_document_deletion_status,
     request_document_deletion,
@@ -374,9 +382,10 @@ def read_document_chunks(
     document_id: UUID,
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,
+    chunk_set_id: UUID | None = None,
 ) -> ApiResponse[DocumentChunkListData] | JSONResponse:
     try:
-        result = list_document_chunks(db, document_id, limit=limit, offset=offset)
+        result = list_document_chunks(db, document_id, limit=limit, offset=offset, chunk_set_id=chunk_set_id)
         data = DocumentChunkListData(
             items=[DocumentChunkRead.from_chunk(item) for item in result.items],
             total=result.total,
@@ -411,6 +420,148 @@ def read_document_embedding_status(
         return ApiResponse[DocumentEmbeddingStatusData].ok(DocumentEmbeddingStatusData.model_validate(result))
     except BusinessError as error:
         return business_error_response(error)
+
+
+@router.post("/{document_id}/graph-builds", response_model=ApiResponse[GraphBuildStatus])
+def create_graph_build_endpoint(
+    db: DbSession, document_id: UUID, body: GraphBuildCreate,
+) -> ApiResponse[GraphBuildStatus] | JSONResponse:
+    try:
+        data = prepare_graph_build(db, document_id, body.source_version, body.request_id)
+        return ApiResponse[GraphBuildStatus].ok(GraphBuildStatus.model_validate(data))
+    except BusinessError as error:
+        return business_error_response(error)
+
+
+@router.get("/{document_id}/graph-builds/{build_id}", response_model=ApiResponse[GraphBuildStatus])
+def read_graph_build_endpoint(
+    db: DbSession, document_id: UUID, build_id: UUID,
+) -> ApiResponse[GraphBuildStatus] | JSONResponse:
+    try:
+        return ApiResponse[GraphBuildStatus].ok(GraphBuildStatus.model_validate(graph_build_status(db, document_id, build_id)))
+    except BusinessError as error:
+        return business_error_response(error)
+
+
+@router.post("/{document_id}/graph-builds/{build_id}/advance", response_model=ApiResponse[GraphBuildStatus])
+def advance_graph_build_endpoint(
+    db: DbSession, document_id: UUID, build_id: UUID, body: GraphBuildAdvance,
+) -> ApiResponse[GraphBuildStatus] | JSONResponse:
+    try:
+        data = advance_graph_build(db, document_id, build_id, retry=body.retry)
+        return ApiResponse[GraphBuildStatus].ok(GraphBuildStatus.model_validate(data))
+    except BusinessError as error:
+        return business_error_response(error)
+
+
+@router.post("/{document_id}/chunk-sets", response_model=ApiResponse[ChunkSetStatus])
+def create_chunk_set_endpoint(request: Request, db: DbSession, document_id: UUID, body: ChunkSetCreate) -> ApiResponse[ChunkSetStatus] | JSONResponse:
+    try:
+        if body.auto_run:
+            from app.services.document_processing import _enabled
+            _enabled(request.app.state.settings, operation=body.operation)
+        data = prepare_chunk_set(db, document_id, body.source_version, body.graph_build_id, body.request_id,
+                                 body.config, operation=body.operation, settings=request.app.state.settings)
+        if body.auto_run and not data["managed"] and data["job_status"] == "queued":
+            manage_rechunk(db, document_id, data["job_id"], settings=request.app.state.settings)
+            data = chunk_set_status(db, document_id, data["chunk_set_id"], settings=request.app.state.settings)
+            _wake_processing(request)
+        return ApiResponse[ChunkSetStatus].ok(ChunkSetStatus.model_validate(data))
+    except BusinessError as exc:
+        return business_error_response(exc)
+
+
+@router.get("/{document_id}/chunk-sets", response_model=ApiResponse[dict])
+def read_chunk_sets_endpoint(db: DbSession, document_id: UUID,
+                            limit: Annotated[int, Query(ge=1, le=100)] = 20,
+                            offset: Annotated[int, Query(ge=0)] = 0) -> ApiResponse[dict] | JSONResponse:
+    try:
+        return ApiResponse[dict].ok(list_chunk_sets(db, document_id, limit=limit, offset=offset))
+    except BusinessError as exc:
+        return business_error_response(exc)
+
+
+@router.get("/{document_id}/chunk-sets/{set_id}", response_model=ApiResponse[ChunkSetStatus])
+def read_chunk_set_endpoint(db: DbSession, document_id: UUID, set_id: UUID) -> ApiResponse[ChunkSetStatus] | JSONResponse:
+    try:
+        return ApiResponse[ChunkSetStatus].ok(ChunkSetStatus.model_validate(chunk_set_status(db, document_id, set_id)))
+    except BusinessError as exc:
+        return business_error_response(exc)
+
+
+@router.post("/{document_id}/chunk-sets/{set_id}/advance", response_model=ApiResponse[ChunkSetStatus])
+def advance_chunk_set_endpoint(db: DbSession, document_id: UUID, set_id: UUID, body: ChunkSetAdvance) -> ApiResponse[ChunkSetStatus] | JSONResponse:
+    try:
+        return ApiResponse[ChunkSetStatus].ok(ChunkSetStatus.model_validate(advance_chunk_set(db, document_id, set_id, retry=body.retry)))
+    except BusinessError as exc:
+        return business_error_response(exc)
+
+
+def _wake_processing(request):
+    executor = getattr(request.app.state, "document_processing_executor", None)
+    if executor:
+        try:
+            executor.wake()
+        except Exception:
+            logger.warning("Processing wake failed; durable task will be polled.")
+
+
+@router.post("/{document_id}/process", response_model=ApiResponse[ProcessingJobRead], status_code=202)
+def process_document_endpoint(request: Request, db: DbSession, document_id: UUID, body: ProcessDocumentRequest):
+    try:
+        data = request_processing(db, document_id, body.request_id, body.config, settings=request.app.state.settings)
+        _wake_processing(request)
+        return ApiResponse[ProcessingJobRead].ok(ProcessingJobRead.model_validate(data))
+    except BusinessError as exc:
+        return business_error_response(exc)
+
+
+@router.get("/{document_id}/processing-jobs", response_model=ApiResponse[ProcessingJobList])
+def read_processing_jobs(request: Request, db: DbSession, document_id: UUID,
+                         limit: Annotated[int, Query(ge=1, le=100)] = 20):
+    try:
+        data = list_processing_jobs(db, document_id, settings=request.app.state.settings, limit=limit)
+        return ApiResponse[ProcessingJobList].ok(ProcessingJobList.model_validate(data))
+    except BusinessError as exc:
+        return business_error_response(exc)
+
+
+@router.get("/{document_id}/processing-jobs/{job_id}", response_model=ApiResponse[ProcessingJobRead])
+def read_processing_job(db: DbSession, document_id: UUID, job_id: UUID):
+    try:
+        return ApiResponse[ProcessingJobRead].ok(ProcessingJobRead.model_validate(processing_status(db, document_id, job_id)))
+    except BusinessError as exc:
+        return business_error_response(exc)
+
+
+@router.post("/{document_id}/processing-jobs/{job_id}/retry", response_model=ApiResponse[ProcessingJobRead], status_code=202)
+def retry_processing_job(request: Request, db: DbSession, document_id: UUID, job_id: UUID):
+    try:
+        data = retry_processing(db, document_id, job_id, settings=request.app.state.settings)
+        _wake_processing(request)
+        return ApiResponse[ProcessingJobRead].ok(ProcessingJobRead.model_validate(data))
+    except BusinessError as exc:
+        return business_error_response(exc)
+
+
+@router.post("/{document_id}/processing-jobs/{job_id}/cancel", response_model=ApiResponse[ProcessingJobRead])
+def cancel_processing_job(request: Request, db: DbSession, document_id: UUID, job_id: UUID):
+    try:
+        data = cancel_processing(db, document_id, job_id)
+        _wake_processing(request)
+        return ApiResponse[ProcessingJobRead].ok(ProcessingJobRead.model_validate(data))
+    except BusinessError as exc:
+        return business_error_response(exc)
+
+
+@router.post("/{document_id}/processing-jobs/{job_id}/resume", response_model=ApiResponse[ProcessingJobRead], status_code=202)
+def resume_chunk_job(request: Request, db: DbSession, document_id: UUID, job_id: UUID, body: ResumeProcessingRequest):
+    try:
+        data = manage_rechunk(db, document_id, job_id, settings=request.app.state.settings, config=body.config)
+        _wake_processing(request)
+        return ApiResponse[ProcessingJobRead].ok(ProcessingJobRead.model_validate(data))
+    except BusinessError as exc:
+        return business_error_response(exc)
 
 
 @router.get("/{document_id}", response_model=ApiResponse[DocumentDetail])

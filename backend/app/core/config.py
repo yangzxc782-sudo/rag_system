@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     mineru_parse_mode: str = "auto"
     mineru_enable_ocr: bool = True
     mineru_save_intermediate: bool = True
-    pdf_cleaning_enabled: bool = False
+    pdf_cleaning_enabled: bool = True
     pdf_cleaning_profile: Literal["auto", "gb_zh", "iso_en"] = "auto"
     pdf_cleaning_backfill_enabled: bool = True
 
@@ -59,7 +59,7 @@ class Settings(BaseSettings):
     document_deletion_heartbeat_object_interval: int = 25
 
     upload_max_file_size_bytes: int = 52_428_800
-    upload_allowed_extensions: str = ".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg,.bmp,.webp,.md"
+    upload_allowed_extensions: str = ".pdf"
     # content_type is auxiliary metadata only. Leave this empty by default so browser-specific
     # or application/octet-stream values do not block an allowed extension.
     upload_allowed_content_types: str = ""
@@ -106,6 +106,26 @@ class Settings(BaseSettings):
 
     # Runtime credentials must be provisioned with database-level read-only
     # privileges. READ access mode alone is not an authorization boundary.
+    # M2 is opt-in until isolated acceptance and separately authorized rollout.
+    pdf_kg_chunks_enabled: bool = False
+    pdf_kg_search_enabled: bool = False
+    document_processing_executor_enabled: bool = False
+    document_processing_poll_interval_seconds: float = Field(default=3, ge=0.1, le=60, allow_inf_nan=False)
+    document_processing_shutdown_grace_seconds: float = Field(default=10, ge=0, le=60, allow_inf_nan=False)
+    pdf_kg_embedding_revision: str = ""
+    pdf_kg_max_chunks: int = Field(default=5000, ge=1, le=5000)
+    pdf_kg_max_search_indices: int = Field(default=512, ge=1, le=1000)
+    kg_build_enabled: bool = False
+    kg_neo4j_uri: str | None = Field(default=None, repr=False)
+    kg_neo4j_database: str | None = None
+    kg_neo4j_username: str | None = Field(default=None, repr=False)
+    kg_neo4j_password: SecretStr | None = Field(default=None, repr=False)
+    kg_model_timeout_seconds: float = Field(default=120, gt=0, le=240, allow_inf_nan=False)
+    kg_write_timeout_seconds: float = Field(default=30, gt=0, le=120, allow_inf_nan=False)
+    kg_lease_seconds: int = Field(default=600, ge=600, le=3600)
+    kg_llm_max_tokens: int = Field(default=8192, gt=0)
+    kg_max_units: int = Field(default=1000, gt=0, le=10000)
+    kg_max_piece_chars: int = Field(default=60000, gt=0, le=200000)
     graph_retrieval_enabled: bool = False
     neo4j_uri: str | None = Field(default=None, repr=False)
     neo4j_database: str | None = None
@@ -189,7 +209,7 @@ class Settings(BaseSettings):
     reranker_max_length: int | None = Field(default=None, gt=0)
     reranker_timeout_seconds: float | None = Field(default=None, gt=0, allow_inf_nan=False)
 
-    @field_validator("neo4j_uri")
+    @field_validator("neo4j_uri", "kg_neo4j_uri")
     @classmethod
     def validate_neo4j_uri(cls, value: str | None) -> str | None:
         if value is None or not value.strip():

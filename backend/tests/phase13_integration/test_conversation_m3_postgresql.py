@@ -19,7 +19,6 @@ from app.services.conversation_repository import ConversationError, Conversation
 from phase13_m2_support import call, database_engine, factory, invoke, publish, session, turn
 from phase13_m3_support import (ANSWER, EVIDENCE, ChatProvider, install_search, publish_staged,
                                redact, result, runtime, source)
-from test_rag_graph_fusion import graph_service
 from test_rag_reranking import FakeRerankingService
 
 
@@ -203,44 +202,8 @@ def test_real_graph_frozen_once_hybrid_contract(m3_engine, monkeypatch, enabled,
         pool.close()
 
 
-@pytest.mark.parametrize("graph_fails", [False, True])
-def test_graph_budget_provenance_and_replay(m3_engine, monkeypatch, graph_fails):
-    from phase13_m2_support import settings_for
-    sources = [source(m3_engine, n=i) for i in (1, 2)]
-    search = install_search(monkeypatch, sources)
-    service, repo = graph_service(settings_for(graph_retrieval_enabled=True))
-    if graph_fails:
-        repo.fetch_table_context.side_effect = RuntimeError("synthetic Neo4j failure")
-    graph, pool, provider = runtime(m3_engine, graph_retrieval=service, graph_retrieval_enabled=True,
-                                    conversation_answer_graph_tokens=4096)
-    try:
-        row = turn(m3_engine, session(m3_engine), "冒口有什么作用？")
-        state = invoke(graph, row)
-        assert state["outcome"] == "answer", state
-        staged = result(graph, row)
-        assert bool(staged.graph_context.evidence) == (not graph_fails)
-        assert prompt_cost(provider.answer_calls[-1].messages) <= 8192
-        if not graph_fails:
-            from app.rag.graph_context_builder import format_graph_context_for_prompt
-            assert staged.graph_context.total_chars == len(format_graph_context_for_prompt(staged.graph_context)) > 0
-            assert {p.document_id for u in staged.graph_context.evidence for p in u.provenance} == {s["document_id"] for s in sources}
-        before = repo.fetch_table_context.call_count
-        invoke(graph, row)
-        assert repo.fetch_table_context.call_count == before and len(search.calls) == 1
-        assert len(provider.answer_calls) == 1
-        pool.close()
-        unavailable = Mock()
-        unavailable.retrieve.side_effect = AssertionError("Restoring a saved answer must never query Neo4j")
-        restarted, pool2, provider2 = runtime(m3_engine, graph_retrieval=unavailable,
-            graph_retrieval_enabled=True, conversation_answer_graph_tokens=4096)
-        try:
-            assert invoke(restarted, row) == state
-            assert result(restarted, row).graph_context == staged.graph_context
-            assert not provider2.calls and not unavailable.retrieve.called
-        finally:
-            pool2.close()
-    finally:
-        pool.close()
+# V2 graph budget/replay moved to test_graph_sources_v2.py and the separately
+# gated test_graph_v2_postgresql.py. Legacy shared Document/Table fixtures retired.
 
 
 @pytest.mark.parametrize("failure", ["embedding", "search", "generation"])
@@ -364,29 +327,8 @@ def test_new_attempt_after_source_loss_has_distinct_evidence_generation(m3_engin
     assert len(search.calls) == 2
 
 
-def test_published_text_survives_multisource_graph_and_draft_redaction(m3_engine, monkeypatch):
-    from phase13_m2_support import settings_for
-    rows = [source(m3_engine, n=i) for i in (1, 2)]
-    install_search(monkeypatch, rows)
-    service, _ = graph_service(settings_for(graph_retrieval_enabled=True))
-    graph, pool, _ = runtime(m3_engine, graph_retrieval=service, graph_retrieval_enabled=True,
-                              conversation_answer_graph_tokens=4096)
-    try:
-        row = turn(m3_engine, session(m3_engine), "冒口有什么作用？")
-        invoke(graph, row)
-        assert result(graph, row).graph_context.evidence
-        publish_staged(m3_engine, graph, row)
-        redact(m3_engine, rows[0]["document_id"])
-        assert call(m3_engine, lambda r: r.get_answer(row.session_id, row.id)).content == ANSWER
-        views = [view for name in ("retrieval", "evidence", "generation") for view in call(m3_engine,
-            lambda r: r.list_snapshots(row.session_id, row.id, artifact(m3_engine, row, name).id))]
-        redacted = [v for v in views if v.status == "source_deleted"]
-        assert {v.kind for v in redacted} == {"candidate", "citation", "graph", "answer_draft"}
-        assert all(v.payload is None for v in redacted)
-        assert {v.kind for v in views if v.status == "available"} == {"candidate", "citation"}
-        assert all(v.sources[0].document_id == UUID(rows[1]["document_id"]) for v in views if v.status == "available")
-    finally:
-        pool.close()
+# V2 graph/source-redaction protection is covered with real v2 source fixtures
+# in test_graph_v2_postgresql.py; legacy graph cross-document aggregation is retired.
 
 
 def test_source_lost_after_draft_commit_blocks_publication(m3_engine, chat):

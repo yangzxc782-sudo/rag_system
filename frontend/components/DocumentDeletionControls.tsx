@@ -82,6 +82,15 @@ export default function DocumentDeletionControls({
   const handleActionError = useCallback((result: DocumentDeletionApiResult) => {
     const code = result.error?.code;
 
+    if (code === "DOCUMENT_PROCESSING_IN_PROGRESS") {
+      setError("文档仍有执行中的任务，请先取消任务并等待当前阶段结束。");
+      return;
+    }
+    if (code === "DOCUMENT_DELETION_IO_RECONCILIATION_REQUIRED") {
+      setError("存在外部写入结果不确定的处理尝试。请先单独核验任务已停止及资产状态，再安排删除。");
+      return;
+    }
+
     if (code === "DOCUMENT_DELETION_EXECUTOR_DISABLED") {
       setPollingHalted(true);
       setError("文档删除服务当前未启用，请稍后重试或联系管理员。");
@@ -310,11 +319,12 @@ export default function DocumentDeletionControls({
               <p>删除后将同时删除：</p>
               <ul className="mt-2 list-disc space-y-1 pl-5">
                 <li>原始文件</li>
-                <li>解析结果</li>
-                <li>向量数据</li>
-                <li>检索索引</li>
+                <li>解析结果、冻结来源及全部切片版本</li>
+                <li>向量数据及该文档所有版本的检索索引</li>
+                <li>该文档新版知识图谱及构图产物</li>
                 <li>该文档独有的知识条目</li>
               </ul>
+              <p className="mt-2">历史聊天文本保留，相关来源证据将标记为已删除。运行中的处理任务须先结束。</p>
               <p className="mt-4 font-medium text-red-700">此操作完成后不可恢复。</p>
             </div>
             <div className="mt-6 flex justify-end gap-3">

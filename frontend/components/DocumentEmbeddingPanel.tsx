@@ -71,7 +71,7 @@ export default function DocumentEmbeddingPanel({
       }
 
       if (result.error?.code === "DOCUMENT_NOT_PARSED") {
-        setError("文档尚未解析，请先解析文档。");
+        setError("文档尚无检索切片。清洗来源完成后，还需完成构图与切分。");
         return;
       }
 
@@ -119,10 +119,10 @@ export default function DocumentEmbeddingPanel({
         <button
           type="button"
           onClick={handleGenerate}
-          disabled={disabled || isGenerating || isSyncingIndex}
+          disabled={disabled || isGenerating || isSyncingIndex || status?.total === 0}
           className="w-fit rounded-md bg-slate-950 px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:bg-slate-400"
         >
-          {isGenerating ? "生成中..." : disabled ? "删除状态下不可生成" : "生成 embedding"}
+          {isGenerating ? "生成中..." : disabled ? "删除状态下不可生成" : status?.total === 0 ? "尚无检索切片" : "生成 embedding"}
         </button>
       </div>
 
@@ -155,7 +155,7 @@ export default function DocumentEmbeddingPanel({
         </div>
       ) : (
         <div className="mt-4 rounded-md border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-          暂无 embedding 状态。未解析文档或状态接口不可用时可先完成解析。
+          暂无 embedding 状态。需要已有检索切片才能向量化。
         </div>
       )}
 

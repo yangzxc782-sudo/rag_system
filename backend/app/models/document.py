@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
-from sqlalchemy import BigInteger, CheckConstraint, DateTime, Index, String, Text, func, text
+from sqlalchemy import BigInteger, CheckConstraint, DateTime, ForeignKeyConstraint, Index, String, Text, func, text
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -22,12 +22,22 @@ if TYPE_CHECKING:
 
 class Document(Base):
     __tablename__ = "documents"
+    __mapper_args__ = {"eager_defaults": False}
     __table_args__ = (
         CheckConstraint(
             "deletion_status IN ('normal', 'deleting', 'delete_failed')",
             name="ck_documents_deletion_status",
         ),
         Index("ix_documents_deletion_status", "deletion_status"),
+        ForeignKeyConstraint(
+            ["current_chunk_set_id", "id"], ["document_chunk_sets.id", "document_chunk_sets.document_id"],
+            name="fk_documents_current_chunk_set", ondelete="RESTRICT", use_alter=True,
+        ),
+        CheckConstraint(
+            "publication_revision >= 0 AND (current_chunk_set_id IS NULL OR publication_revision > 0)",
+            name="ck_documents_publication_revision",
+        ),
+        Index("ix_documents_current_chunk_set", "current_chunk_set_id"),
     )
 
     id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
@@ -46,6 +56,14 @@ class Document(Base):
         server_default=text("'normal'"),
     )
     error_message: Mapped[str | None] = mapped_column(Text)
+    # M0 does not enable the new pipeline. Ordinary legacy ORM reads/inserts
+    # omit these columns until an approved migration and explicit use.
+    current_chunk_set_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), deferred=True, server_default=text("NULL"),
+    )
+    publication_revision: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, deferred=True, server_default="0",
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

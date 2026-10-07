@@ -10,7 +10,7 @@ export type SessionPage = { items: QaSession[]; next_cursor: string | null };
 export type EvidenceSource = {
   snapshot_id: string; kind: "citation" | "graph"; citation_id: number | null;
   document_ids: string[]; chunk_ids: string[];
-  status: "available" | "source_deleted" | "source_unavailable";
+  status: "available" | "source_deleted" | "source_unavailable" | "unsupported_version";
 };
 export type ConversationAnswer = {
   question: string; answer: string; context_status: "ok" | "no_context" | "clarification" | "casting_design";
@@ -68,6 +68,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   QA_REWRITE_INPUT_BUDGET_EXCEEDED: "问题理解输入超过预算，请缩短问题后重新提交。",
   QA_CONTEXT_BUDGET_EXCEEDED: "必要的对话历史超过上下文预算。请在新会话中简短重述对象、条件和完整问题。",
   QA_REWRITE_STRATEGY_UNSUPPORTED: "此轮使用已停用的问题理解策略，不能继续执行或重试。请作为新问题重新提交。",
+  QA_GRAPH_EVIDENCE_VERSION_UNSUPPORTED: "此轮使用旧版图谱证据，无法恢复执行。历史回答仍保留，请发起新一轮检索。",
   REQUEST_VALIDATION_ERROR: "输入不合法，请检查问题长度、检索条数和文档编号。",
   NETWORK_ERROR: "网络连接中断，后端可能仍在执行。请先查询状态。",
   REQUEST_TIMEOUT: "等待响应超时，后端可能仍在执行。正在核对请求状态。",

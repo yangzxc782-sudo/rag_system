@@ -12,6 +12,7 @@ from app.llm.provider import clear_llm_provider_cache
 from app.services.graph_retrieval import GraphRetrievalService
 from app.services.reranking import close_reranking_service
 from app.tasks.document_deletion_executor import DocumentDeletionExecutor
+from app.tasks.document_processing_executor import DocumentProcessingExecutor
 
 
 @contextmanager
@@ -53,6 +54,7 @@ def _lifespan(settings: Settings):
         app.state.graph_repository = graph_repository
         app.state.graph_retrieval = GraphRetrievalService(settings, repository=graph_repository)
         executor: DocumentDeletionExecutor | None = None
+        processing_executor: DocumentProcessingExecutor | None = None
         try:
             with _conversation_runtime(settings, app.state.graph_retrieval) as conversation:
                 app.state.conversation_graph = conversation
@@ -80,6 +82,10 @@ def _lifespan(settings: Settings):
                         executor = DocumentDeletionExecutor(settings=settings)
                         app.state.document_deletion_executor = executor
                         executor.start()
+                    if bool(getattr(settings, "document_processing_executor_enabled", False)):
+                        processing_executor = DocumentProcessingExecutor(settings=settings)
+                        app.state.document_processing_executor = processing_executor
+                        processing_executor.start()
                     yield
                 finally:
                     try:
@@ -95,6 +101,9 @@ def _lifespan(settings: Settings):
                         app.state.conversation_graph = None
         finally:
             try:
+                if processing_executor is not None:
+                    processing_executor.stop()
+                    processing_executor.join()
                 if executor is not None:
                     executor.stop()
                     executor.join(

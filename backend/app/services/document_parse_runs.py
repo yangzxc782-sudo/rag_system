@@ -319,6 +319,10 @@ def _parse_run_metadata_summary(
         "intermediate_file_count",
         "parse_mode",
         "task_id",
+        "source_version",
+        "canonical_sha256",
+        "character_count",
+        "chunk_count",
     }
     return {
         key: summary

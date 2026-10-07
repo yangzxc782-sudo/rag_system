@@ -1,0 +1,22 @@
+{
+  "source": "知识图谱全链路/output/KG-20260929-QJ31852003ZL205AZL114A/KG-20260929-QJ31852003ZL205AZL114A_原文标注.md",
+  "source_sha256": "6b2432c8dd52f8f2c6ebab06a74932fb6047d3543a67b0c5eb559db002eef0b4",
+  "anchors": [
+    {
+      "anchor_id": "KG-20260929-QJ31852003ZL205AZL114A::C-1-1",
+      "graph_id": "KG-20260929-QJ31852003ZL205AZL114A",
+      "anchor_type": "clause",
+      "clause_ref": "C-1-1",
+      "heading_ref": "1",
+      "heading": "航天用铝合金 ZL205A、ZL114A 铸件规范 / 1 范围"
+    },
+    {
+      "anchor_id": "KG-20260929-QJ31852003ZL205AZL114A::T-3.2-1",
+      "graph_id": "KG-20260929-QJ31852003ZL205AZL114A",
+      "anchor_type": "table",
+      "table_ref": "T-3.2-1",
+      "heading_ref": "3.2",
+      "heading": "航天用铝合金 ZL205A、ZL114A 铸件规范 / 3 技术要求 / 3.2 化学成分"
+    }
+  ]
+}

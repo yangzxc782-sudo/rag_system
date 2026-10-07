@@ -50,8 +50,10 @@ def fake_document() -> SimpleNamespace:
 def fake_parse_result() -> SimpleNamespace:
     return SimpleNamespace(
         document_id=DOCUMENT_ID,
-        process_status="parsed",
-        chunk_count=2,
+        process_status="cleaned_source_ready",
+        chunk_count=0,
+        parse_run_id=CHUNK_ID, source_version=CHUNK_ID, canonical_sha256="a" * 64,
+        character_count=42, block_count=2,
         parser_name="mineru_api",
         parser_version="test-v1",
     )
@@ -241,8 +243,8 @@ def test_parse_document_success(monkeypatch) -> None:
     body = response.json()
     assert body["success"] is True
     assert body["data"]["document_id"] == str(DOCUMENT_ID)
-    assert body["data"]["process_status"] == "parsed"
-    assert body["data"]["chunk_count"] == 2
+    assert body["data"]["process_status"] == "cleaned_source_ready"
+    assert body["data"]["chunk_count"] == 0
     assert body["data"]["parser_name"] == "mineru_api"
     assert body["data"]["parser_version"] == "test-v1"
     assert body["error"] is None
@@ -306,7 +308,7 @@ def test_parse_document_chunk_config_invalid(monkeypatch) -> None:
 
 
 def test_get_document_chunks_success(monkeypatch) -> None:
-    def fake_list_document_chunks(db, document_id, *, limit, offset):
+    def fake_list_document_chunks(db, document_id, *, limit, offset, chunk_set_id=None):
         assert document_id == DOCUMENT_ID
         assert limit == 50
         assert offset == 0
@@ -350,7 +352,7 @@ def test_get_document_chunks_rejects_invalid_limit_and_offset() -> None:
 
 
 def test_get_document_chunks_not_found(monkeypatch) -> None:
-    def fake_list_document_chunks(db, document_id, *, limit, offset):
+    def fake_list_document_chunks(db, document_id, *, limit, offset, chunk_set_id=None):
         raise BusinessError(DOCUMENT_NOT_FOUND, "文档不存在。", status_code=404)
 
     monkeypatch.setattr(documents_api, "list_document_chunks", fake_list_document_chunks)

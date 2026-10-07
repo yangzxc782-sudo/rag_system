@@ -6,6 +6,7 @@ from uuid import UUID
 from pydantic import BaseModel
 
 from app.schemas.search import SearchData
+from app.extraction.kg_protocol import Anchor
 
 
 RagContextStatus = Literal["ok", "no_context"]
@@ -46,51 +47,60 @@ class RagLlmInfo(BaseModel):
     model: str | None = None
 
 
-class RagGraphDocument(BaseModel):
-    doc_id: str
-
-
-class RagGraphTable(BaseModel):
-    table_id: str
-    table_ref: str
-    page: int | None = None
-    table_index: int | None = None
+class RagGraphSource(BaseModel):
+    document_id: str
+    source_version: str
+    graph_build_id: str
+    unit_id: str
+    source_start: int
+    source_end: int
 
 
 class RagGraphEntity(BaseModel):
     id: str
     name: str
     entity_type: str
-    page: int | None = None
+    properties: dict[str, Any]
 
 
 class RagGraphRelationship(BaseModel):
+    id: str
     source_entity_id: str
     source_name: str
     type: str
     target_entity_id: str
     target_name: str
+    properties: dict[str, Any]
 
 
 class RagGraphEvidence(BaseModel):
-    graph_id: str
-    anchor_id: str
-    anchor_type: str
-    table_ref: str | None
+    anchor: Anchor
     source_citations: list[int]
-    document: RagGraphDocument
-    table: RagGraphTable
+    source: RagGraphSource
     entities: list[RagGraphEntity]
     relationships: list[RagGraphRelationship]
 
 
+class RagGraphDiagnostic(BaseModel):
+    anchor_id: str
+    graph_id: str
+    mapped: bool
+    query_status: str
+    full_unit_covered: bool
+    facts_used: bool
+    use_status: str
+
+
 class RagGraphData(BaseModel):
+    schema_version: Literal[2] = 2
     enabled: bool
     triggered: bool
-    status: Literal["success", "partial", "not_triggered", "unavailable"]
+    status: Literal["success", "partial", "not_triggered", "unavailable", "not_used"]
     truncated: bool
     evidence_count: int
     evidence: list[RagGraphEvidence]
+    diagnostics: list[RagGraphDiagnostic]
+    source_error: str | None = None
 
 
 class RagAskData(BaseModel):

@@ -23,6 +23,7 @@ from app.models.document import Document
 from app.models.document_chunk import DocumentChunk
 from app.retrieval.embeddings import EmbeddingResult, get_embedding_provider
 from app.services.document_operation_guard import DocumentOperationGuard
+from app.services.versioned_document_guard import require_legacy_document
 
 
 EMBEDDING_STATUS_NOT_STARTED = "not_started"
@@ -57,12 +58,12 @@ class DocumentEmbeddingStatus:
 
 
 def generate_document_embeddings(db: Session, document_id: UUID) -> DocumentEmbeddingResult:
-    _get_document_or_raise(db, document_id)
+    require_legacy_document(_get_document_or_raise(db, document_id))
     chunks = _list_document_chunks(db, document_id)
     if not chunks:
         raise BusinessError(
             DOCUMENT_NOT_PARSED,
-            "Document has no chunks. Parse it before generating embeddings.",
+            "文档尚无检索切片；清洗来源后需先完成构图和切分。",
             detail={"document_id": str(document_id)},
             status_code=409,
         )
@@ -129,7 +130,7 @@ def generate_document_embeddings(db: Session, document_id: UUID) -> DocumentEmbe
             embedded_count += len(batch)
             last_result = result
 
-        DocumentOperationGuard(db).lock_normal(document_id)
+        require_legacy_document(DocumentOperationGuard(db).lock_normal(document_id))
         now = datetime.now(UTC)
         for chunk, embedding, result in pending_updates:
             chunk.embedding = embedding
@@ -179,8 +180,13 @@ def generate_document_embeddings(db: Session, document_id: UUID) -> DocumentEmbe
 
 
 def get_document_embedding_status(db: Session, document_id: UUID) -> DocumentEmbeddingStatus:
-    _get_document_or_raise(db, document_id)
-    chunks = _list_document_chunks(db, document_id)
+    document = _get_document_or_raise(db, document_id)
+    from app.services.versioned_document_guard import FROZEN_PROCESS_STATUSES
+    if document.process_status in FROZEN_PROCESS_STATUSES:
+        chunks = list(db.scalars(select(DocumentChunk).where(DocumentChunk.document_id == document_id,
+            DocumentChunk.chunk_set_id == document.current_chunk_set_id))) if document.current_chunk_set_id else []
+    else:
+        chunks = _list_document_chunks(db, document_id)
     counts = _status_counts(chunks)
     models = sorted({chunk.embedding_model for chunk in chunks if chunk.embedding_model})
     dims = sorted({chunk.embedding_dim for chunk in chunks if chunk.embedding_dim is not None})
@@ -236,7 +242,7 @@ def _mark_chunks_embedding(
     document_id: UUID,
     chunks: Iterable[DocumentChunk],
 ) -> None:
-    DocumentOperationGuard(db).lock_normal(document_id)
+    require_legacy_document(DocumentOperationGuard(db).lock_normal(document_id))
     for chunk in chunks:
         chunk.embedding_status = EMBEDDING_STATUS_EMBEDDING
         chunk.embedding_error_message = None
@@ -252,9 +258,11 @@ def _mark_chunks_failed(
 ) -> None:
     now = datetime.now(UTC)
     try:
-        if DocumentOperationGuard(db).lock_if_normal(document_id) is None:
+        document = DocumentOperationGuard(db).lock_if_normal(document_id)
+        if document is None:
             db.rollback()
             return
+        require_legacy_document(document)
         for chunk in chunks:
             chunk.embedding_status = EMBEDDING_STATUS_FAILED
             chunk.embedding_error_message = message

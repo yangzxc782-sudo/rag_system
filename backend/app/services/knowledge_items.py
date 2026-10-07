@@ -207,6 +207,18 @@ def update_knowledge_item(db: Session, item_id: UUID, payload: KnowledgeItemUpda
     try:
         updated_fields = payload.model_fields_set
         current_source = projection_source(item)
+        # Document locks precede any Knowledge mutation/flush. In particular,
+        # ensure_source_relation may flush and acquire FK locks immediately.
+        source_context = None
+        source_ids = {source.document_id for source in ordered_sources(item)}
+        source_ids.add(item.source_document_id)
+        if "source_chunk_ids" in updated_fields:
+            source_context = _resolve_source_context(db,
+                source_document_id=current_source.document_id if current_source is not None else None,
+                source_chunk_ids=payload.source_chunk_ids,
+                source_filename=payload.source_filename if "source_filename" in updated_fields else item.source_filename)
+            source_ids.add(source_context.document_id)
+        _guard_document_sources(db, source_ids)
         if "title" in updated_fields:
             item.title = _normalize_required_text(payload.title, field="title")
         if "content" in updated_fields:
@@ -224,12 +236,6 @@ def update_knowledge_item(db: Session, item_id: UUID, payload: KnowledgeItemUpda
         if "source_filename" in updated_fields:
             item.source_filename = payload.source_filename
         if "source_chunk_ids" in updated_fields:
-            source_context = _resolve_source_context(
-                db,
-                source_document_id=current_source.document_id if current_source is not None else None,
-                source_chunk_ids=payload.source_chunk_ids,
-                source_filename=item.source_filename,
-            )
             item.source_document_id = source_context.document_id
             item.source_filename = source_context.source_filename
             item.chunks = _build_item_chunks(item.id, source_context.chunks)
@@ -244,12 +250,6 @@ def update_knowledge_item(db: Session, item_id: UUID, payload: KnowledgeItemUpda
                 document_id=source_identity,
                 source_filename=item.source_filename,
             )
-
-        source_ids = {
-            source.document_id for source in ordered_sources(item)
-        }
-        source_ids.add(item.source_document_id)
-        _guard_document_sources(db, source_ids)
 
         item.content_hash = compute_content_hash(item.item_type, item.source_document_id, item.title, item.content)
         _ensure_not_duplicate(

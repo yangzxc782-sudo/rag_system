@@ -30,6 +30,13 @@ class SearchItem(BaseModel):
     matched_keywords: list[str] = Field(default_factory=list)
     embedding_model: str | None = None
     embedding_dim: int | None = None
+    source_version: UUID | None = None
+    graph_build_id: UUID | None = None
+    chunk_set_id: UUID | None = None
+    source_start: int | None = None
+    source_end: int | None = None
+    content_sha256: str | None = None
+    embedding_fingerprint: str | None = None
 
 
 class SearchData(BaseModel):

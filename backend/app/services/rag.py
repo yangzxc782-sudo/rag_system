@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from copy import deepcopy
 import logging
 from time import perf_counter
 from typing import Any
@@ -27,8 +26,7 @@ from app.llm.provider import (
 from app.rag.citations import RagCitation
 from app.rag.citations import build_citations as build_context_citations
 from app.rag.context_builder import RagContext, RagContextStatus, build_rag_context, format_context_for_prompt
-from app.graph.models import GraphTriggerProvenance, KGRef
-from app.rag.graph_context_builder import GraphContext, build_graph_context
+from app.rag.graph_context_builder import GraphContext, build_graph_context, retain_evidence
 from app.rag.prompt import build_rag_prompt, build_user_prompt
 from app.services.graph_retrieval import GraphRetrievalService
 from app.services.hybrid_search import HybridSearchResult
@@ -225,7 +223,7 @@ def build_prompt(question: str, context: RagContext, settings: Any,
         if graph_context is not None and graph_context.evidence:
             text_prompt = build_user_prompt(question, format_context_for_prompt(context))
             if user_prompt == text_prompt:
-                graph_context = replace(graph_context, status="empty", evidence=(), total_chars=0)
+                graph_context = retain_evidence(graph_context, (), reason="prompt_omitted")
     except BusinessError:
         raise
     except Exception as exc:
@@ -280,58 +278,33 @@ def build_citations(context: RagContext) -> list[RagCitation]:
     return build_context_citations(context)
 
 
-def extract_graph_refs(context: RagContext) -> tuple[list[KGRef], tuple[GraphTriggerProvenance, ...]]:
-    """Read only final budgeted text chunks. Preserve duplicates for M5 conflict checks."""
-    refs: list[KGRef] = []
-    origins: list[GraphTriggerProvenance] = []
-    if context.context_status != "ok":
-        return refs, ()
-    fields = {"anchor_id", "graph_id", "anchor_type", "table_ref"}
-    for chunk in context.chunks:
-        metadata = chunk.source_metadata
-        if not isinstance(metadata, dict) or not isinstance(metadata.get("kg_refs"), list):
-            continue
-        for value in metadata["kg_refs"]:
-            if not isinstance(value, dict) or not fields <= value.keys():
-                continue
-            if any(not isinstance(value[key], str) or not value[key].strip()
-                   for key in ("anchor_id", "graph_id", "anchor_type")):
-                continue
-            if value["table_ref"] is not None and not isinstance(value["table_ref"], str):
-                continue
-            ref = KGRef(**{key: value[key] for key in fields})
-            refs.append(ref)
-            source_range = metadata.get("source_range")
-            origins.append(GraphTriggerProvenance(
-                anchor_id=ref.anchor_id, document_id=chunk.document_id, chunk_id=chunk.chunk_id,
-                citation_id=chunk.citation_id,
-                source_range=deepcopy(source_range) if isinstance(source_range, dict) else None,
-            ))
-    return refs, tuple(origins)
-
-
 def build_graph_context_for_rag(context: RagContext, settings: Any,
                                 graph_retrieval: GraphRetrievalService | None) -> GraphContext:
     enabled = bool(getattr(settings, "graph_retrieval_enabled", False))
     max_chars = int(getattr(settings, "rag_graph_context_max_chars", 6000))
     empty = GraphContext(enabled=enabled, status="empty" if enabled else "disabled", max_chars=max_chars)
-    if not enabled or context.context_status != "ok" or not context.chunks or graph_retrieval is None:
+    if not enabled or context.context_status != "ok" or not context.chunks:
         return empty
+    if not getattr(settings, "pdf_kg_search_enabled", False):
+        return replace(empty, source_error="v2_admission_disabled")
+    if graph_retrieval is None:
+        return replace(empty, source_error="authority_unavailable")
     try:
-        refs, provenance = extract_graph_refs(context)
-        if not refs:
+        bindings = graph_retrieval.authority.resolve(context)
+        if not bindings:
             return empty
-        result = graph_retrieval.retrieve(refs, provenance=provenance)
-        graph_context = build_graph_context(result, max_chars=max_chars)
-        logger.info("RAG graph evidence: anchors=%d evidence=%d unavailable=%d timeout=%d truncated=%s",
-                    len({ref.anchor_id for ref in refs}), len(graph_context.evidence),
-                    sum(item.status == "unavailable" for item in result.items),
-                    sum(item.status in {"timeout", "budget_exhausted"} for item in result.items),
-                    graph_context.was_truncated)
-        return graph_context
+        result = graph_retrieval.retrieve(bindings)
+        graph = build_graph_context(result, max_chars=max_chars)
+        # Release the SQL read before Neo4j, then recheck admission after network IO.
+        if graph_retrieval.authority.resolve(context) != bindings:
+            return replace(retain_evidence(graph, (), reason="source_invalid"), source_error="source_changed")
+        return graph
+    except ValueError:
+        logger.warning("RAG graph source validation failed; continuing with text evidence.")
+        return replace(empty, source_error="source_invalid")
     except Exception:
-        logger.warning("RAG graph evidence unavailable; continuing with text context.")
-        return empty
+        logger.warning("RAG graph source authority unavailable; continuing with text evidence.")
+        return replace(empty, source_error="authority_unavailable")
 
 
 def answer_question(
@@ -378,7 +351,7 @@ def answer_question(
         llm_model=llm_result.model,
         graph_context=prompt.graph_context,
         # Pure provenance inspection for reporting; retrieval remains owned by M6.
-        graph_triggered=graph_context.enabled and bool(extract_graph_refs(context)[0]),
+        graph_triggered=graph_context.enabled and bool(graph_context.diagnostics),
     )
 
 

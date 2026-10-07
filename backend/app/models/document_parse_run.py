@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, false, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, false, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 class DocumentParseRun(Base):
     __tablename__ = "document_parse_runs"
     __table_args__ = (
+        UniqueConstraint("id", "document_id", name="uq_document_parse_runs_owner"),
         Index("ix_document_parse_runs_document_id", "document_id"),
         Index("ix_document_parse_runs_status", "status"),
         Index("ix_document_parse_runs_is_active", "is_active"),

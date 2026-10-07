@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from collections import defaultdict
 from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
+from sqlalchemy.orm import Session
 from pydantic import SecretStr
 
 from app.core.errors import (
@@ -184,6 +184,7 @@ def fake_settings(
         mineru_parse_mode="auto",
         mineru_enable_ocr=True,
         mineru_save_intermediate=True,
+        pdf_cleaning_enabled=True, pdf_cleaning_backfill_enabled=False,
     )
 
 
@@ -252,6 +253,11 @@ def _install_success_dependencies(
     *,
     client: FakeMinerUClient | None = None,
 ) -> tuple[FakeMinerUClient, list[dict[str, object]]]:
+    require_schema = document_parsing.require_source_schema
+    from app.services import document_processing
+    guard = document_processing.reject_pending_parse
+    monkeypatch.setattr(document_processing, "reject_pending_parse", lambda db, doc: guard(db, doc) if isinstance(db, Session) else None)
+    monkeypatch.setattr(document_parsing, "require_source_schema", lambda db: require_schema(db) if isinstance(db, Session) else None)
     fake_client = client or FakeMinerUClient(result=fake_parse_result())
     uploads: list[dict[str, object]] = []
     monkeypatch.setattr(
@@ -262,7 +268,7 @@ def _install_success_dependencies(
     monkeypatch.setattr(
         document_parsing,
         "get_object_bytes_from_minio",
-        lambda **kwargs: b"%PDF-fake-content",
+        lambda **kwargs: next((item["content"] for item in uploads if item["object_key"] == kwargs["object_key"]), b"%PDF-fake-content"),
     )
     monkeypatch.setattr(
         document_parsing,
@@ -277,7 +283,7 @@ def _install_success_dependencies(
     return fake_client, uploads
 
 
-@pytest.mark.parametrize("extension", [".pdf", ".docx"])
+@pytest.mark.parametrize("extension", [".pdf", ".PDF"])
 def test_mineru_success_writes_full_pipeline_before_marking_active(
     monkeypatch, extension: str,
 ) -> None:
@@ -313,69 +319,19 @@ def test_mineru_success_writes_full_pipeline_before_marking_active(
         item for item in db.added_all if isinstance(item, DocumentChunkBlock)
     ]
 
-    assert result.process_status == "parsed"
-    assert result.parser_name == "mineru_api"
-    assert result.chunk_count == len(chunks)
-    assert document.process_status == "parsed"
-    assert new_run.status == "succeeded"
-    assert new_run.is_active is True
-    assert old_run.is_active is False
-    assert new_run.page_count == 3
-    assert new_run.block_count == 4
-    assert new_run.asset_count == 2
-    assert new_run.output_markdown_key.endswith("/output.md")
-    assert new_run.output_json_key.endswith("/output.json")
-    assert new_run.source_metadata["output_markdown_status"] == "saved"
-    assert new_run.source_metadata["output_json_status"] == "saved"
-    assert len(uploads) == 2
+    assert result.process_status == document.process_status == "cleaned_source_ready"
+    assert result.chunk_count == len(chunks) == len(mappings) == 0
+    assert new_run.status == "succeeded" and new_run.is_active and not old_run.is_active
+    assert new_run.block_count == len(blocks) == 4
+    assert new_run.asset_count == len(assets) == len(uploads) == 4
     assert len(fake_client.requests) == 1
-    assert (
-        db.commit_snapshots[0]["parse_runs"][str(new_run.id)]
-        == ("running", False)
-    )
     assert db.commit_snapshots[0]["document_status"] == "parsing"
-    assert (
-        db.commit_snapshots[-1]["parse_runs"][str(new_run.id)]
-        == ("succeeded", True)
-    )
-    assert db.commit_snapshots[-1]["document_status"] == "parsed"
-    assert len(assets) == 2
-    assert len(blocks) == 4
-    assert chunks
-    assert mappings
-    assert all(chunk.parse_run_id == new_run.id for chunk in chunks)
-    assert all(chunk.chunk_method == "mineru_block_merge" for chunk in chunks)
-    assert all(chunk.embedding is None for chunk in chunks)
-    assert all(chunk.embedding_status == "not_started" for chunk in chunks)
-
-    chunks_by_id = {chunk.id: chunk for chunk in chunks}
-    formula_block = next(
-        block for block in blocks if block.block_type == "formula"
-    )
-    table_block = next(
-        block for block in blocks if block.block_type == "table"
-    )
-    formula_links = [
-        mapping for mapping in mappings if mapping.block_id == formula_block.id
-    ]
-    table_links = [
-        mapping for mapping in mappings if mapping.block_id == table_block.id
-    ]
-    assert len(formula_links) == 1
-    assert len(table_links) == 1
-    formula_chunk = chunks_by_id[formula_links[0].chunk_id]
-    assert formula_block.latex in formula_chunk.content
-    assert len(formula_chunk.content) > fake_settings().chunk_size_chars
-    assert formula_chunk.chunk_type == "formula"
-    assert table_block.markdown == chunks_by_id[table_links[0].chunk_id].content
-
-    orders_by_chunk: dict[UUID, list[int]] = defaultdict(list)
-    for mapping in mappings:
-        orders_by_chunk[mapping.chunk_id].append(mapping.block_order)
-    assert all(
-        orders == list(range(len(orders)))
-        for orders in orders_by_chunk.values()
-    )
+    assert db.commit_snapshots[-1]["document_status"] == "cleaned_source_ready"
+    assert new_run.source_metadata["source_version"] == str(result.source_version)
+    canonical = next(item["content"].decode() for item in uploads if item["object_key"].endswith("/cleaned.md"))
+    assert next(block for block in blocks if block.block_type == "formula").latex in canonical
+    assert next(block for block in blocks if block.block_type == "table").markdown in canonical
+    assert result.character_count == len(canonical)
 
 
 def test_mineru_final_guard_blocks_upload_after_delete_commits(monkeypatch) -> None:
@@ -441,7 +397,7 @@ def test_inline_v4_zip_asset_is_uploaded_through_existing_orchestration(
         for upload in uploads
         if upload["object_key"].endswith("/images/mould.png")
     )
-    assert result.process_status == "parsed"
+    assert result.process_status == "cleaned_source_ready"
     assert image_upload["content"] == b"inline-image-bytes"
     assert image_upload["content_type"] == "image/png"
     assert len(client.requests) == 1
@@ -484,7 +440,7 @@ def test_same_basename_assets_use_source_path_and_upload_to_distinct_keys(
         if str(upload["object_key"]).endswith("chart.png")
     }
     parse_run = next(iter(db.parse_runs.values()))
-    assert result.process_status == "parsed"
+    assert result.process_status == "cleaned_source_ready"
     assert len(chart_uploads) == 2
     assert next(
         content
@@ -543,7 +499,7 @@ def test_zip_root_images_alias_matches_normalized_source_path(monkeypatch) -> No
         for upload in uploads
         if str(upload["object_key"]).endswith("/images/a/chart.png")
     )
-    assert result.process_status == "parsed"
+    assert result.process_status == "cleaned_source_ready"
     assert image_upload["content"] == b"root-prefixed-chart"
 
 
@@ -574,7 +530,7 @@ def test_unique_basename_fallback_matches_inline_asset(monkeypatch) -> None:
         for upload in uploads
         if str(upload["object_key"]).endswith("/unique-chart.png")
     )
-    assert result.process_status == "parsed"
+    assert result.process_status == "cleaned_source_ready"
     assert image_upload["content"] == b"unique-chart"
 
 
@@ -804,6 +760,9 @@ def test_missing_declared_inline_asset_fails_integrity_check(
 def test_mineru_missing_configuration_fails_without_basic_fallback(
     monkeypatch,
 ) -> None:
+    monkeypatch.setattr(document_parsing, "require_source_schema", lambda db: None)
+    from app.services import document_processing
+    monkeypatch.setattr(document_processing, "reject_pending_parse", lambda *args: None)
     document = fake_document()
     db = FakeDb(document=document)
     monkeypatch.setattr(
@@ -814,7 +773,7 @@ def test_mineru_missing_configuration_fails_without_basic_fallback(
     monkeypatch.setattr(
         document_parsing,
         "get_object_bytes_from_minio",
-        lambda **kwargs: b"%PDF",
+        lambda **kwargs: b"%PDF-1.4",
     )
 
     with pytest.raises(BusinessError) as exc_info:
@@ -927,7 +886,7 @@ def test_download_only_outputs_are_marked_deferred_without_network(
     result = document_parsing.parse_document(db, DOCUMENT_ID)
 
     parse_run = next(iter(db.parse_runs.values()))
-    assert result.process_status == "parsed"
+    assert result.process_status == "cleaned_source_ready"
     assert parse_run.status == "succeeded"
     assert parse_run.is_active is True
     assert parse_run.source_metadata["output_markdown_status"] == (
@@ -939,7 +898,7 @@ def test_download_only_outputs_are_marked_deferred_without_network(
     assert parse_run.source_metadata["deferred_file_count"] == 2
     assert parse_run.output_markdown_key.endswith("/output.md")
     assert parse_run.output_json_key.endswith("/output.json")
-    assert uploads == []
+    assert {item["object_key"].split("/")[-1] for item in uploads} == {"cleaned.md", "source-map.json"}
 
 
 def test_failed_status_commit_failure_is_visible_to_caller(
@@ -977,9 +936,8 @@ def test_failed_status_commit_failure_is_visible_to_caller(
         "normalizer",
         "assets",
         "blocks",
-        "chunking",
-        "chunks",
-        "mappings",
+        "freezing",
+        "verification",
     ],
 )
 def test_mineru_pipeline_failure_marks_run_and_document_failed(
@@ -1020,31 +978,21 @@ def test_mineru_pipeline_failure_marks_run_and_document_failed(
     elif failure_point == "blocks":
         monkeypatch.setattr(
             document_parsing,
-            "add_document_blocks",
+            "build_document_blocks",
             lambda *args, **kwargs: fail(),
         )
-    elif failure_point == "chunking":
+    elif failure_point == "freezing":
         monkeypatch.setattr(
             document_parsing,
-            "build_block_aware_chunks",
+            "render_frozen_source",
             lambda *args, **kwargs: fail(),
         )
-    elif failure_point == "chunks":
+    elif failure_point == "verification":
         monkeypatch.setattr(
             document_parsing,
-            "_add_mineru_chunks",
+            "verify_frozen_source",
             lambda *args, **kwargs: fail(),
         )
-    else:
-        original_flush = db.flush
-
-        def fail_mapping_flush():
-            if any(isinstance(item, DocumentChunkBlock) for item in db.added_all):
-                fail()
-            original_flush()
-
-        monkeypatch.setattr(db, "flush", fail_mapping_flush)
-
     with pytest.raises(BusinessError) as exc_info:
         document_parsing.parse_document(db, DOCUMENT_ID)
 

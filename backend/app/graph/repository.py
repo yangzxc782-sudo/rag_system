@@ -1,20 +1,60 @@
 from __future__ import annotations
-
 from collections.abc import Callable
-from dataclasses import replace
+import json
 import logging
+import math
+import re
 from threading import Lock
+import time
 from typing import Any
+from uuid import uuid4
 
 from app.core.config import Settings
-from app.graph.models import (
-    GraphAnchorResult, GraphDocument, GraphEntity, GraphRelationship,
-    GraphRetrievalRequest, GraphTable, GraphTruncation, KGRef, unsupported_ref_status,
-)
-from app.graph.templates import RELATIONSHIP_TYPES, resolve_template
+from app.extraction.kg_extract import relation_allowed, template
+from app.graph.models import GraphAnchorResult, GraphEntity, GraphRelationship, GraphRetrievalRequest
+from app.graph.templates import resolve_template
 
 
 logger = logging.getLogger(__name__)
+
+
+def _error_code(exc):
+    try:
+        code = getattr(exc, "code", None)
+    except Exception:
+        return None
+    return code if (type(code) is str and len(code) <= 160 and re.fullmatch(
+        r"Neo\.(?:ClientError|TransientError|DatabaseError)\.[A-Za-z][A-Za-z0-9]*\.[A-Za-z][A-Za-z0-9]*", code)) else None
+
+
+def _decode_reason(exc):
+    # Match only our constant messages; never stringify exceptions or log values.
+    message = exc.args[0] if exc.args and type(exc.args[0]) is str else None
+    return {
+        "Graph ownership mismatch": "binding_mismatch",
+        "Cross-graph/anchor data": "binding_mismatch",
+        "Graph property ownership mismatch": "binding_mismatch",
+        "Entity property identity mismatch": "binding_mismatch",
+        "Entity identity/type mismatch": "entity_identity_mismatch",
+        "Relationship endpoint/type mismatch": "relationship_endpoint_mismatch",
+    }.get(message, "neo4j_decode_error")
+
+
+def _log_failure(exc, *, request, config, batch_id, started, phase, status, reason, anchor_index=None):
+    elapsed = max(0, (time.monotonic() - started) * 1000)
+    remaining = request.remaining_budget_ms
+    remaining = (max(0, remaining - elapsed)
+        if type(remaining) in (int, float) and math.isfinite(remaining) else None)
+    name = type(exc).__name__
+    diagnostics = dict(template_name="anchor_context_v2", phase=phase, batch_id=batch_id,
+        anchor_count=len(request.anchors), max_anchor_count=config.graph_retrieval_max_anchors,
+        exception_type=name if re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,63}", name) else "Exception",
+        neo4j_code=_error_code(exc), elapsed_ms=round(elapsed, 3),
+        remaining_budget_ms=round(remaining, 3) if remaining is not None else None,
+        query_status=status, reason=reason, anchor_index=anchor_index)
+    logger.warning("Graph retrieval failed (%s): %s", status,
+        json.dumps(diagnostics, sort_keys=True, allow_nan=False),
+        extra={"event": "graph_retrieval_failure", "graph_diagnostics": diagnostics})
 
 
 class Neo4jRepository:
@@ -63,156 +103,158 @@ class Neo4jRepository:
             except Exception:
                 logger.warning("Graph driver close failed.")
 
-    def fetch_table_context(self, request: GraphRetrievalRequest) -> tuple[GraphAnchorResult, ...]:
+    def fetch_anchor_context(self, request: GraphRetrievalRequest) -> tuple[GraphAnchorResult, ...]:
         config = self._settings
         if not config.graph_retrieval_enabled:
-            return tuple(GraphAnchorResult(ref=ref, status="disabled") for ref in request.anchors)
-        prepared: dict[str, GraphAnchorResult] = {}
-        anchors = []
-        for ref in request.anchors:
-            status = unsupported_ref_status(ref)
-            if status is None and len(anchors) >= config.graph_retrieval_max_anchors:
-                status = "limit_exceeded"
-            if status is None:
-                anchors.append(ref)
-            else:
-                prepared[ref.anchor_id] = GraphAnchorResult(ref=ref, status=status)
-        if anchors:
-            prepared.update(self._fetch(request.graph_id, anchors))
-        return tuple(replace(prepared[ref.anchor_id], provenance=tuple(
-            item for item in request.provenance if item.anchor_id == ref.anchor_id
-        )) for ref in request.anchors)
-
-    def _fetch(self, graph_id: str, anchors: list[KGRef]) -> dict[str, GraphAnchorResult]:
-        config = self._settings
+            return tuple(GraphAnchorResult(a, "disabled") for a in request.anchors)
+        if len(request.anchors) > config.graph_retrieval_max_anchors:
+            return tuple(GraphAnchorResult(a, "limit_exceeded") for a in request.anchors)
+        started, batch_id, phase = time.monotonic(), uuid4().hex, "connect"
+        first = request.anchors[0]
+        source = first.source
+        pack = template()
+        params = dict(graph_id=first.ref.graph_id, document_id=source.document_id,
+            source_version=source.source_version, graph_build_id=source.graph_build_id,
+            source_path=source.source_path, payload_sha256=source.payload_sha256,
+            template_version=source.template_version,
+            anchors=[dict(anchor_id=a.ref.anchor_id, anchor_type=a.ref.anchor_type) for a in request.anchors],
+            entity_types=pack["entity_type_whitelist"], relation_specs=pack["relation_type_whitelist"],
+            entity_fetch_limit=config.graph_retrieval_max_entities_per_anchor + 1,
+            relationship_fetch_limit=config.graph_retrieval_max_relationships_per_anchor + 1)
         try:
             from neo4j import Query, READ_ACCESS
-            driver = self._get_driver()
-            with driver.session(database=config.neo4j_database, default_access_mode=READ_ACCESS,
-                                disable_auto_commit_retries=True) as session:
-                cursor = session.run(
-                    Query(resolve_template("table_context_v1"),
-                          timeout=config.graph_retrieval_query_timeout_seconds),
-                    parameters={
-                        "graph_id": graph_id,
-                        "anchors": [{"anchor_id": ref.anchor_id, "table_ref": ref.table_ref} for ref in anchors],
-                        "max_entities": config.graph_retrieval_max_entities_per_anchor,
-                        "entity_fetch_limit": config.graph_retrieval_max_entities_per_anchor + 1,
-                        "relationship_fetch_limit": config.graph_retrieval_max_relationships_per_anchor + 1,
-                    },
-                )
+            with self._get_driver().session(database=config.neo4j_database, default_access_mode=READ_ACCESS,
+                    disable_auto_commit_retries=True) as session:
+                phase = "query"
+                cursor = session.run(Query(resolve_template("anchor_context_v2"),
+                    timeout=config.graph_retrieval_query_timeout_seconds), parameters=params)
+                phase = "read_result"
                 rows = []
                 for record in cursor:
                     rows.append(dict(record))
-                    if len(rows) > len(anchors):
+                    if len(rows) > len(request.anchors):
                         raise ValueError("Unexpected graph result cardinality")
-            grouped: dict[str, list[dict]] = {}
+            phase = "validate_result"
+            grouped = {}
             for row in rows:
+                if row["anchor_id"] not in {a.ref.anchor_id for a in request.anchors}:
+                    raise ValueError("Unexpected graph anchor")
                 grouped.setdefault(row["anchor_id"], []).append(row)
         except Exception as exc:
             status = "timeout" if _is_timeout(exc) else "unavailable"
-            logger.warning("Graph retrieval timed out." if status == "timeout" else "Graph retrieval unavailable.")
-            return {ref.anchor_id: GraphAnchorResult(ref=ref, status=status) for ref in anchors}
-
-        result = {}
-        for ref in anchors:
-            matches = grouped.get(ref.anchor_id, [])
+            _log_failure(exc, request=request, config=config, batch_id=batch_id, started=started,
+                phase=phase, status=status, reason="neo4j_query_error")
+            return tuple(GraphAnchorResult(a, status) for a in request.anchors)
+        result = []
+        for anchor_index, a in enumerate(request.anchors):
+            matches = grouped.get(a.ref.anchor_id, [])
             try:
-                if not matches:
-                    item = GraphAnchorResult(ref=ref, status="not_found")
-                elif len(matches) != 1:
-                    item = GraphAnchorResult(ref=ref, status="ambiguous")
-                else:
-                    item = self._decode(ref, matches[0])
-            except (ValueError, TypeError, KeyError):
-                item = GraphAnchorResult(ref=ref, status="unavailable")
-            result[ref.anchor_id] = replace(item, template_name="table_context_v1")
-        return result
+                item = (self._decode(a, matches[0], pack) if len(matches) == 1 else
+                        GraphAnchorResult(a, "ambiguous" if matches else "not_found"))
+            except (ValueError, KeyError, TypeError, RecursionError) as exc:
+                _log_failure(exc, request=request, config=config, batch_id=batch_id, started=started,
+                    phase="decode", status="unavailable", reason=_decode_reason(exc), anchor_index=anchor_index)
+                item = GraphAnchorResult(a, "unavailable")
+            result.append(item)
+        return tuple(result)
 
-    def _decode(self, ref: KGRef, row: dict) -> GraphAnchorResult:
-        if row["graph_id"] != ref.graph_id:
-            raise ValueError("Graph identity mismatch")
+    def _decode(self, binding, row, pack):
+        ref, source = binding.ref, binding.source
         count = row["candidate_count"]
-        if type(count) is not int or count not in {0, 1, 2}:
-            raise ValueError("Invalid candidate count")
-        if count == 0:
-            return GraphAnchorResult(ref=ref, status="not_found")
-        if count == 2 or row["shared_document"] is True:
-            return GraphAnchorResult(ref=ref, status="ambiguous")
-        if row["shared_document"] is not False:
-            raise ValueError("Shared document isolation not proven")
-        raw_doc, raw_table = row["document"], row["table"]
-        document = GraphDocument(_string(raw_doc, "doc_id"), _optional_string(raw_doc, "source_pdf"),
-                                 _optional_string(raw_doc, "source_type"))
-        table = GraphTable(_string(raw_table, "table_id"), _string(raw_table, "table_ref"),
-                           _integer(raw_table, "page"), _integer(raw_table, "table_index"))
-        if table.table_ref != ref.table_ref or table.table_id != f"{document.doc_id}_{table.table_ref}":
-            raise ValueError("Table identity mismatch")
-        nodes: dict[str, GraphEntity] = {}
-        for value in _maps(row, "entities"):
-            if value.get("doc_id") != document.doc_id or value.get("table_ref") != table.table_ref:
-                continue
-            node = GraphEntity(_string(value, "id"), _optional_string(value, "name"),
-                               _optional_string(value, "entity_type"), document.doc_id,
-                               table.table_ref, _integer(value, "page"))
-            if node.id in nodes and node != nodes[node.id]:
-                raise ValueError("Conflicting entity identity")
-            nodes[node.id] = node
-        entity_limit = self._settings.graph_retrieval_max_entities_per_anchor
-        entities_truncated = len(nodes) > entity_limit
-        entities = tuple(sorted(nodes.values(), key=lambda node: node.id)[:entity_limit])
-        selected_ids = {node.id for node in entities}
-        edges = set()
-        for value in _maps(row, "relationships"):
-            if (value.get("graph_id") != ref.graph_id or value.get("doc_id") != document.doc_id
-                    or value.get("type") not in RELATIONSHIP_TYPES
-                    or value.get("source_entity_id") not in selected_ids
-                    or value.get("target_entity_id") not in selected_ids):
-                continue
-            edges.add(GraphRelationship(*(_string(value, key) for key in
-                ("type", "source_entity_id", "target_entity_id", "graph_id", "doc_id"))))
-        relationship_limit = self._settings.graph_retrieval_max_relationships_per_anchor
-        relationships_truncated = len(edges) > relationship_limit
-        relationships = tuple(sorted(edges, key=lambda edge:
-            (edge.source_entity_id, edge.type, edge.target_entity_id))[:relationship_limit])
-        return GraphAnchorResult(
-            ref=ref, status="truncated" if entities_truncated or relationships_truncated else "success",
-            document=document, table=table, entities=entities, relationships=relationships,
-            truncation=GraphTruncation(entities_truncated, relationships_truncated, entities_truncated),
-        )
+        if type(count) is not int or count not in (0, 1, 2):
+            raise ValueError("Invalid graph count")
+        if count != 1:
+            return GraphAnchorResult(binding, "ambiguous" if count else "not_found")
+        graph = row["graph"]
+        expected = dict(graph_id=ref.graph_id, graph_build_id=source.graph_build_id, document_id=source.document_id,
+            source_version=source.source_version, payload_sha256=source.payload_sha256, source_path=source.source_path,
+            template=source.template_version, graph_schema_version=2, publication_status="built")
+        if any(graph.get(k) != v for k, v in expected.items()):
+            raise ValueError("Graph ownership mismatch")
+        raw_entities, raw_edges = _maps(row, "entities"), _maps(row, "relationships")
+        if (len(raw_entities) > self._settings.graph_retrieval_max_entities_per_anchor
+                or len(raw_edges) > self._settings.graph_retrieval_max_relationships_per_anchor):
+            return GraphAnchorResult(binding, "truncated")
+        nodes, edges = {}, {}
+        for value in raw_entities:
+            _owned(value, binding)
+            ident, kind = _string(value, "entity_id"), _string(value, "entity_type")
+            if (value.get("anchor_type") != ref.anchor_type or kind not in pack["entity_type_whitelist"]
+                    or not ident.startswith(ref.anchor_id + "::")):
+                raise ValueError("Entity identity/type mismatch")
+            props = _properties(value, binding)
+            if props.get("anchor_type") != ref.anchor_type:
+                raise ValueError("Entity property identity mismatch")
+            node = GraphEntity(ident, _string(value, "name"), kind, _business_properties(props))
+            if ident in nodes:
+                raise ValueError("Duplicate entity identity")
+            nodes[ident] = node
+        for value in raw_edges:
+            _owned(value, binding)
+            ident, kind = _string(value, "rel_id"), _string(value, "relation_type")
+            left, right = _string(value, "source_entity_id"), _string(value, "target_entity_id")
+            if (left not in nodes or right not in nodes or ident != f"{left}::{kind}::{right}"
+                    or not relation_allowed(kind, nodes[left].entity_type, nodes[right].entity_type, pack)):
+                raise ValueError("Relationship endpoint/type mismatch")
+            edge = GraphRelationship(ident, kind, left, right, _business_properties(_properties(value, binding)))
+            if ident in edges:
+                raise ValueError("Duplicate relationship identity")
+            edges[ident] = edge
+        if not nodes or not edges:
+            return GraphAnchorResult(binding, "not_found")
+        return GraphAnchorResult(binding, "success", tuple(nodes[k] for k in sorted(nodes)),
+                                 tuple(edges[k] for k in sorted(edges)))
 
 
-def _string(value: dict, key: str) -> str:
+def _owned(value, binding):
+    if any(value.get(k) != v for k, v in dict(graph_id=binding.ref.graph_id,
+            graph_build_id=binding.source.graph_build_id, anchor_id=binding.ref.anchor_id).items()):
+        raise ValueError("Cross-graph/anchor data")
+
+
+def _properties(value, binding):
+    raw = _string(value, "properties_json", limit=65536)
+    if len(raw.encode("utf-8")) > 65536:
+        raise ValueError("Graph property budget exceeded")
+    def pairs(items):
+        obj = {}
+        for k, v in items:
+            if k in obj:
+                raise ValueError("Duplicate property")
+            obj[k] = v
+        return obj
+    def invalid_constant(value):
+        raise ValueError("Non-finite graph property")
+    props = json.loads(raw, object_pairs_hook=pairs, parse_constant=invalid_constant)
+    json.dumps(props, allow_nan=False)  # Also rejects overflowing exponents such as 1e999.
+    if (not isinstance(props, dict) or props.get("graph_id") != binding.ref.graph_id
+            or props.get("anchor_id") != binding.ref.anchor_id):
+        raise ValueError("Graph property ownership mismatch")
+    return props
+
+
+def _business_properties(props):
+    # Preserve whole value/condition/provenance objects. Only control identity is projected away.
+    return {k: v for k, v in props.items() if k not in
+            {"graph_id", "anchor_id", "anchor_type", "local_ref", "table_ref", "知识编码"}}
+
+
+def _string(value, key, *, limit=2048):
     item = value[key]
-    if not isinstance(item, str) or not item.strip():
+    if not isinstance(item, str) or not item.strip() or len(item) > limit:
         raise ValueError("Invalid graph scalar")
     return item
 
 
-def _optional_string(value: dict, key: str) -> str | None:
-    item = value.get(key)
-    if item is not None and not isinstance(item, str):
-        raise ValueError("Invalid graph scalar")
-    return item
-
-
-def _integer(value: dict, key: str) -> int | None:
-    item = value.get(key)
-    if item is not None and type(item) is not int:
-        raise ValueError("Invalid graph scalar")
-    return item
-
-
-def _maps(row: dict, key: str) -> list[dict]:
+def _maps(row, key):
     items = row[key]
     if not isinstance(items, list) or any(type(item) is not dict for item in items):
         raise ValueError("Graph result must contain plain maps")
     return items
 
 
-def _is_timeout(exc: Exception) -> bool:
-    # Never inspect or forward server error messages, queries or credentials.
-    return isinstance(exc, TimeoutError) or getattr(exc, "code", "") in {
+def _is_timeout(exc):
+    return isinstance(exc, TimeoutError) or _error_code(exc) in {
         "Neo.ClientError.Transaction.TransactionTimedOut",
         "Neo.ClientError.Transaction.TransactionTimedOutClientConfiguration",
         "Neo.TransientError.Transaction.TransactionTimedOut",

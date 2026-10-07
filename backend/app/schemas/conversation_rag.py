@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
 from app.rag.citations import RagCitation
 from app.rag.context_builder import RagContextChunk
-from app.rag.graph_context_builder import GraphContext, GraphEvidence
+from app.rag.graph_context_builder import GraphContext, GraphEvidence, GraphDiagnostic
 from app.schemas.conversation_persistence import PersistenceMetrics
 from app.services.hybrid_search import HybridSearchItem
 
@@ -47,6 +47,9 @@ class EvidenceDetails(ClosedModel):
     graph_enabled: bool
     graph_triggered: bool
     graph_truncated: bool
+    graph_schema_version: Literal[2] | None = None
+    graph_diagnostics: tuple[GraphDiagnostic, ...] = ()
+    graph_source_error: Key | None = None
     input_estimated_tokens: int = Field(ge=0)
     budget_basis: Literal["estimated_utf8_bytes_v1"] = "estimated_utf8_bytes_v1"
     prompt_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
@@ -81,6 +84,7 @@ class CitationPayload(ClosedModel):
 
 
 class GraphPayload(ClosedModel):
+    schema_version: Literal[2] = 2
     evidence: GraphEvidence
 
 
@@ -99,3 +103,12 @@ class StagedConversationResult:
     llm_provider: str | None
     llm_model: str | None
     checkpoint_complete: bool = False
+
+
+def read_graph_payload(payload: dict) -> GraphEvidence:
+    if type(payload.get("schema_version")) is not int or payload.get("schema_version") != 2:
+        from app.services.conversation_repository import ConversationError
+        raise ConversationError("QA_GRAPH_EVIDENCE_VERSION_UNSUPPORTED",
+            "旧版图谱证据仅保留为历史记录，无法恢复执行；请发起新一轮检索。", status_code=409)
+    import json
+    return GraphPayload.model_validate_json(json.dumps(payload)).evidence

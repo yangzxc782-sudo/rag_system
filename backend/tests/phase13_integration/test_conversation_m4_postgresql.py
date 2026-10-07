@@ -381,28 +381,8 @@ def test_lost_lock_connection_and_late_executor_are_fenced(m4_engine, api_chat, 
         pool.close()
 
 
-def test_published_graph_source_redaction_keeps_independent_citation(m4_engine, monkeypatch):
-    from test_rag_graph_fusion import graph_service
-    from phase13_m2_support import settings_for
-    rows = [source(m4_engine, n=i) for i in (1, 2)]
-    search = install_search(monkeypatch, rows)
-    graph_service_fake, _ = graph_service(settings_for(graph_retrieval_enabled=True))
-    graph, pool, provider = runtime(m4_engine, graph_retrieval=graph_service_fake,
-                                   graph_retrieval_enabled=True, conversation_answer_graph_tokens=4096)
-    service = Conversations(graph)
-    try:
-        sid, req = new_session(service), question()
-        _, initial = service.submit(sid, req)
-        assert initial.result.graph.evidence
-        redact(m4_engine, rows[0]["document_id"])
-        _, replay = service.submit(sid, req)
-        assert replay.result.answer == ANSWER and not replay.result.graph.evidence
-        assert len(replay.result.citations) == 1 and replay.result.citations[0].citation_id == 2
-        assert any(s.kind == "graph" and s.status == "source_deleted" for s in replay.result.sources)
-        assert len(search.calls) == len(provider.answer_calls) == 1
-    finally:
-        service.close()
-        pool.close()
+# New graph schema/source redaction: test_graph_v2_postgresql.py. Existing text
+# publication, independent-citation and deletion guards remain in this suite.
 
 
 def test_real_http_api_and_process_restart(phase13_root_engine, m4_engine, api_chat):

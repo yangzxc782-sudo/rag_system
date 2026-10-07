@@ -9,7 +9,7 @@ from sqlalchemy import func, select
 
 from app.core.errors import BusinessError, DOCUMENT_DELETION_IN_PROGRESS, DOCUMENT_PARSE_FAILED
 from app.ingestion.pdf_cleaner import render_cleaned_block
-from app.models import DocumentAsset, DocumentBlock, DocumentChunk, DocumentChunkBlock, DocumentParseRun
+from app.models import SourceDocumentVersion, DocumentAsset, DocumentBlock, DocumentChunk, DocumentChunkBlock, DocumentParseRun
 from app.services import document_parsing
 from app.services.document_deletion_manifest import build_document_deletion_manifest
 from test_document_chunk_writer import db, document  # local SQLite fixtures, no external database
@@ -45,7 +45,7 @@ def dependencies(monkeypatch, *, enabled=True):
     return client, uploads
 
 
-def test_cleaned_markdown_is_only_new_file_and_matches_real_persisted_blocks_and_chunks(monkeypatch, db, document):
+def test_cleaned_source_and_directory_persist_without_chunks(monkeypatch, db, document):
     client, uploads = dependencies(monkeypatch)
     document.original_filename = "ISO 9001.pdf"
     document.file_type = ".pdf"
@@ -59,7 +59,7 @@ def test_cleaned_markdown_is_only_new_file_and_matches_real_persisted_blocks_and
     assets = list(db.scalars(select(DocumentAsset)))
     mapping_count = db.scalar(select(func.count()).select_from(DocumentChunkBlock))
     files = {upload["object_key"].split("/")[-1]: upload["content"] for upload in uploads}
-    assert set(files) == {"output.md", "output.json", "cleaned.md"}
+    assert set(files) == {"output.md", "output.json", "cleaned.md", "source-map.json"}
     assert files["output.md"] == original.result_files[0].content
     assert files["output.json"] == original.result_files[1].content
     assert client.result == original
@@ -67,16 +67,18 @@ def test_cleaned_markdown_is_only_new_file_and_matches_real_persisted_blocks_and
     assert [b.block_index for b in blocks] == [2, 3, 4, 5, 8, 9]
     canonical = "\n\n".join(render_cleaned_block(b, output_prefix=run.output_prefix)[0].strip() for b in blocks)
     assert files["cleaned.md"].decode() == canonical
-    assert "\n\n".join(c.content for c in chunks) == canonical
+    assert chunks == []
+    source = db.scalar(select(SourceDocumentVersion))
+    assert source.source_version == result.source_version and source.character_count == len(canonical)
     assert "STALE" not in canonical and "REMOVE" not in canonical
     assert "350 MPa" in canonical and "450 MPa" in canonical and r"\wedge" in canonical
     assert "Measured values" in canonical
     assert blocks[1].bbox == [10, 20, 30, 40]
     assert blocks[1].page_start == 1
-    assert mapping_count == len(blocks)
+    assert mapping_count == 0
     assert all(c.embedding_status == "not_started" for c in chunks)
-    assert result.process_status == "parsed" and run.is_active
-    assert run.block_count == len(blocks) and run.asset_count == len(assets) == 3
+    assert result.process_status == "cleaned_source_ready" and run.is_active
+    assert run.block_count == len(blocks) and run.asset_count == len(assets) == 4
     assert next(a for a in assets if a.filename == "cleaned.md").asset_type == "markdown"
     # Existing deletion manifest covers both the new asset and run prefix, no new lifecycle.
     settings = SimpleNamespace(mineru_output_prefix="parsed-assets", search_index_name="casting_chunks_v1", search_index_alias="casting_chunks_current")
@@ -91,12 +93,13 @@ def test_disabled_and_non_pdf_paths_do_not_call_cleaner(monkeypatch, extension, 
     item.original_filename = f"input{extension}"
     item.file_type = extension
     monkeypatch.setattr(document_parsing, "clean_pdf_blocks", lambda *a, **kw: pytest.fail("unexpected cleaner"))
-    document_parsing.parse_document(FakeDb(document=item), DOCUMENT_ID)
-    assert len(client.requests) == 1
-    assert len(uploads) == 2
+    with pytest.raises(BusinessError):
+        document_parsing.parse_document(FakeDb(document=item), DOCUMENT_ID)
+    assert len(client.requests) == 0
+    assert uploads == []
 
 
-@pytest.mark.parametrize("failure", ["cleaner", "upload", "chunk_write", "commit"])
+@pytest.mark.parametrize("failure", ["cleaner", "upload", "verification", "commit"])
 def test_cleaning_pipeline_failure_rolls_back_all_chunks_without_new_recovery_state(monkeypatch, db, document, failure):
     client, uploads = dependencies(monkeypatch)
     document.original_filename = "input.pdf"
@@ -114,15 +117,15 @@ def test_cleaning_pipeline_failure_rolls_back_all_chunks_without_new_recovery_st
                 fail()
             uploads.append(kwargs)
         monkeypatch.setattr(document_parsing, "upload_bytes_to_minio", upload)
-    elif failure == "chunk_write":
-        monkeypatch.setattr(document_parsing, "_add_mineru_chunks", fail)
+    elif failure == "verification":
+        monkeypatch.setattr(document_parsing, "verify_frozen_source", fail)
     else:
         commit = db.commit
         calls = 0
         def fail_final_commit():
             nonlocal calls
             calls += 1
-            if calls == 2:
+            if calls == 3:
                 fail()
             return commit()
         monkeypatch.setattr(db, "commit", fail_final_commit)
@@ -130,7 +133,7 @@ def test_cleaning_pipeline_failure_rolls_back_all_chunks_without_new_recovery_st
         document_parsing.parse_document(db, document.id)
     assert error.value.code == DOCUMENT_PARSE_FAILED
     assert len(client.requests) == 1
-    for model in (DocumentBlock, DocumentAsset, DocumentChunk, DocumentChunkBlock):
+    for model in (DocumentBlock, DocumentAsset, DocumentChunk, DocumentChunkBlock, SourceDocumentVersion):
         assert db.scalar(select(func.count()).select_from(model)) == 0
     run = db.scalar(select(DocumentParseRun))
     assert run.status == "failed" and not run.is_active

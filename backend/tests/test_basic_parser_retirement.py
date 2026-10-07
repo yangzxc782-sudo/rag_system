@@ -15,8 +15,8 @@ from app.services import document_parsing, documents
 from test_document_parsing import DOCUMENT_ID, FakeDb, fake_document
 
 
-MINERU_EXTENSIONS = (".pdf", ".doc", ".docx", ".xls", ".xlsx", ".png", ".jpg", ".jpeg", ".bmp", ".webp")
-RETIRED_EXTENSIONS = (".txt", ".csv", ".tif", ".tiff")
+MINERU_EXTENSIONS = (".pdf", ".PDF")
+RETIRED_EXTENSIONS = (".md", ".MD", ".doc", ".docx", ".xls", ".xlsx", ".png", ".jpg", ".jpeg", ".bmp", ".webp", ".txt", ".csv", ".tif", ".tiff")
 
 
 def unexpected_io(*args, **kwargs):
@@ -36,7 +36,7 @@ def test_supported_upload_types_cannot_be_expanded_by_legacy_env():
         document_parser_provider="mineru_api",
         upload_allowed_extensions=".pdf,.md,.txt,.csv,.tif,.tiff,.exe",
     )
-    assert settings.upload_allowed_extension_set == {".pdf", ".md"}
+    assert settings.upload_allowed_extension_set == {".pdf"}
 
 
 def test_production_has_no_basic_modules_or_imports():
@@ -65,39 +65,6 @@ def isolated_routing(monkeypatch):
     monkeypatch.setattr(documents, "upload_bytes_to_minio", unexpected_io)
     monkeypatch.setitem(app.dependency_overrides, get_db, lambda: db)
     return document, db
-
-
-@pytest.mark.parametrize("extension", [".md", ".MD"])
-def test_markdown_parse_uses_native_route_without_mineru(isolated_routing, monkeypatch, extension):
-    from app.models.document_chunk import DocumentChunk
-    from test_document_parsing_mineru import FakeDb as ParseDb
-
-    document, _db = isolated_routing
-    db = ParseDb(document=document)
-    monkeypatch.setitem(app.dependency_overrides, get_db, lambda: db)
-    monkeypatch.setattr(document_parsing, "get_object_bytes_from_minio", lambda **kwargs: b"# Native Markdown\n")
-    document.original_filename = "source" + extension
-    document.file_type = extension
-    response = TestClient(app).post(f"/api/v1/documents/{DOCUMENT_ID}/parse")
-    assert response.status_code == 200
-    assert response.json()["data"]["parser_name"] == "markdown_native"
-    assert document.process_status == "parsed"
-    assert db.parse_runs == {}
-    assert db.added_all and all(isinstance(item, DocumentChunk) for item in db.added_all)
-    assert all(item.parse_run_id is None and item.block_mappings == [] for item in db.added_all)
-
-
-def test_markdown_upload_remains_available_without_parsing(isolated_routing, monkeypatch):
-    _document, db = isolated_routing
-    uploads = []
-    monkeypatch.setattr(documents, "upload_bytes_to_minio", lambda **kwargs: uploads.append(kwargs))
-    result = documents.create_document_from_upload(
-        db, original_filename="source.md", content=b"# Source", content_type="text/markdown"
-    )
-    assert result.file_type == ".md"
-    assert result.process_status == "uploaded"
-    assert len(uploads) == 1
-    assert uploads[0]["object_key"].endswith(".md")
 
 
 @pytest.mark.parametrize("extension", RETIRED_EXTENSIONS)
@@ -133,7 +100,8 @@ def test_supported_non_markdown_document_routes_to_existing_mineru(isolated_rout
     expected = object()
     calls = []
 
-    def mineru_route(session, source, settings):
+    def mineru_route(session, source, settings, *, processing_lease=None):
+        assert processing_lease is None
         calls.append((session, source, settings.document_parser_provider))
         return expected
 

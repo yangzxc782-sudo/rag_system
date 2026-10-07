@@ -104,6 +104,7 @@ def _document(deletion_status: str = "normal") -> SimpleNamespace:
     return SimpleNamespace(
         id=DOCUMENT_ID,
         deletion_status=deletion_status,
+        process_status="uploaded",
         updated_at=NOW,
     )
 

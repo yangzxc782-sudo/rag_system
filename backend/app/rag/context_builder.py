@@ -23,6 +23,15 @@ class RagContextChunk:
     keyword_score: float | None
     vector_score: float | None
     was_truncated: bool = False
+    source_version: str | None = None
+    graph_build_id: str | None = None
+    chunk_set_id: str | None = None
+    source_start: int | None = None
+    source_end: int | None = None
+    content_sha256: str | None = None
+    embedding_fingerprint: str | None = None
+    effective_start: int | None = None
+    effective_end: int | None = None
 
 
 @dataclass(frozen=True)
@@ -124,6 +133,8 @@ def _build_context_chunk(
     content: str,
     was_truncated: bool,
 ) -> RagContextChunk:
+    start = getattr(item, "source_start", None)
+    retained = max(0, len(content) - len(TRUNCATION_MARKER)) if was_truncated else len(content)
     return RagContextChunk(
         citation_id=citation_id,
         chunk_id=str(getattr(item, "chunk_id", "") or ""),
@@ -137,6 +148,10 @@ def _build_context_chunk(
         keyword_score=getattr(item, "keyword_score", None),
         vector_score=getattr(item, "vector_score", None),
         was_truncated=was_truncated,
+        effective_start=start,
+        effective_end=start + retained if type(start) is int else None,
+        **{key: getattr(item, key, None) for key in ("source_version", "graph_build_id", "chunk_set_id",
+            "source_start", "source_end", "content_sha256", "embedding_fingerprint")},
     )
 
 

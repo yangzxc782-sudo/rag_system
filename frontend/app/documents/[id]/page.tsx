@@ -2,10 +2,12 @@ import Link from "next/link";
 
 import AppShell from "@/components/AppShell";
 import DocumentChunkList from "@/components/DocumentChunkList";
+import DocumentChunkSetPanel from "@/components/DocumentChunkSetPanel";
+import { chunkSetRequest, FROZEN_STATUSES, type ChunkSets } from "@/lib/chunk-sets";
 import DocumentDeletionControls from "@/components/DocumentDeletionControls";
 import DocumentDetailView from "@/components/DocumentDetail";
 import DocumentEmbeddingPanel from "@/components/DocumentEmbeddingPanel";
-import DocumentParseButton from "@/components/DocumentParseButton";
+import DocumentProcessingPanel from "@/components/DocumentProcessingPanel";
 import DocumentParseResults from "@/components/DocumentParseResults";
 import {
   getDocument,
@@ -28,13 +30,20 @@ export default async function DocumentDetailPage({ params }: DocumentDetailPageP
   const documentResult = await getDocument(id);
   const document = documentResult.success ? documentResult.data : null;
   const canLoadDerivedData = document?.deletion_status === "normal";
+  const versioned = FROZEN_STATUSES.includes(document?.process_status ?? "");
+  let chunkSets: ChunkSets | null = null;
+  let chunkSetError: string | null = null;
+  if (canLoadDerivedData && versioned) {
+    try { chunkSets = await chunkSetRequest<ChunkSets>(id); }
+    catch (error) { chunkSetError = error instanceof Error ? error.message : "切片版本暂不可用"; }
+  }
 
   const chunksResult = canLoadDerivedData ? await getDocumentChunks(id, { limit: 50, offset: 0 }) : null;
   const chunks = chunksResult?.success ? chunksResult.data : null;
   const chunksErrorMessage =
     chunksResult && !chunksResult.success ? (chunksResult.error?.message ?? "文档切片暂时不可用。") : null;
 
-  const embeddingStatusResult = canLoadDerivedData ? await getDocumentEmbeddingStatus(id) : null;
+  const embeddingStatusResult = canLoadDerivedData && !versioned ? await getDocumentEmbeddingStatus(id) : null;
   const embeddingStatus = embeddingStatusResult?.success ? embeddingStatusResult.data : null;
   const embeddingStatusErrorMessage =
     embeddingStatusResult && !embeddingStatusResult.success
@@ -103,7 +112,8 @@ export default async function DocumentDetailPage({ params }: DocumentDetailPageP
 
         {document?.deletion_status === "normal" ? (
           <section className="grid gap-5">
-            <DocumentParseButton documentId={document.id} disabled={false} />
+            {document.original_filename.toLowerCase().endsWith(".pdf") ? <DocumentProcessingPanel documentId={document.id} /> :
+              <p className="text-sm text-slate-600">历史非 PDF 文档保留供查看，不支持新版处理。</p>}
             <DocumentParseResults
               documentId={document.id}
               status={parseStatus}
@@ -112,18 +122,18 @@ export default async function DocumentDetailPage({ params }: DocumentDetailPageP
               assets={assets}
               errorMessage={parseResultsErrorMessage}
             />
-            <DocumentEmbeddingPanel
+            {versioned ? <DocumentChunkSetPanel documentId={document.id} initial={chunkSets} errorMessage={chunkSetError} /> : <DocumentEmbeddingPanel
               documentId={document.id}
               status={embeddingStatus}
               errorMessage={embeddingStatusErrorMessage}
               disabled={false}
-            />
+            />}
 
             <div className="grid gap-3">
               <div>
                 <h2 className="text-xl font-semibold text-slate-950">切片结果</h2>
                 <p className="mt-1 text-sm leading-6 text-slate-600">
-                  查看第三阶段生成的基础 chunks、长度统计和来源元数据。
+                  查看当前已发布版本的检索切片、长度统计和来源元数据；历史版本保留供原有引用使用。
                 </p>
               </div>
               <DocumentChunkList data={chunks} errorMessage={chunksErrorMessage} />

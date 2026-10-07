@@ -34,6 +34,13 @@ export type HybridSearchItem = {
   matched_keywords: string[];
   embedding_model: string | null;
   embedding_dim: number | null;
+  source_version?: string | null;
+  graph_build_id?: string | null;
+  chunk_set_id?: string | null;
+  source_start?: number | null;
+  source_end?: number | null;
+  content_sha256?: string | null;
+  embedding_fingerprint?: string | null;
 };
 
 export type HybridSearchData = {

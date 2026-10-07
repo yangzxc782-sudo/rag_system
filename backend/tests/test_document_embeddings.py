@@ -90,7 +90,7 @@ class FakeProvider:
 
 
 def fake_document() -> SimpleNamespace:
-    return SimpleNamespace(id=DOCUMENT_ID, deletion_status="normal")
+    return SimpleNamespace(id=DOCUMENT_ID, deletion_status="normal", process_status="parsed")
 
 
 def fake_chunk(

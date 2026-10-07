@@ -8,7 +8,7 @@ from uuid import uuid4
 
 import pytest
 from pgvector.sqlalchemy import VECTOR
-from sqlalchemy import JSON, DefaultClause, MetaData, create_engine, event, func, select, text
+from sqlalchemy import CheckConstraint, JSON, DefaultClause, MetaData, create_engine, event, func, select, text
 from sqlalchemy.dialects.postgresql import JSONB, dialect
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
@@ -17,12 +17,10 @@ from app.db.base import Base
 from app.models import Document, DocumentBlock, DocumentChunk, DocumentChunkBlock, DocumentParseRun
 from app.ingestion.block_chunker import BlockChunkerConfig, build_block_aware_chunks
 from app.ingestion.chunk_drafts import ChunkBlockRef
-from app.ingestion.markdown.chunker import build_markdown_chunks
-from app.ingestion.markdown.parser import parse_markdown
+from pdf_source_fixtures import pdf_draft
 from app.ingestion.mineru.normalizer import normalize_mineru_result
 from app.services.document_blocks import add_document_blocks
 from test_document_parsing_mineru import fake_parse_result
-from test_kg_anchor_parser import start, end
 
 
 class TrackedSession(Session):
@@ -52,8 +50,22 @@ def db():
     with engine.connect() as connection:
         connection.exec_driver_sql("PRAGMA foreign_keys=ON")
     local = MetaData()
+    # This fixture verifies the unchanged legacy writer/cleaner, not M0's
+    # PostgreSQL-specific version guards. Those have a separately gated suite.
+    m0_tables = {"document_graph_builds", "kg_extraction_units",
+                 "document_chunk_sets", "document_processing_jobs"}
+    m0_constraints = {"fk_documents_current_chunk_set", "fk_document_chunks_set_owner",
+                      "fk_document_chunks_source_parse", "ck_document_chunks_source_contract"}
     for table in Base.metadata.sorted_tables:
+        if table.name in m0_tables:
+            continue
         copied = table.to_metadata(local)
+        for constraint in tuple(copied.constraints):
+            if constraint.name in m0_constraints or (table.name == "document_source_versions" and isinstance(constraint, CheckConstraint)):
+                copied.constraints.remove(constraint)
+                for foreign_key in getattr(constraint, "elements", ()):
+                    copied.foreign_keys.discard(foreign_key)
+                    foreign_key.parent.foreign_keys.discard(foreign_key)
         for column in copied.columns:
             if isinstance(column.type, (JSONB, VECTOR)):
                 column.type = JSON()
@@ -68,9 +80,9 @@ def db():
 @pytest.fixture
 def document(db):
     identity = uuid4()
-    item = Document(id=identity, original_filename="standard.md", file_type=".md",
-                    mime_type="text/markdown", bucket_name="m3-test-documents",
-                    object_key=f"raw/2026/09/{identity}.md", process_status="uploaded")
+    item = Document(id=identity, original_filename="standard.pdf", file_type=".pdf",
+                    mime_type="application/pdf", bucket_name="m3-test-documents",
+                    object_key=f"raw/2026/09/{identity}.pdf", process_status="uploaded")
     db.add(item)
     db.commit()
     return item
@@ -92,12 +104,6 @@ def adapt(result):
     return adapt_mineru_chunks(result)
 
 
-def markdown_drafts():
-    source = start("A") + start("B", anchor_type="table", table_line="table_ref: T1\n")
-    source += "| Si | wt.% |\n| --- | --- |\n| ≥6.50 | ≤7.50 |\n" + end("B") + end("A")
-    return build_markdown_chunks(parse_markdown(source))
-
-
 def mineru_result(db, document, size=120, overlap=0):
     run = DocumentParseRun(id=uuid4(), document_id=document.id, parser_provider="mineru_api")
     db.add(run)
@@ -111,8 +117,8 @@ def mineru_result(db, document, size=120, overlap=0):
     return result, run
 
 
-def test_markdown_writer_persists_null_run_empty_mappings_and_full_metadata(db, document):
-    drafts = markdown_drafts()
+def test_shared_writer_preserves_null_run_and_pdf_fixture_metadata(db, document):
+    drafts = [pdf_draft()]
     before = deepcopy(asdict(drafts[0]))
     commits = db.commits
     chunk, = write(db, document.id, drafts)
@@ -125,13 +131,14 @@ def test_markdown_writer_persists_null_run_empty_mappings_and_full_metadata(db, 
     db.expire_all()
     stored = db.get(DocumentChunk, chunk.id)
     assert stored.source_metadata == before["source_metadata"]
-    assert stored.source_metadata["kg_refs"][0]["table_ref"] is None
+    assert stored.source_metadata["kg_refs"][0]["clause_ref"] == "C0001"
+    assert "table_ref" not in stored.source_metadata["kg_refs"][0]
     assert isinstance(stored.source_metadata["kg_refs"], list)
-    assert stored.source_metadata["kg_refs"][1]["table_ref"] == "T1"
-    assert stored.chunk_method == "markdown_ast" and stored.content_format == "markdown"
+    assert stored.source_metadata["kg_refs"][1]["table_ref"] == "T0001"
+    assert stored.chunk_method == "pdf_fixture" and stored.content_format == "markdown"
     assert document.process_status == "uploaded"  # Writer owns no document status.
     drafts[0].source_metadata["kg_refs"][0]["graph_id"] = "mutated"
-    assert stored.source_metadata["kg_refs"][0]["graph_id"] == "G::2026"
+    assert stored.source_metadata["kg_refs"][0]["graph_id"] == "G"
 
 
 def legacy_reference(result, document_id, run_id):

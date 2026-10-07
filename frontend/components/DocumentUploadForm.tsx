@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 
 import { uploadDocument } from "@/lib/documents";
 
-const ACCEPTED_FILE_TYPES = ".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg,.bmp,.webp,.md";
+const ACCEPTED_FILE_TYPES = ".pdf";
 
 export default function DocumentUploadForm() {
   const router = useRouter();
@@ -23,6 +23,10 @@ export default function DocumentUploadForm() {
     const file = fileInputRef.current?.files?.[0];
     if (!file) {
       setError("请选择一个文件。");
+      return;
+    }
+    if (!file.name.toLowerCase().endsWith(".pdf")) {
+      setError("仅支持 PDF 文档。");
       return;
     }
 
@@ -45,7 +49,7 @@ export default function DocumentUploadForm() {
       <div className="border-b border-slate-200 px-5 py-4">
         <h2 className="text-lg font-semibold text-slate-950">上传文档</h2>
         <p className="mt-1 text-sm leading-6 text-slate-600">
-          支持 PDF、Word、Excel、PNG、JPG、JPEG、BMP、WebP 和 Markdown。Markdown 暂仅支持上传，解析尚未开放。
+          仅支持 PDF 文档，解析后保存清洗正文和来源信息。
         </p>
       </div>
 

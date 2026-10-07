@@ -77,9 +77,9 @@ class RequestTrace:
     def _context(self, operation, *args, **kwargs):
         result = operation(*args, **kwargs)
         self.context_ids = [c.chunk_id for c in result.chunks]
-        refs, provenance = rag.extract_graph_refs(result)
-        self.expected_refs = [asdict(r) for r in refs]
-        self.expected_provenance = [asdict(p) for p in provenance]
+        anchors = self.graph.authority.resolve(result) if self.graph is not None else ()
+        self.expected_refs = [a.ref.business_metadata() for a in anchors]
+        self.expected_provenance = [asdict(p) for a in anchors for p in a.provenance]
         return result
 
     def _prompt(self, operation, *args, **kwargs):
@@ -87,10 +87,10 @@ class RequestTrace:
         self.prompt_ids = re.findall(r'^chunk_id: ([^\r\n]+)$', result.user_prompt, flags=re.MULTILINE)
         return result
 
-    def _graph(self, operation, refs, *, provenance=()):
-        self.graph_calls.append({'refs': [asdict(r) for r in refs],
-                                 'provenance': [asdict(p) for p in provenance]})
-        return operation(refs, provenance=provenance)
+    def _graph(self, operation, anchors):
+        self.graph_calls.append({'refs': [a.ref.business_metadata() for a in anchors],
+                                 'provenance': [asdict(p) for a in anchors for p in a.provenance]})
+        return operation(anchors)
 
     def verify(self, answer):
         assert len(self.hybrid_limits) == 1, 'once Hybrid'

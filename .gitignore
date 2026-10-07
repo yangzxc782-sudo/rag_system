@@ -72,3 +72,6 @@ desktop.ini
 
 # Phase 12: authorized local BGE reranker weights and download cache only
 /models/bge-reranker-v2-m3/
+
+# Local test artifacts
+backend/.test-artifacts/

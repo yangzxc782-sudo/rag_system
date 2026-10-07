@@ -469,7 +469,7 @@ def test_business_calls_reuse_cached_provider_and_shutdown_closes_its_client(
     import app.llm.provider as provider_module
     from app.main import create_app
 
-    settings = make_settings(llm_provider="local")
+    settings = make_settings(llm_provider="local", casting_design_enabled=False)
     patch_hybrid_search(monkeypatch, make_result(items=[make_item()]))
     created_clients: list[FakeSDKClient] = []
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
@@ -14,9 +14,14 @@ class DocumentParseData(BaseModel):
 
     document_id: UUID
     process_status: str
-    chunk_count: int
+    chunk_count: Literal[0]
     parser_name: str
     parser_version: str
+    parse_run_id: UUID
+    source_version: UUID
+    canonical_sha256: str
+    character_count: int
+    block_count: int
 
 
 class DocumentEmbeddingData(BaseModel):
@@ -57,6 +62,11 @@ class DocumentChunkRead(BaseModel):
     section_title: str | None = None
     chunk_type: str | None = None
     source_metadata: dict[str, Any] | None = None
+    chunk_set_id: UUID | None = None
+    source_version: UUID | None = None
+    source_start: int | None = None
+    source_end: int | None = None
+    content_sha256: str | None = None
     embedding_status: str
     created_at: datetime
     updated_at: datetime
@@ -75,6 +85,7 @@ class DocumentChunkRead(BaseModel):
             section_title=chunk.section_title,
             chunk_type=chunk.chunk_type,
             source_metadata=chunk.source_metadata,
+            **{key: chunk.__dict__.get(key) for key in ("chunk_set_id", "source_version", "source_start", "source_end", "content_sha256")},
             embedding_status=chunk.embedding_status,
             created_at=chunk.created_at,
             updated_at=chunk.updated_at,

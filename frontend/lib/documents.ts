@@ -58,9 +58,14 @@ export type DocumentDeletionApiResult = ApiEnvelope<DocumentDeletionStatusData> 
 export type DocumentParseData = {
   document_id: string;
   process_status: string;
-  chunk_count: number;
+  chunk_count: 0;
   parser_name: string;
   parser_version: string;
+  parse_run_id: string;
+  source_version: string;
+  canonical_sha256: string;
+  character_count: number;
+  block_count: number;
 };
 
 export type DocumentEmbeddingData = {
@@ -97,6 +102,11 @@ export type DocumentChunkRead = {
   section_title: string | null;
   chunk_type: string | null;
   source_metadata: Record<string, unknown> | null;
+  chunk_set_id?: string | null;
+  source_version?: string | null;
+  source_start?: number | null;
+  source_end?: number | null;
+  content_sha256?: string | null;
   embedding_status: string;
   created_at: string;
   updated_at: string;

@@ -1,18 +1,41 @@
 # 铸型工艺知识库 RAG 管理系统
 
-## 当前 ingestion 边界（2026-09-09，Phase 11 P0）
+## 当前 PDF/KG 边界（M5，2026-10-07）
 
-Basic Parser 已退出。生产解析 provider 仅接受 `DOCUMENT_PARSER_PROVIDER=mineru_api`；其他值在配置加载时拒绝。
-最终 ingestion 仅有 MinerU 与 Markdown Native。Markdown Native 尚未实现：`.md` 可上传，但 parse 返回
-`DOCUMENT_PARSER_UNAVAILABLE` / HTTP 503，且不会读写解析产物或调用 MinerU。
+上传和解析入口只接受 PDF；后端独立核对扩展名与 PDF 文件头，旧环境配置不能扩大准入。
+Markdown Native 上传、AST 解析、切片路径已退役；Markdown 仍用于内部解析和清洗产物。
 
-当前上传允许 `.pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg,.bmp,.webp,.md`。
-`.txt/.csv` 已停止支持；`.tif/.tiff` 未获当前官方 V4 上传契约支持，也明确拒绝。
-上传拒绝使用 `INVALID_FILE_TYPE` / HTTP 415；已存 unsupported 文件的 parse 同样拒绝，既有文档与 chunks 不清理。
-部署的 `UPLOAD_ALLOWED_EXTENSIONS` 只能收窄上述范围，旧 `.env` 的额外扩展名不会重新启用已退出格式。
+解析入口负责：PDF → MinerU → 既有 PDF 清洗 → 冻结正文、来源块和连续坐标目录。
+解析成功返回 `cleaned_source_ready`、`source_version`、原文字符数及 `chunk_count=0`。
+M2 已增加冻结来源后的构图服务：table/clause 连续抽取单元、分步模型调用与检查点、
+有界原子 Neo4j 写入、ready/ready_empty 封存。构图入口默认关闭（`KG_BUILD_ENABLED=false`），
+M3 增加独立 ChunkSet 任务：顺序切分、kg_refs 区间映射、向量复用/计算、独立索引验证及发布。
+M5 完整处理入口创建一个持久任务，由后台逐阶段推进；原有手动 advance 只用于未接入后台的任务。
+re-chunk 复用来源/图谱，不调用解析或构图。
+`PDF_KG_CHUNKS_ENABLED=false` 与 `PDF_KG_SEARCH_ENABLED=false` 默认分开关闭。
+本轮完成代码与离线验证，未执行真实构图、向量化或索引写入，未宣称真实端到端验收完成。
 
-详见 [Basic Retirement 审计与验收](docs/phase-11-basic-parser-retirement.md)。
-下文按阶段保存历史记录；第三阶段的 SimpleParser、字符切块与旧配置不再代表当前能力。
+使用冻结来源前须单独批准并执行 M0 数据库迁移。缺少结构时返回
+`DOCUMENT_SOURCE_SCHEMA_UNAVAILABLE`，不会调用解析器或自动迁移。
+清洗默认必需；旧配置 `PDF_CLEANING_ENABLED=false` 会阻止解析，不跳过清洗。
+构图复用项目 LLMProvider，Neo4j 写账号使用独立 `KG_NEO4J_*` 配置；唯一约束只提供
+待授权部署脚本，不在运行请求中创建或清理图。构图 API 与恢复边界见下面的阶段说明。
+旧文档、chunk、索引和会话记录保持原样；本阶段尚未切换新检索准入或处理存量 PDF。
+启用新版准入后仅检索当前已发布 ChunkSet，未升级 PDF、旧 Markdown、旧切片及暂存版本均排除；
+须先经授权准备足量新版资产再启用，空集不回退旧索引。M4 已替换旧在线图谱路径：按验证后的
+table/clause 连续来源查询 MaterialEntity/RELATES_TO；最终前缀截断重新约束锚点，完整单元覆盖
+才将图谱事实加入 prompt。API/UI 区分映射、查询和事实使用；Phase 13 使用 V2 快照并校验来源与
+原 prompt 指纹，旧快照保留为历史记录且拒绝执行恢复。Hybrid/RRF/BGE 与文本引用链保持原有语义。
+M5 新增 `POST /documents/{id}/process`、任务状态/显式重试/取消/接管入口及页面轮询。
+`DOCUMENT_PROCESSING_EXECUTOR_ENABLED=false` 默认关闭；任务、配置指纹、租约与检查点保存在
+已有 M0 表中，重启只继续排队任务，失败和过期租约需要显式重试。处理服务启用与新检索准入分别控制。
+版本化删除现已纳入原 Saga：先撤销发布与取消排队任务，再清理该文档所有版本的精确索引、图谱、
+独占对象和 SQL 依赖；不自动处理存量数据。执行中的任务及 IO 结果不确定的任务仍阻断删除。
+聊天文本保留，证据按既有规则脱敏；重切分保留历史 chunk 和引用。
+
+契约、部署边界与验收记录见 [PDF/KG 分阶段实施说明](docs/pdf-only-kg-pipeline.md)。
+完整处理 API、恢复和删除边界见 [M5 生命周期说明](docs/pdf-kg-m5-lifecycle.md)。
+下文和各旧阶段文档保留历史记录，不代表当前文档准入与解析能力。
 
 
 本项目是“铸型工艺知识库大型 RAG 系统”。第一阶段目标是建立可持续扩展的本地开发骨架，先把后端、前端、基础服务、迁移和文档边界搭清楚，不实现具体 RAG 业务功能。

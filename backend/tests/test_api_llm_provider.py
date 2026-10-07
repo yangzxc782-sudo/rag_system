@@ -861,6 +861,235 @@ def test_api_json_mode_requires_valid_json_object(content: str) -> None:
     assert exc_info.value.__context__ is None
 
 
+@pytest.mark.parametrize("content,finish_reason,code,failure_kind,top_level_type", [
+    ('{"entities":[],"relationships":[]}', "stop", None, None, None),
+    (' \n{"entities":[],"relationships":[]}\t', "stop", None, None, None),
+    ('{"entities":[],"relationships":[]}', "length", None, None, None),
+    ('```json\n{"entities":[],"relationships":[]}\n```', "stop", LLM_JSON_INVALID, "decode_error", None),
+    ('以下是结果：\n{"entities":[],"relationships":[]}', "stop", LLM_JSON_INVALID, "decode_error", None),
+    ('[]', "stop", LLM_JSON_INVALID, "top_level_not_object", "list"),
+    ('null', "stop", LLM_JSON_INVALID, "top_level_not_object", "NoneType"),
+    ('"scalar"', "stop", LLM_JSON_INVALID, "top_level_not_object", "str"),
+    ('1', "stop", LLM_JSON_INVALID, "top_level_not_object", "int"),
+    ('1.5', "stop", LLM_JSON_INVALID, "top_level_not_object", "float"),
+    ('true', "stop", LLM_JSON_INVALID, "top_level_not_object", "bool"),
+    (None, "stop", LLM_EMPTY_CONTENT, None, None),
+    ('  ', "stop", LLM_EMPTY_CONTENT, None, None),
+    ([], "stop", LLM_RESPONSE_INVALID, None, None),
+    ({"entities": []}, "stop", LLM_RESPONSE_INVALID, None, None),
+    ('{"entities":[{"name":"abc"', "length", LLM_JSON_INVALID, "decode_error", None),
+    ('{\n  "entities": ]\n}', "stop", LLM_JSON_INVALID, "decode_error", None),
+])
+def test_api_json_failure_diagnostics_preserve_acceptance(
+    content, finish_reason, code, failure_kind, top_level_type, caplog,
+):
+    completion = FakeCompletion(content=content)
+    completion.choices[0].finish_reason = finish_reason
+    client = FakeOpenAIClient(FakeCompletions(response=completion))
+    provider = APILLMProvider(api_settings(llm_remote_supports_json_mode=True, llm_max_tokens=1024), client=client)
+    request = LLMGenerateRequest.from_prompt("synthetic prompt", json_mode=True)
+    with caplog.at_level(logging.INFO):
+        if code is None:
+            result = provider.generate(request)
+            assert result.text == content
+            assert not hasattr(result, "finish_reason")  # Including valid JSON + length: unchanged result contract.
+        else:
+            with pytest.raises(BusinessError) as caught:
+                provider.generate(request)
+            assert caught.value.code == code and caught.value.status_code == 502
+            assert caught.value.__context__ is None and caught.value.__cause__ is None
+    assert client.completions.calls[0]["max_tokens"] == 1024
+    assert client.completions.calls[0]["response_format"] == {"type": "json_object"}
+    failures = [r for r in caplog.records if getattr(r, "event", None) == "llm_generation_failed"]
+    if code is None:
+        assert not failures
+        return
+    record, = failures
+    if code != LLM_JSON_INVALID:
+        assert not hasattr(record, "json_failure_kind")
+        return
+    # Diagnostics remain log-only; public error detail/traceback shape is unchanged.
+    assert caught.value.detail == {"field": "choices[0].message.content"}
+    assert record.json_failure_kind == failure_kind
+    assert record.finish_reason == finish_reason
+    assert record.content_type == "str" and record.content_length == len(content)
+    assert record.provider == "api" and record.model == "remote-model"
+    assert record.json_mode is True and record.effective_max_tokens == 1024
+    assert record.prompt_tokens == 21 and record.completion_tokens == 8 and record.total_tokens == 29
+    assert record.starts_with_object == content.strip().startswith("{")
+    assert record.ends_with_object == content.strip().endswith("}")
+    assert record.contains_fence == ("```" in content)
+    assert record.upstream_status is None and record.retryable is False
+    if failure_kind == "decode_error":
+        with pytest.raises(json.JSONDecodeError) as decoded:
+            json.loads(content)
+        assert (record.json_error_msg, record.json_error_pos, record.json_error_lineno, record.json_error_colno) == (
+            decoded.value.msg, decoded.value.pos, decoded.value.lineno, decoded.value.colno)
+    else:
+        assert record.top_level_type == top_level_type
+        assert not hasattr(record, "json_error_pos")
+    # The default %(message)s console formatter can show the safe diagnostic object.
+    console_diagnostics = json.loads(record.getMessage().split(" json_diagnostics=", 1)[1])
+    for name, value in console_diagnostics.items():
+        assert getattr(record, name) == value
+
+
+@pytest.mark.parametrize("max_tokens,expected", [(None, 1024), (257, 257)])
+def test_api_json_failure_diagnostics_use_effective_request_budget(max_tokens, expected, caplog):
+    client = FakeOpenAIClient(FakeCompletions(response=FakeCompletion(content="[]")))
+    provider = APILLMProvider(api_settings(llm_remote_supports_json_mode=True, llm_max_tokens=1024), client=client)
+    with pytest.raises(BusinessError):
+        provider.generate(LLMGenerateRequest.from_prompt("synthetic", json_mode=True, max_tokens=max_tokens))
+    record, = [r for r in caplog.records if getattr(r, "event", None) == "llm_generation_failed"]
+    assert record.effective_max_tokens == client.completions.calls[0]["max_tokens"] == expected
+
+
+def test_api_json_failure_diagnostics_from_sdk_mock_transport(caplog):
+    captured = []
+    def handler(request):
+        captured.append(json.loads(request.content))
+        return httpx.Response(200, json={
+            "id": "chatcmpl-json-diagnostic", "object": "chat.completion", "created": 1, "model": "remote-model",
+            "choices": [{"index": 0, "finish_reason": "length",
+                         "message": {"role": "assistant", "content": '{"entities":['}}],
+            "usage": {"prompt_tokens": 4000, "completion_tokens": 1024, "total_tokens": 5024},
+        })
+    client = OpenAI(api_key="test-wire-key-not-real", base_url="https://wire.example.invalid/v1", max_retries=0,
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)))
+    provider = APILLMProvider(api_settings(llm_remote_supports_json_mode=True, llm_max_tokens=1024), client=client)
+    try:
+        with pytest.raises(BusinessError) as caught:
+            provider.generate(LLMGenerateRequest.from_prompt("synthetic", json_mode=True, temperature=0.1))
+    finally:
+        provider.close()
+    assert caught.value.code == LLM_JSON_INVALID
+    assert captured == [{"model": "remote-model", "messages": [{"role": "user", "content": "synthetic"}],
+        "max_tokens": 1024, "temperature": 0.1, "response_format": {"type": "json_object"}}]
+    record, = [r for r in caplog.records if getattr(r, "event", None) == "llm_generation_failed"]
+    assert record.finish_reason == "length" and record.json_failure_kind == "decode_error"
+    assert record.effective_max_tokens == record.completion_tokens == 1024
+    assert record.prompt_tokens == 4000 and record.total_tokens == 5024
+
+
+@pytest.mark.parametrize("budget", [8192, 4096])
+def test_m2_budget_reaches_sdk_and_diagnostics_without_changing_generic_default(budget, caplog):
+    from app.core.config import Settings
+    from app.extraction.kg_extract import extract_piece
+    from test_kg_v2_protocol_units import anchor
+
+    captured = []
+    def handler(request):
+        captured.append(json.loads(request.content))
+        truncated = len(captured) == 3
+        content = '{"entities":[' if truncated else '{"entities":[],"relationships":[]}'
+        return httpx.Response(200, json={
+            "id": "chatcmpl-kg-budget", "object": "chat.completion", "created": 1, "model": "remote-model",
+            "choices": [{"index": 0, "finish_reason": "length" if truncated else "stop",
+                         "message": {"role": "assistant", "content": content}}],
+            "usage": {"prompt_tokens": 4000, "completion_tokens": budget if truncated else 8,
+                      "total_tokens": 4000 + (budget if truncated else 8)},
+        })
+
+    settings = Settings(_env_file=None, llm_provider="api", llm_max_tokens=1024, kg_llm_max_tokens=budget,
+        llm_remote_supports_json_mode=True, llm_remote_model="remote-model",
+        llm_remote_base_url="https://wire.example.invalid/v1", llm_remote_api_key="test-wire-key-not-real")
+    client = OpenAI(api_key="test-wire-key-not-real", base_url=settings.llm_remote_base_url, max_retries=0,
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)))
+    provider = APILLMProvider(settings, client=client)
+    arguments = dict(text="synthetic clause", filename="synthetic.pdf", anchor_metadata=anchor("clause"),
+        piece_index=0, timeout_seconds=settings.kg_model_timeout_seconds, max_tokens=settings.kg_llm_max_tokens)
+    try:
+        result = extract_piece(provider, **arguments)
+        assert result["entities"] == result["relationships"] == []
+        provider.generate(LLMGenerateRequest.from_prompt("ordinary workflow"))
+        assert not any(getattr(r, "event", None) == "llm_generation_failed" for r in caplog.records)
+        with pytest.raises(BusinessError) as caught:
+            extract_piece(provider, **arguments)
+    finally:
+        provider.close()
+    assert caught.value.code == LLM_JSON_INVALID
+    assert [body["max_tokens"] for body in captured] == [budget, 1024, budget]
+    assert "response_format" not in captured[1]
+    for body in (captured[0], captured[2]):
+        assert body["response_format"] == {"type": "json_object"} and body["temperature"] == 0.1
+        assert not {"tools", "think", "stop", "max_output_tokens"}.intersection(body)
+    record, = [r for r in caplog.records if getattr(r, "event", None) == "llm_generation_failed"]
+    assert record.effective_max_tokens == record.completion_tokens == budget
+    assert record.prompt_tokens == 4000 and record.total_tokens == 4000 + budget
+    assert record.finish_reason == "length" and record.json_failure_kind == "decode_error"
+    assert record.starts_with_object and not record.ends_with_object and not record.contains_fence
+
+
+@pytest.mark.parametrize("metadata_case", ["none", "missing", "raising_usage", "raising_fields", "unsafe_values"])
+def test_api_json_failure_diagnostics_tolerate_unavailable_metadata(metadata_case, caplog):
+    class Unreadable:
+        def __getattr__(self, name):
+            raise RuntimeError("SECRET_METADATA")
+    completion = FakeCompletion(content='{"entities":[')
+    if metadata_case == "none":
+        completion.usage = None
+    elif metadata_case == "missing":
+        del completion.usage
+    elif metadata_case == "raising_usage":
+        class BrokenCompletion(Unreadable):
+            choices = completion.choices
+        completion = BrokenCompletion()
+    elif metadata_case == "raising_fields":
+        completion.usage = Unreadable()
+        completion.choices[0] = SimpleNamespace(message=completion.choices[0].message)
+        class BrokenChoice(Unreadable):
+            message = completion.choices[0].message
+        completion.choices[0] = BrokenChoice()
+    else:
+        completion.usage = SimpleNamespace(prompt_tokens="SECRET_METADATA", completion_tokens=True, total_tokens=-1)
+        completion.choices[0].finish_reason = "SECRET_METADATA"
+    provider = APILLMProvider(api_settings(llm_remote_supports_json_mode=True),
+        client=FakeOpenAIClient(FakeCompletions(response=completion)))
+    with pytest.raises(BusinessError) as caught:
+        provider.generate(LLMGenerateRequest.from_prompt("synthetic", json_mode=True))
+    assert caught.value.code == LLM_JSON_INVALID
+    record, = [r for r in caplog.records if getattr(r, "event", None) == "llm_generation_failed"]
+    assert record.json_failure_kind == "decode_error" and record.finish_reason is None
+    assert record.prompt_tokens is record.completion_tokens is record.total_tokens is None
+    assert "SECRET_METADATA" not in repr(record.__dict__)
+
+
+def test_api_json_failure_diagnostics_do_not_log_content_or_change_error_detail(caplog):
+    prompt = "SECRET_PROMPT PDF_SOURCE Authorization: Bearer SECRET_API_KEY"
+    content = '{"entities":[{"name":"SECRET_RESPONSE PDF_SOURCE"'
+    completion = FakeCompletion(content=content)
+    completion.choices[0].finish_reason = "length"
+    provider = APILLMProvider(api_settings(llm_remote_supports_json_mode=True, llm_remote_api_key="SECRET_API_KEY"),
+        client=FakeOpenAIClient(FakeCompletions(response=completion)))
+    with pytest.raises(BusinessError) as caught:
+        provider.generate(LLMGenerateRequest.from_prompt(prompt, json_mode=True))
+    rendered = caplog.text + repr([r.__dict__ for r in caplog.records]) + repr(vars(caught.value))
+    rendered += "".join(traceback.format_exception(caught.value))
+    for secret in (prompt, content, "SECRET_PROMPT", "SECRET_RESPONSE", "PDF_SOURCE", "Authorization", "SECRET_API_KEY"):
+        assert secret not in rendered
+    assert caught.value.detail == {"field": "choices[0].message.content"}
+
+
+def test_api_json_failure_diagnostics_filter_untrusted_decoder_message():
+    from app.llm.openai_chat_transport import _build_json_failure_diagnostics
+    diagnostics = _build_json_failure_diagnostics("broken", None, None, failure_kind="decode_error",
+        decode_error_fields=("SECRET_DECODER_INPUT", 0, 1, 1))
+    assert diagnostics["json_error_msg"] == "JSON decoding failed"
+    assert "SECRET" not in repr(diagnostics)
+
+
+def test_api_json_failure_diagnostics_helper_error_cannot_replace_primary_failure(monkeypatch):
+    from app.llm import openai_chat_transport as transport
+    def broken(*args, **kwargs):
+        raise RuntimeError("SECRET_DIAGNOSTIC_FAILURE")
+    monkeypatch.setattr(transport, "_build_json_failure_diagnostics", broken)
+    provider = APILLMProvider(api_settings(llm_remote_supports_json_mode=True),
+        client=FakeOpenAIClient(FakeCompletions(response=FakeCompletion(content="[]"))))
+    with pytest.raises(BusinessError) as caught:
+        provider.generate(LLMGenerateRequest.from_prompt("synthetic", json_mode=True))
+    assert caught.value.code == LLM_JSON_INVALID and caught.value.__context__ is None
+
+
 def test_api_errors_and_tracebacks_do_not_expose_remote_secrets(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

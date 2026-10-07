@@ -26,6 +26,8 @@ from app.retrieval.embeddings import EmbeddingResult, EmbeddingProvider, get_emb
 from app.search_engine.client import SearchEngineClientProtocol, get_search_engine_client
 from app.search_engine.index_schema import get_index_alias
 from app.services.search_index import DEFAULT_EMBEDDING_DIM, DEFAULT_EMBEDDING_MODEL, EXACT_TERM_PATTERNS
+from app.services.retrieval_admission import VERSION_FIELDS, published_targets, filter_published_hits
+from app.services.embedding_contract import embedding_fingerprint
 
 
 MAX_HYBRID_SEARCH_LIMIT = 50
@@ -38,6 +40,7 @@ class SearchEngineHit:
     chunk_id: str
     score: float
     source: dict[str, Any]
+    index_name: str | None = None
 
 
 @dataclass(frozen=True)
@@ -57,6 +60,13 @@ class HybridSearchItem:
     matched_keywords: list[str]
     embedding_model: str | None
     embedding_dim: int | None
+    source_version: str | None = None
+    graph_build_id: str | None = None
+    chunk_set_id: str | None = None
+    source_start: int | None = None
+    source_end: int | None = None
+    content_sha256: str | None = None
+    embedding_fingerprint: str | None = None
 
 
 @dataclass(frozen=True)
@@ -84,6 +94,12 @@ def hybrid_search_chunks(
         raise BusinessError(SEARCH_QUERY_EMPTY, "Search query must not be empty.", status_code=400)
 
     normalized_limit = _validate_hybrid_config(settings, limit)
+    targets = None
+    filter_factory = deletion_filter_session_factory or SessionLocal
+    if getattr(settings, "pdf_kg_search_enabled", False):
+        targets = published_targets(filter_factory, settings, document_id)
+        if not targets:
+            return HybridSearchResult(query=normalized_query, limit=normalized_limit, total=0, items=[])
     provider = embedding_provider or get_embedding_provider(settings)
     embedding_result = _encode_query_embedding(provider, normalized_query)
     query_embedding = _extract_query_embedding(
@@ -96,6 +112,12 @@ def hybrid_search_chunks(
     alias = get_index_alias(settings)
     keyword_body = build_keyword_search_body(normalized_query, settings, document_id=document_id)
     vector_body = build_vector_search_body(query_embedding, settings, document_id=document_id)
+    if targets is not None:
+        alias = list(targets.values())
+        filters = [{"term": {"schema_version": 2}}, {"terms": {"chunk_set_id": list(targets)}},
+                   {"term": {"embedding_fingerprint": embedding_fingerprint(settings)}}]
+        keyword_body["query"]["bool"]["filter"].extend(filters)
+        vector_body["query"]["knn"]["embedding"]["filter"]["bool"]["filter"].extend(filters)
 
     try:
         keyword_response = client.search(index=alias, body=keyword_body)
@@ -105,11 +127,10 @@ def hybrid_search_chunks(
 
     keyword_hits = _parse_search_hits(keyword_response)
     vector_hits = _parse_search_hits(vector_response)
-    keyword_hits, vector_hits = _filter_normal_document_hits(
-        keyword_hits,
-        vector_hits,
-        session_factory=deletion_filter_session_factory or SessionLocal,
-    )
+    if targets is not None:
+        keyword_hits, vector_hits = filter_published_hits(keyword_hits, vector_hits, filter_factory, settings, targets)
+    else:
+        keyword_hits, vector_hits = _filter_normal_document_hits(keyword_hits, vector_hits, session_factory=filter_factory)
     items = fuse_hybrid_results(keyword_hits, vector_hits, settings, limit=normalized_limit, query=normalized_query)
     return HybridSearchResult(query=normalized_query, limit=normalized_limit, total=len(items), items=items)
 
@@ -246,6 +267,7 @@ def fuse_hybrid_results(
                 matched_keywords=extract_matched_keywords(query, content, exact_terms),
                 embedding_model=source.get("embedding_model"),
                 embedding_dim=source.get("embedding_dim"),
+                **{key: source.get(key) for key in VERSION_FIELDS},
             )
         )
 
@@ -398,6 +420,7 @@ def _parse_search_hits(response: dict[str, Any]) -> list[SearchEngineHit]:
                 chunk_id=chunk_id,
                 score=float(hit.get("_score") or 0.0),
                 source=source,
+                index_name=hit.get("_index"),
             )
         )
     return parsed_hits
@@ -424,7 +447,7 @@ def _source_fields() -> list[str]:
         "source_metadata",
         "exact_terms",
         "embedding_model",
-        "embedding_dim",
+        "embedding_dim", "schema_version", *VERSION_FIELDS,
     ]
 
 

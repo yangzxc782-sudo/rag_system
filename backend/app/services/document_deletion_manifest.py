@@ -62,11 +62,12 @@ class DocumentDeletionManifest:
     knowledge_item_ids: tuple[UUID, ...]
     search_index_name: str
     search_index_alias: str
+    versioned: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         if (
             type(self.schema_version) is not int
-            or self.schema_version != DOCUMENT_DELETION_MANIFEST_SCHEMA_VERSION
+            or self.schema_version not in {1, 2}
         ):
             raise DocumentDeletionManifestError(
                 DOCUMENT_DELETION_MANIFEST_VERSION_UNSUPPORTED,
@@ -92,8 +93,26 @@ class DocumentDeletionManifest:
             "knowledge_item_ids",
             _normalized_uuids(self.knowledge_item_ids),
         )
+        version_prefixes = ()
+        if self.schema_version == 2:
+            from app.services.document_version_deletion import VersionTargets
+            try:
+                targets = VersionTargets.model_validate(self.versioned)
+            except ValueError as exc:
+                raise DocumentDeletionManifestError(DOCUMENT_DELETION_MANIFEST_INVALID,
+                    "Versioned deletion targets are invalid.") from exc
+            if targets.document_id != self.document_id:
+                _invalid("Versioned deletion identity mismatch.")
+            version_prefixes = targets.prefixes()
+            object.__setattr__(self, "versioned", targets.model_dump(mode="json"))
+        elif self.versioned is not None:
+            _invalid("Legacy deletion manifest cannot contain version targets.")
         prefixes = _normalized_strings(self.derived_prefixes)
+        if not set(version_prefixes).issubset(prefixes):
+            _invalid("Versioned deletion prefixes missing.")
         for prefix in prefixes:
+            if prefix in version_prefixes:
+                continue
             _validate_derived_prefix(
                 prefix,
                 document_id=self.document_id,
@@ -135,17 +154,18 @@ class DocumentDeletionManifest:
         version = payload.get("schema_version")
         if (
             type(version) is not int
-            or version != DOCUMENT_DELETION_MANIFEST_SCHEMA_VERSION
+            or version not in {1, 2}
         ):
             raise DocumentDeletionManifestError(
                 DOCUMENT_DELETION_MANIFEST_VERSION_UNSUPPORTED,
                 "Document deletion manifest version is unsupported.",
             )
-        if set(payload) != _MANIFEST_FIELDS:
+        if set(payload) != (_MANIFEST_FIELDS | {"versioned"} if version == 2 else _MANIFEST_FIELDS):
             _invalid("Document deletion manifest fields are invalid.")
 
         return cls(
-            schema_version=DOCUMENT_DELETION_MANIFEST_SCHEMA_VERSION,
+            schema_version=version,
+            versioned=payload.get("versioned"),
             document_id=_uuid_value(payload["document_id"]),
             bucket_name=_string_value(payload["bucket_name"]),
             raw_object_key=_string_value(payload["raw_object_key"]),
@@ -165,6 +185,7 @@ class DocumentDeletionManifest:
 
     def to_payload(self) -> dict[str, Any]:
         return {
+            **({"versioned": self.versioned} if self.schema_version == 2 else {}),
             "schema_version": self.schema_version,
             "document_id": str(self.document_id),
             "bucket_name": self.bucket_name,

@@ -20,9 +20,7 @@ from opensearchpy.serializer import JSONSerializer
 from sqlalchemy.dialects.postgresql import JSONB, dialect
 from sqlalchemy.orm import Session
 
-from app.ingestion.block_chunker import BlockChunkerConfig
-from app.ingestion.markdown.chunker import build_markdown_chunks
-from app.ingestion.markdown.parser import parse_markdown
+from pdf_source_fixtures import pdf_draft
 from app.models.document_chunk import DocumentChunk
 from app.rag import context_builder
 from app.schemas.rag import RagAskData, RagAskRequest, RagCitationItem
@@ -43,11 +41,11 @@ TABLE_REF = {
     "anchor_type": "table",
     "table_ref": "T-P8-1",
 }
-SECTION_REF = {
+CLAUSE_REF = {
     "anchor_id": "KG-20260826-001::SEC-8",
     "graph_id": "KG-20260826-001",
-    "anchor_type": "section",
-    "table_ref": None,
+    "anchor_type": "clause",
+    "clause_ref": "C0001",
 }
 CONTENT = "| Si | 温度 | 壁厚 |\n| --- | --- | --- |\n| ≤7.50% | ≥720℃ | 3–5 mm |\n"
 CONTROL_TEXT = ("kg-anchor-start", "kg-anchor-end", "anchor_id:",
@@ -56,15 +54,11 @@ CONTROL_TEXT = ("kg-anchor-start", "kg-anchor-end", "anchor_id:",
 
 def provenance(refs):
     return {
-        "parser_provider": "markdown_native",
-        "parser_version": "markdown-it-py/4.2.0",
-        "chunk_method": "markdown_ast",
+        "parser_provider": "mineru_api",
+        "parser_version": "pdf-fixture-v1",
+        "chunk_method": "pdf_fixture",
         "content_format": "markdown",
         "section_path": ["第8章", "化学成分"],
-        "source_range": {
-            "kind": "markdown_ast", "start_line": 8, "end_line": 12,
-            "ast_node_ids": ["n000020", "n000024"],
-        },
         "kg_refs": deepcopy(refs),
         "other_provenance": {"nullable": None, "values": ["中文", 0, False]},
     }
@@ -76,8 +70,8 @@ METADATA_CASES = [
     pytest.param(provenance([]), id="empty-refs"),
     pytest.param(provenance([TABLE_REF]), id="one-ref"),
     # Deliberately not alphabetical anchor order: serialization must not sort it.
-    pytest.param(provenance([TABLE_REF, SECTION_REF]), id="many-refs"),
-    pytest.param(provenance([SECTION_REF]), id="null-table-ref"),
+    pytest.param(provenance([TABLE_REF, CLAUSE_REF]), id="many-refs"),
+    pytest.param(provenance([CLAUSE_REF]), id="null-table-ref"),
     pytest.param({"parser_provider": "mineru", "block_ids": ["old-block"],
                   "page_start": 8}, id="legacy-no-refs"),
 ]
@@ -166,7 +160,7 @@ class WireSearchClient:
 
 
 def persist(db, document, metadata):
-    draft, = build_markdown_chunks(parse_markdown(CONTENT))
+    draft = pdf_draft(CONTENT)
     draft = replace(draft, source_metadata=deepcopy(metadata or {}))
     DocumentOperationGuard(db).lock_normal(document.id)
     chunk, = DocumentChunkWriter(db).write(document_id=document.id, drafts=[draft])
@@ -205,7 +199,7 @@ def assert_metadata(actual, expected):
     refs = (actual or {}).get("kg_refs", [])
     assert isinstance(refs, list)
     for ref in refs:
-        assert set(ref) == {"anchor_id", "graph_id", "anchor_type", "table_ref"}
+        assert set(ref) == {"anchor_id", "graph_id", "anchor_type", "table_ref" if ref["anchor_type"] == "table" else "clause_ref"}
 
 
 @pytest.mark.parametrize("metadata", METADATA_CASES)
@@ -287,7 +281,7 @@ def test_writer_embedding_index_hybrid_and_rag_preserve_metadata(
     assert "kg_refs" not in public and "kg_refs" not in public["citations"][0]
     prompt = "\n".join(part.text for message in llm.calls[0].messages for part in message.content)
     assert CONTENT in prompt
-    for marker in (*CONTROL_TEXT, TABLE_REF["anchor_id"], SECTION_REF["anchor_id"],
+    for marker in (*CONTROL_TEXT, TABLE_REF["anchor_id"], CLAUSE_REF["anchor_id"],
                    TABLE_REF["graph_id"], TABLE_REF["table_ref"], "other_provenance"):
         assert marker not in prompt
         assert all(marker not in text for batch in provider.document_calls for text in batch)
@@ -327,14 +321,15 @@ def test_source_metadata_mapping_remains_opaque_and_source_is_not_filtered(setti
     assert body["aliases"] == {settings.search_index_alias: {}}
 
 
-def test_public_search_rag_and_citation_fields_remain_unchanged():
+def test_public_search_adds_version_identity_preserving_rag_and_citation_fields():
     expected = {
         SearchRequest: {"query", "limit", "document_id"},
         SearchData: {"query", "limit", "total", "items"},
         SearchItem: {"chunk_id", "document_id", "original_filename", "chunk_index", "content",
                      "source_metadata", "retrieval_source", "keyword_score", "vector_score",
                      "keyword_rank", "vector_rank", "hybrid_score", "matched_keywords",
-                     "embedding_model", "embedding_dim"},
+                     "embedding_model", "embedding_dim", "source_version", "graph_build_id", "chunk_set_id",
+                     "source_start", "source_end", "content_sha256", "embedding_fingerprint"},
         RagAskRequest: {"question", "limit", "document_id"},
         RagAskData: {"question", "answer", "context_status", "citations", "retrieval", "llm", "graph"},
         RagCitationItem: {"citation_id", "chunk_id", "document_id", "original_filename",
@@ -345,48 +340,26 @@ def test_public_search_rag_and_citation_fields_remain_unchanged():
     assert SearchItem.model_fields["source_metadata"].is_required() is False
 
 
-@pytest.mark.parametrize("size,overlap", [(60, 0), (800, 40)])
-def test_canonical_markdown_refs_survive_chunking_writer_embedding_and_wire(
-    db, document, settings, monkeypatch, size, overlap,
-):
-    def start(ref):
-        fields = "\n".join(f"{key}: {json.dumps(value, ensure_ascii=False)}" for key, value in ref.items())
-        return f"<!-- kg-anchor-start\n{fields}\n-->\n"
-
-    def end(ref):
-        return f"<!-- kg-anchor-end\nanchor_id: {ref['anchor_id']}\n-->\n"
-
-    source = start(SECTION_REF) + ("温度 ≥720℃，壁厚 3–5 mm。\n\n" * 8)
-    source += start(TABLE_REF) + CONTENT + end(TABLE_REF) + end(SECTION_REF)
-    clean = parse_markdown(source.encode("utf-8-sig"))
-    drafts = build_markdown_chunks(clean, config=BlockChunkerConfig(
-        max_chunk_chars=size, min_chunk_chars=0, overlap_chars=overlap,
-    ))
-    expected = {draft.chunk_index: deepcopy(draft.source_metadata) for draft in drafts}
+@pytest.mark.parametrize("repeat", [1, 3])
+def test_pdf_fixture_refs_survive_shared_writer_embedding_and_wire(db, document, settings, monkeypatch, repeat):
+    drafts = [pdf_draft(CONTENT * repeat, [CLAUSE_REF, TABLE_REF])]
+    expected = deepcopy(drafts[0].source_metadata)
     DocumentOperationGuard(db).lock_normal(document.id)
     chunks = DocumentChunkWriter(db).write(document_id=document.id, drafts=drafts)
     document.process_status = "parsed"
     db.commit()
-    db.expire_all()
     client = WireSearchClient(settings)
     provider = encode_and_index(db, document, settings, monkeypatch, client)
-    assert [text for batch in provider.document_calls for text in batch] == [draft.content for draft in drafts]
+    assert [value for batch in provider.document_calls for value in batch] == [drafts[0].content]
     result = retrieve(db, settings, client, provider)
-    assert result.total == len(drafts)
     context = context_builder.build_rag_context("温度", result, settings)
-    assert len(context.chunks) == len(drafts)
-    for chunk in chunks:
-        assert_metadata(chunk.source_metadata, expected[chunk.chunk_index])
-    for chunk in context.chunks:
-        assert_metadata(chunk.source_metadata, expected[chunk.chunk_index])
-        assert all(marker not in chunk.content for marker in CONTROL_TEXT)
-    table = next(item for item in result.items if CONTENT in item.content)
-    assert table.source_metadata["kg_refs"] == [SECTION_REF, TABLE_REF]
-    assert all(item.source_metadata["kg_refs"][0] == SECTION_REF for item in result.items)
+    assert len(context.chunks) == len(chunks) == 1
+    assert_metadata(context.chunks[0].source_metadata, expected)
+    assert all(marker not in context.chunks[0].content for marker in CONTROL_TEXT)
 
 
 def test_rag_text_truncation_keeps_internal_metadata(db, document, settings):
-    chunk = persist(db, document, provenance([TABLE_REF, SECTION_REF]))
+    chunk = persist(db, document, provenance([TABLE_REF, CLAUSE_REF]))
     client = WireSearchClient(settings)
     source = search_index.build_chunk_index_payload(document, chunk, settings)
     source["content"] = CONTENT * 100

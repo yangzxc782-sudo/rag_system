@@ -15,9 +15,11 @@ RETRYABLE = INTERRUPTED | SOURCE_ERRORS | {
     *LLM_ERROR_STATUS_CODES, *CASTING_RETRYABLE,
 }
 FINAL_FAILURES = RETRYABLE | {"QA_PROMPT_BUDGET_EXCEEDED", "QA_CONTEXT_BUDGET_EXCEEDED",
-                            "QA_REWRITE_INPUT_BUDGET_EXCEEDED", "QA_REWRITE_STRATEGY_UNSUPPORTED"}
+                            "QA_REWRITE_INPUT_BUDGET_EXCEEDED", "QA_REWRITE_STRATEGY_UNSUPPORTED",
+                            "QA_GRAPH_EVIDENCE_VERSION_UNSUPPORTED"}
 REWRITE_ERROR_STATUS = {"QA_REWRITE_OUTPUT_INVALID": 502, "QA_REWRITE_INPUT_BUDGET_EXCEEDED": 422,
-                       "QA_CONTEXT_BUDGET_EXCEEDED": 422, "QA_REWRITE_STRATEGY_UNSUPPORTED": 409}
+                       "QA_CONTEXT_BUDGET_EXCEEDED": 422, "QA_REWRITE_STRATEGY_UNSUPPORTED": 409,
+                       "QA_GRAPH_EVIDENCE_VERSION_UNSUPPORTED": 409}
 REWRITE_ERROR_STATUS.update({code: 422 for code in ("CASTING_INPUT_REQUIRED", "CASTING_INPUT_INVALID", "CASTING_RULE_NOT_APPLICABLE",
     "CASTING_RULE_AMBIGUOUS", "CASTING_CAPACITY_EXCEEDED", "CASTING_CANDIDATE_NOT_FOUND", "CASTING_ADMISSION_FAILED")})
 REWRITE_ERROR_STATUS.update({code: 409 for code in ("CASTING_PROVENANCE_INVALID", "CASTING_STAGE_INVALID", "CASTING_POLICY_CHANGED",
@@ -70,6 +72,8 @@ def prepare_retry(repo, turn, checkpoint):
     values = checkpoint.values
     terminal_failure = same_execution(values, turn) and values.get("terminal_status") == "needs_recovery"
     code = values.get("error_code") if terminal_failure else turn.error_code
+    if code == "QA_GRAPH_EVIDENCE_VERSION_UNSUPPORTED":
+        raise ConversationError(code, "旧版图谱证据无法恢复，请发起新一轮检索。", status_code=409)
     if terminal_failure or turn.status == "failed" or (turn.status == "needs_recovery" and code not in INTERRUPTED):
         if code not in RETRYABLE:
             raise ConversationError("QA_RECOVERY_CONFLICT", "This failure requires operator review.", status_code=409)

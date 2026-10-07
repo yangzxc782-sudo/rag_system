@@ -121,10 +121,10 @@ def test_parse_document_success_uses_supported_mineru_route(monkeypatch) -> None
     _install_success_dependencies(monkeypatch)
     result = document_parsing.parse_document(db, DOCUMENT_ID)
     assert result.document_id == DOCUMENT_ID
-    assert result.process_status == "parsed"
-    assert result.chunk_count > 0
+    assert result.process_status == "cleaned_source_ready"
+    assert result.chunk_count == 0
     assert result.parser_name == "mineru_api"
-    assert document.process_status == "parsed"
+    assert document.process_status == "cleaned_source_ready"
 
 
 def test_parse_deleting_document_never_reads_or_persists_source(monkeypatch) -> None:
@@ -212,7 +212,10 @@ def test_parse_document_unknown_provider_is_rejected_before_storage(monkeypatch)
 
 def test_parse_document_source_file_not_found_marks_parse_failed(monkeypatch) -> None:
     from test_document_parsing_mineru import FakeDb as MinerUDb
+    from app.services import document_processing
+    monkeypatch.setattr(document_processing, "reject_pending_parse", lambda *args: None)
 
+    monkeypatch.setattr(document_parsing, "require_source_schema", lambda db: None)
     document = fake_document()
     db = MinerUDb(document=document)
     monkeypatch.setattr(document_parsing, "get_settings", lambda: fake_settings())
@@ -229,18 +232,18 @@ def test_parse_document_source_file_not_found_marks_parse_failed(monkeypatch) ->
     assert db.added_all == []
 
 
-def test_parse_document_chunk_write_failure_rolls_back_and_marks_failed(monkeypatch) -> None:
-    from app.models.document_chunk import DocumentChunk
+def test_parse_document_block_write_failure_rolls_back_and_marks_failed(monkeypatch) -> None:
+    from app.models.document_block import DocumentBlock
     from test_document_parsing_mineru import FakeDb as MinerUDb, _install_success_dependencies
 
-    class ChunkWriteFailureDb(MinerUDb):
+    class BlockWriteFailureDb(MinerUDb):
         def flush(self):
-            if any(isinstance(item, DocumentChunk) for item in self.added_all):
-                raise RuntimeError("simulated chunk write failure")
+            if any(isinstance(item, DocumentBlock) for item in self.added_all):
+                raise RuntimeError("simulated block write failure")
             super().flush()
 
     document = fake_document()
-    db = ChunkWriteFailureDb(document=document)
+    db = BlockWriteFailureDb(document=document)
     _install_success_dependencies(monkeypatch)
     with pytest.raises(BusinessError) as exc_info:
         document_parsing.parse_document(db, DOCUMENT_ID)

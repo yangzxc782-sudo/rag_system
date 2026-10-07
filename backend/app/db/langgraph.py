@@ -21,6 +21,16 @@ from app.services.conversation_repository import ConversationError, Conversation
 
 
 CHECKPOINT_SCHEMA = "langgraph_checkpoints"
+CHECKPOINT_READY_REVISIONS = frozenset({
+    "0010_phase13_checkpoints", "0011_casting_storage",
+    "0012_casting_answers", "0013_pdf_kg_versions",
+})
+CASTING_STORAGE_REVISIONS = frozenset({
+    "0011_casting_storage", "0012_casting_answers", "0013_pdf_kg_versions",
+})
+CASTING_V3_REVISIONS = frozenset({
+    "0012_casting_answers", "0013_pdf_kg_versions",
+})
 UPSTREAM_SCHEMA_SHA256 = "b61d83ce19b67141d851d7fa29a73ecc6f5cd8e9d45c1aa0f6b6f9ebe50f26bf"
 PINNED_VERSIONS = {"langgraph": "1.2.12", "langgraph-checkpoint": "4.2.0",
                    "langgraph-checkpoint-postgres": "3.1.2", "psycopg": "3.3.4", "psycopg-pool": "3.3.3"}
@@ -65,7 +75,10 @@ class CheckpointPool:
         except Exception:
             self.close()
             required = "0012" if self.settings.casting_design_enabled and self.settings.conversation_graph_version == "casting_v1_v3" else "0011" if self.settings.casting_design_enabled else "0010"
-            raise CheckpointUnavailable(f"QA_CHECKPOINT_NOT_READY: check connection and apply approved {required} migration") from None
+            raise CheckpointUnavailable(
+                f"QA_CHECKPOINT_NOT_READY: check connection and schema; requires approved {required} "
+                "or later compatible migration"
+            ) from None
 
     def health(self) -> None:
         if self.pool is None:
@@ -81,20 +94,26 @@ class CheckpointPool:
                 # The project's Alembic/QA tables live in public, separate from the
                 # pool search path. Readiness must not silently adopt a partial DB.
                 head = connection.execute("SELECT version_num FROM public.alembic_version").fetchone()
-                if head is None or head["version_num"] not in {"0010_phase13_checkpoints", "0011_casting_storage", "0012_casting_answers"}:
+                revision = head["version_num"] if head is not None else None
+                if revision not in CHECKPOINT_READY_REVISIONS:
                     raise CheckpointUnavailable("QA_CHECKPOINT_MIGRATION_REQUIRED")
-                if self.settings.casting_design_enabled and head["version_num"] not in {"0011_casting_storage", "0012_casting_answers"}:
-                    raise CheckpointUnavailable("CASTING_MIGRATION_REQUIRED: apply approved 0011 migration")
-                if self.settings.casting_design_enabled and self.settings.conversation_graph_version == "casting_v1_v3" and head["version_num"] != "0012_casting_answers":
-                    raise CheckpointUnavailable("CASTING_MIGRATION_REQUIRED: apply approved 0012 migration")
-                if head["version_num"] in {"0011_casting_storage", "0012_casting_answers"}:
+                if self.settings.casting_design_enabled and revision not in CASTING_STORAGE_REVISIONS:
+                    raise CheckpointUnavailable("CASTING_MIGRATION_REQUIRED: apply approved 0011 or later compatible migration")
+                if (self.settings.casting_design_enabled
+                        and self.settings.conversation_graph_version == "casting_v1_v3"
+                        and revision not in CASTING_V3_REVISIONS):
+                    raise CheckpointUnavailable("CASTING_MIGRATION_REQUIRED: apply approved 0012 or later compatible migration")
+                if revision in CASTING_STORAGE_REVISIONS:
                     connection.execute("SELECT id, session_id, storage_state, sha256 FROM public.casting_design_files LIMIT 0")
                     connection.execute("SELECT id, turn_id, status, result_file_id FROM public.casting_design_runs LIMIT 0")
                     connection.execute("SELECT graph_version, requested_casting_input_file_id, effective_casting_input_file_id FROM public.qa_turns LIMIT 0")
         except CheckpointUnavailable:
             raise
         except Exception:
-            raise CheckpointUnavailable("QA_CHECKPOINT_NOT_READY: approved 0010 schema required") from None
+            raise CheckpointUnavailable(
+                "QA_CHECKPOINT_NOT_READY: check connection and checkpoint/casting schema "
+                "for the approved migration capabilities"
+            ) from None
 
     def close(self) -> None:
         pool, self.pool = self.pool, None

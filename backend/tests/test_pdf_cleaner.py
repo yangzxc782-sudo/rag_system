@@ -269,7 +269,7 @@ def test_running_standard_requires_repeated_physical_margin_and_never_deletes_bo
 
 def test_settings_defaults_and_profile_validation():
     settings = Settings(_env_file=None)
-    assert settings.pdf_cleaning_enabled is False
+    assert settings.pdf_cleaning_enabled is True
     assert settings.pdf_cleaning_profile == "auto"
     assert settings.pdf_cleaning_backfill_enabled is True
     with pytest.raises(ValueError):

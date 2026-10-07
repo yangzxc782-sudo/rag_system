@@ -65,7 +65,7 @@ class EvidenceSourceStatus(BaseModel):
     citation_id: int | None = None
     document_ids: list[UUID]
     chunk_ids: list[UUID]
-    status: Literal["available", "source_deleted", "source_unavailable"]
+    status: Literal["available", "source_deleted", "source_unavailable", "unsupported_version"]
 
 
 class ConversationAnswer(BaseModel):
