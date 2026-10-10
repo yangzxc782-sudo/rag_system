@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import builtins
+import asyncio
+from contextlib import contextmanager
 from types import SimpleNamespace
 
 import pytest
@@ -304,3 +306,58 @@ def test_repeated_enabled_lifespans_stop_each_executor_without_worker_leak(
         (2, "join"),
         (2, "llm-cleanup"),
     ]
+
+
+@pytest.mark.parametrize("failure", [None, "body", "start"])
+def test_pdf_drain_precedes_all_dependency_cleanup(monkeypatch, failure):
+    import app.main as main_module
+    from app.services import conversations, casting_files, casting_engine, casting_design
+    events = []
+    @contextmanager
+    def runtime(*a):
+        events.append("runtime-open")
+        try:
+            yield SimpleNamespace(rag_nodes=True, session_factory=object())
+        finally:
+            events.append("runtime-close")
+    class PDFExecutor:
+        def __init__(self, **kw): pass
+        def start(self):
+            events.append("pdf-start")
+            if failure == "start":
+                raise ValueError("synthetic startup failure")
+        async def shutdown(self):
+            events.append("pdf-stop")
+            await asyncio.sleep(0)
+            assert not any(event.endswith("close") for event in events)
+            events.append("pdf-drained")
+    class DeletionExecutor:
+        def __init__(self, **kw): pass
+        def start(self): pass
+        def stop(self): events.append("delete-stop")
+        def join(self, timeout): events.append("delete-joined")
+    monkeypatch.setattr(main_module, "_conversation_runtime", runtime)
+    monkeypatch.setattr(main_module, "DocumentProcessingExecutor", PDFExecutor)
+    monkeypatch.setattr(main_module, "DocumentDeletionExecutor", DeletionExecutor)
+    monkeypatch.setattr(main_module, "Neo4jRepository", lambda *a: SimpleNamespace(close=lambda: events.append("graph-close")))
+    monkeypatch.setattr(main_module, "GraphRetrievalService", lambda *a, **kw: object())
+    monkeypatch.setattr(conversations, "Conversations", lambda *a: SimpleNamespace(close=lambda: events.append("service-close")))
+    monkeypatch.setattr(casting_files, "CastingObjectStorage", lambda *a: SimpleNamespace(close=lambda: events.append("casting-close")))
+    monkeypatch.setattr(casting_files, "CastingFiles", lambda *a, **kw: object())
+    monkeypatch.setattr(casting_engine, "CastingEngine", lambda **kw: object())
+    monkeypatch.setattr(casting_design, "CastingDesignService", lambda *a, **kw: object())
+    monkeypatch.setattr(main_module, "clear_llm_provider_cache", lambda: events.append("llm-close"))
+    monkeypatch.setattr(main_module, "close_reranking_service", lambda: events.append("reranker-close"))
+    settings = minimal_settings(conversation_enabled=True, casting_design_enabled=True,
+        document_processing_executor_enabled=True, document_deletion_executor_enabled=True)
+    async def exercise():
+        async with main_module._lifespan(settings)(SimpleNamespace(state=SimpleNamespace())):
+            if failure == "body":
+                raise ValueError("synthetic business failure")
+    if failure:
+        with pytest.raises(ValueError, match="synthetic"):
+            asyncio.run(exercise())
+    else:
+        asyncio.run(exercise())
+    assert events == ["runtime-open", "pdf-start", "delete-stop", "pdf-stop", "pdf-drained",
+        "delete-joined", "casting-close", "service-close", "runtime-close", "llm-close", "reranker-close", "graph-close"]

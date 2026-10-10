@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import json
 from types import SimpleNamespace
 from typing import Any
 from uuid import UUID, uuid4
@@ -173,8 +174,6 @@ def fake_settings(
 ) -> SimpleNamespace:
     return SimpleNamespace(
         document_parser_provider=provider,
-        chunk_size_chars=120,
-        chunk_overlap_chars=0,
         mineru_api_base_url=base_url,
         mineru_api_key=api_key,
         mineru_api_timeout_seconds=300,
@@ -332,6 +331,15 @@ def test_mineru_success_writes_full_pipeline_before_marking_active(
     assert next(block for block in blocks if block.block_type == "formula").latex in canonical
     assert next(block for block in blocks if block.block_type == "table").markdown in canonical
     assert result.character_count == len(canonical)
+    directory = json.loads(next(item["content"] for item in uploads
+                                if item["object_key"].endswith("/source-map.json")))
+    assert directory["schema_version"] == 2
+    assert [entry["block_id"] for entry in directory["blocks"]] == [str(block.id) for block in blocks]
+    assert [entry["section_path"] for entry in directory["blocks"]] == [block.section_path for block in blocks]
+    assert [entry["content_format"] for entry in directory["blocks"]] == [
+        "markdown", "plain_text", "markdown", "markdown",
+    ]
+    assert all(entry["asset_keys"] == [] for entry in directory["blocks"])
 
 
 def test_mineru_final_guard_blocks_upload_after_delete_commits(monkeypatch) -> None:
@@ -362,6 +370,7 @@ def test_inline_v4_zip_asset_is_uploaded_through_existing_orchestration(
     parse_result = replace(
         base,
         parse_mode="vlm",
+        content_list=(*base.content_list, {"type": "image", "img_path": "images/mould.png", "page_idx": 1}),
         assets=(
             MinerUAssetResult(
                 asset_type="image",
@@ -401,6 +410,12 @@ def test_inline_v4_zip_asset_is_uploaded_through_existing_orchestration(
     assert image_upload["content"] == b"inline-image-bytes"
     assert image_upload["content_type"] == "image/png"
     assert len(client.requests) == 1
+    directory = json.loads(next(item["content"] for item in uploads
+                                if item["object_key"].endswith("/source-map.json")))
+    image_entry = next(entry for entry in directory["blocks"] if entry["block_type"] == "image")
+    assert image_entry["asset_keys"] == [image_upload["object_key"]]
+    assert image_entry["content_format"] == "markdown"
+    assert image_entry["section_path"] == ["Casting"]
 
 
 def test_same_basename_assets_use_source_path_and_upload_to_distinct_keys(

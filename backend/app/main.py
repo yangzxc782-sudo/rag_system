@@ -88,6 +88,15 @@ def _lifespan(settings: Settings):
                         processing_executor.start()
                     yield
                 finally:
+                    # Stop admission before any dependency is released. Drain
+                    # PDF stages and their heartbeat while pools/clients remain
+                    # available; the executor reports prolonged waits itself.
+                    if executor is not None:
+                        executor.stop()
+                    if processing_executor is not None:
+                        await processing_executor.shutdown()
+                    if executor is not None:
+                        executor.join(timeout=float(settings.document_deletion_shutdown_grace_seconds))
                     try:
                         try:
                             if casting_storage is not None:
@@ -101,24 +110,12 @@ def _lifespan(settings: Settings):
                         app.state.conversation_graph = None
         finally:
             try:
-                if processing_executor is not None:
-                    processing_executor.stop()
-                    processing_executor.join()
-                if executor is not None:
-                    executor.stop()
-                    executor.join(
-                        timeout=float(
-                            settings.document_deletion_shutdown_grace_seconds
-                        )
-                    )
+                clear_llm_provider_cache()
             finally:
                 try:
-                    clear_llm_provider_cache()
+                    close_reranking_service()
                 finally:
-                    try:
-                        close_reranking_service()
-                    finally:
-                        graph_repository.close()
+                    graph_repository.close()
 
     return lifespan
 

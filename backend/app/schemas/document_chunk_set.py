@@ -3,7 +3,7 @@ from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
-from app.ingestion.sequential_chunker import SegmentationConfig
+from app.ingestion.block_chunker import BlockChunkerConfig
 
 
 class ChunkSetCreate(BaseModel):
@@ -12,7 +12,7 @@ class ChunkSetCreate(BaseModel):
     graph_build_id: UUID
     request_id: UUID
     operation: Literal["process", "rechunk"] = "process"
-    config: SegmentationConfig = Field(default_factory=SegmentationConfig)
+    config: BlockChunkerConfig = Field(default_factory=BlockChunkerConfig)
     auto_run: bool = Field(default=False, strict=True)
 
 
@@ -33,7 +33,9 @@ class ChunkSetStatus(BaseModel):
     stage: str
     chunk_count: int | None
     embedding_counts: dict[str, int]
-    segmentation_config: SegmentationConfig
+    segmentation_config: BlockChunkerConfig
+    segmentation_version: str
+    segmentation_config_sha256: str
     is_current: bool
     publication_revision: int
     index_name: str | None
@@ -43,3 +45,14 @@ class ChunkSetStatus(BaseModel):
     search_enabled: bool
     job_id: UUID | None = None
     managed: bool = False
+
+
+class ChunkSetList(BaseModel):
+    items: list[ChunkSetStatus]
+    current: ChunkSetStatus | None
+    process_ready: dict[str, UUID] | None
+    total: int
+    limit: int
+    offset: int
+    segmentation_defaults: BlockChunkerConfig
+    segmentation_version: str

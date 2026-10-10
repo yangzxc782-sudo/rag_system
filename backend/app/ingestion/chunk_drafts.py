@@ -18,7 +18,7 @@ class ChunkDraft:
     """Neutral chunk values awaiting persistence by a later ingestion stage.
 
     Legacy drafts may have neither a parse run nor block references.
-    PDF adapters supply real MinerU references. Source freezing never writes chunks.
+    PDF ChunkSets supply frozen source references. Source freezing never writes chunks.
     Metadata belongs to this draft and must not be shared with another draft.
     """
 

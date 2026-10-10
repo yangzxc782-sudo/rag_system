@@ -5,7 +5,7 @@ import pytest
 
 from app.api.v1 import documents as api
 from app.core.errors import BusinessError
-from app.ingestion.sequential_chunker import SegmentationConfig
+from app.ingestion.block_chunker import BlockChunkerConfig, SEGMENTATION_VERSION
 from app.rag.context_builder import build_rag_context, format_context_for_prompt
 from app.schemas.conversation_rag import CandidatePayload, CitationPayload
 from app.services import rag, reranking
@@ -17,7 +17,7 @@ from test_rag_reranking import items, settings, FakeRerankingService
 def status(doc, sid):
     return dict(chunk_set_id=sid, document_id=doc, source_version=uuid4(), graph_build_id=uuid4(), request_id=uuid4(),
         operation="process", status="chunks_ready", job_status="queued", stage="chunks_ready", chunk_count=3,
-        embedding_counts={"not_started": 3}, segmentation_config=SegmentationConfig().model_dump(), is_current=False,
+        embedding_counts={"not_started": 3}, segmentation_version=SEGMENTATION_VERSION, segmentation_config_sha256=BlockChunkerConfig().fingerprint, segmentation_config=BlockChunkerConfig().model_dump(), is_current=False,
         publication_revision=0, index_name=None, last_error_code=None, lease_expires_at=None, can_advance=True, search_enabled=False)
 
 
@@ -35,7 +35,7 @@ def test_api_create_and_advance_are_independent(client, monkeypatch):
         return status(doc, sid)
     monkeypatch.setattr(api, "advance_chunk_set", advance)
     body = dict(source_version=str(uuid4()), graph_build_id=str(uuid4()), request_id=str(uuid4()), operation="rechunk",
-                config={"chunk_size": 80, "overlap": 10, "boundary": "line"})
+                config={"max_chunk_chars": 80, "min_chunk_chars": 0, "overlap_chars": 10})
     path = f"/api/v1/documents/{doc}/chunk-sets"
     result = client.post(path, json=body)
     assert result.status_code == 200 and len(calls) == 1 and calls[0][-1] == "rechunk"
@@ -44,7 +44,10 @@ def test_api_create_and_advance_are_independent(client, monkeypatch):
     assert calls[-1] == (doc, sid, True) and len(calls) == 2
 
 
-@pytest.mark.parametrize("config", [{"chunk_size": 10, "overlap": 10}, {"chunk_size": True},
+@pytest.mark.parametrize("config", [{"max_chunk_chars": 60001}, {"max_chunk_chars": 100},
+                                  {"max_chunk_chars": True}, {"keep_table_intact": "false"},
+                                  {"max_chunk_chars": 200, "overlap_chars": 200},
+                                  {"chunk_size": 10, "overlap": 10}, {"chunk_size": True},
                                   {"chunk_size": 20, "overlap": 0, "boundary": "semantic_rewrite"},
                                   {"chunk_size": 20, "overlap": 0, "source_spans": []}])
 def test_api_rejects_invalid_segmentation_before_service(client, config):
@@ -59,6 +62,7 @@ def test_disabled_error_and_strict_retry(client, monkeypatch):
     monkeypatch.setattr(api, "advance_chunk_set", disabled)
     path = f"/api/v1/documents/{uuid4()}/chunk-sets/{uuid4()}/advance"
     assert client.post(path, json={"retry": "true"}).status_code == 422
+    assert client.post(path, json={"retry": True, "config": BlockChunkerConfig().model_dump()}).status_code == 422
     assert client.post(path, json={}).status_code == 503
 
 
@@ -82,3 +86,40 @@ def test_versions_and_refs_survive_bge_and_phase13_serialization(monkeypatch):
     # M4 cannot trust copied metadata without an authoritative SQL binding.
     graph = rag.build_graph_context_for_rag(context, settings(graph_retrieval_enabled=True, pdf_kg_search_enabled=True), None)
     assert not graph.evidence and graph.source_error == "authority_unavailable"
+
+
+def test_list_exposes_the_authoritative_defaults(client, monkeypatch):
+    doc = uuid4()
+    monkeypatch.setattr(api, "list_chunk_sets", lambda *a, **kw: dict(items=[], current=None,
+        process_ready=None, total=0, limit=20, offset=0,
+        segmentation_defaults=BlockChunkerConfig().model_dump(), segmentation_version=SEGMENTATION_VERSION))
+    response = client.get(f"/api/v1/documents/{doc}/chunk-sets")
+    assert response.status_code == 200
+    assert response.json()["data"]["segmentation_defaults"] == BlockChunkerConfig().model_dump()
+    assert response.json()["data"]["segmentation_version"] == SEGMENTATION_VERSION
+
+
+@pytest.mark.parametrize("payload", [{}, {"config": {}}, {"config": BlockChunkerConfig().model_dump()}])
+def test_create_process_and_rechunk_normalize_defaults(client, monkeypatch, payload):
+    from app.core.config import Settings
+    from unittest.mock import Mock
+    client.app.state.settings = Settings(_env_file=None)
+    doc, sid = uuid4(), uuid4()
+    prepare = Mock(return_value=status(doc, sid))
+    monkeypatch.setattr(api, "prepare_chunk_set", prepare)
+    for operation in ("process", "rechunk"):
+        response = client.post(f"/api/v1/documents/{doc}/chunk-sets", json=dict(
+            source_version=str(uuid4()), graph_build_id=str(uuid4()), request_id=str(uuid4()), operation=operation, **payload))
+        assert response.status_code == 200
+        assert prepare.call_args.args[5] == BlockChunkerConfig()
+
+
+@pytest.mark.parametrize("config", [None, {"boundary": "line"}, {"overlap": 100}, {"chunk_size": 1000}])
+def test_removed_protocol_is_rejected_before_chunk_service(client, monkeypatch, config):
+    from unittest.mock import Mock
+    prepare = Mock()
+    monkeypatch.setattr(api, "prepare_chunk_set", prepare)
+    response = client.post(f"/api/v1/documents/{uuid4()}/chunk-sets", json=dict(
+        source_version=str(uuid4()), graph_build_id=str(uuid4()), request_id=str(uuid4()), config=config))
+    assert response.status_code == 422
+    prepare.assert_not_called()

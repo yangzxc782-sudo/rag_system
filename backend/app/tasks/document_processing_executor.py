@@ -1,6 +1,9 @@
 """Default-off local executor; SQL jobs remain authoritative across restarts."""
+import asyncio
+import json
 import logging
 import threading
+from time import monotonic
 from uuid import uuid4
 
 from sqlalchemy import select
@@ -22,6 +25,8 @@ class DocumentProcessingExecutor:
         self.worker_id = f"pdf-processing-{uuid4()}"
         self._stop, self._wake = threading.Event(), threading.Event()
         self._thread = None
+        self._heartbeat_thread = None
+        self._admission_lock = threading.Lock()
 
     def start(self):
         if not self.settings.document_processing_executor_enabled or self._thread and self._thread.is_alive():
@@ -35,12 +40,42 @@ class DocumentProcessingExecutor:
         self._wake.set()
 
     def stop(self):
-        self._stop.set()
-        self._wake.set()
+        with self._admission_lock:
+            self._stop.set()
+            self._wake.set()
 
-    def join(self, timeout=None):
+    def join(self, timeout=None) -> bool:
+        """Wait at most one timeout for both threads; False means still running."""
+        timeout = self.settings.document_processing_shutdown_grace_seconds if timeout is None else timeout
+        deadline = monotonic() + max(0, timeout)
         if self._thread:
-            self._thread.join(self.settings.document_processing_shutdown_grace_seconds if timeout is None else timeout)
+            self._thread.join(max(0, deadline - monotonic()))
+        if self._heartbeat_thread:
+            self._heartbeat_thread.join(max(0, deadline - monotonic()))
+        return not any(thread and thread.is_alive() for thread in (self._thread, self._heartbeat_thread))
+
+    async def shutdown(self) -> None:
+        """Drain admitted work without cancelling IO or closing its resources.
+
+        The grace period is a warning threshold, not permission to abandon a
+        daemon. A blocked stage/heartbeat keeps shutdown pending with periodic
+        warnings until it returns; no new recovery or forced cancellation occurs.
+        """
+        self.stop()
+        started = monotonic()
+        timeout = self.settings.document_processing_shutdown_grace_seconds
+        while not await asyncio.to_thread(self.join, timeout):
+            logger.warning("PDF executor shutdown waiting: context=%s", json.dumps({
+                "event": "pdf_executor_shutdown_waiting", "worker_id": self.worker_id,
+                "elapsed_ms": round((monotonic() - started) * 1000, 3),
+                "worker_alive": bool(self._thread and self._thread.is_alive()),
+                "heartbeat_alive": bool(self._heartbeat_thread and self._heartbeat_thread.is_alive()),
+                "action": "wait_for_safe_completion",
+            }, separators=(",", ":")))
+            # A configured zero grace must not create a busy warning loop.
+            timeout = max(1.0, self.settings.document_processing_shutdown_grace_seconds)
+        logger.info("PDF executor shutdown complete: worker_id=%s elapsed_ms=%.3f",
+                    self.worker_id, (monotonic() - started) * 1000)
 
     def _loop(self):
         while not self._stop.is_set():
@@ -75,12 +110,18 @@ class DocumentProcessingExecutor:
                 .where(Document.deletion_status == "normal", DocumentProcessingJob.status == "queued",
                     DocumentProcessingJob.checkpoint["pipeline"]["version"].as_integer() == 1)
                 .order_by(DocumentProcessingJob.updated_at, DocumentProcessingJob.id).limit(1)).first()
-        if candidate is None or self._stop.is_set():
+        if candidate is None:
             return False
         doc_id, job_id = candidate
         finished = threading.Event()
-        heartbeat = threading.Thread(target=self._heartbeat, args=(finished, doc_id, job_id), daemon=True)
-        heartbeat.start()
+        # Linearize stage admission with stop(). Already-admitted work completes
+        # under its existing M5 lease; stopping never cancels the heartbeat early.
+        with self._admission_lock:
+            if self._stop.is_set():
+                return False
+            heartbeat = threading.Thread(target=self._heartbeat, args=(finished, doc_id, job_id), daemon=True)
+            self._heartbeat_thread = heartbeat
+            heartbeat.start()
         try:
             with self.sessions() as db:
                 return self.advance(db, doc_id, job_id, settings=self.settings, worker_id=self.worker_id)
@@ -89,4 +130,6 @@ class DocumentProcessingExecutor:
             return False
         finally:
             finished.set()
-            heartbeat.join(timeout=1)
+            # A renewal may still be inside DB IO. Do not orphan it or start
+            # another stage while it is finishing; shutdown() observes the wait.
+            heartbeat.join()

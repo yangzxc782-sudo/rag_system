@@ -10,7 +10,7 @@ import pytest
 from sqlalchemy import select, func
 
 from app.core.errors import BusinessError
-from app.ingestion.sequential_chunker import SegmentationConfig
+from app.ingestion.block_chunker import BlockChunkerConfig
 from app.models import Document, DocumentChunk, DocumentProcessingJob, KGExtractionUnit
 from app.models.document_chunk_set import ChunkSet
 from app.services import document_processing as service
@@ -33,7 +33,7 @@ def setup(db, settings, monkeypatch):
     db.add(item)
     db.commit()
     doc = item.id
-    result = service.request_processing(db, doc, uuid4(), SegmentationConfig(chunk_size=50, overlap=5), settings=settings)
+    result = service.request_processing(db, doc, uuid4(), BlockChunkerConfig(min_chunk_chars=0, max_chunk_chars=50, overlap_chars=5), settings=settings)
     return doc, result, client, uploads
 
 
@@ -82,10 +82,10 @@ def test_full_pipeline_atomic_source_handoff_and_restart(db, settings, monkeypat
 
 def test_request_idempotence_config_conflict_and_legacy_chunk_rejection(db, settings, monkeypatch):
     doc, result, *_ = setup(db, settings, monkeypatch)
-    again = service.request_processing(db, doc, result["request_id"], SegmentationConfig(chunk_size=50, overlap=5), settings=settings)
+    again = service.request_processing(db, doc, result["request_id"], BlockChunkerConfig(min_chunk_chars=0, max_chunk_chars=50, overlap_chars=5), settings=settings)
     assert again["job_id"] == result["job_id"]
     with pytest.raises(BusinessError) as exc:
-        service.request_processing(db, doc, result["request_id"], SegmentationConfig(chunk_size=51, overlap=5), settings=settings)
+        service.request_processing(db, doc, result["request_id"], BlockChunkerConfig(min_chunk_chars=0, max_chunk_chars=51, overlap_chars=5), settings=settings)
     assert exc.value.code == "DOCUMENT_PROCESSING_REQUEST_CONFLICT"
     db.rollback()
     with pytest.raises(BusinessError) as exc:
@@ -96,7 +96,7 @@ def test_request_idempotence_config_conflict_and_legacy_chunk_rejection(db, sett
     db.add(DocumentChunk(document_id=doc, chunk_index=0, content="legacy", source_metadata={}))
     db.commit()
     with pytest.raises(BusinessError) as exc:
-        service.request_processing(db, doc, uuid4(), SegmentationConfig(), settings=settings)
+        service.request_processing(db, doc, uuid4(), BlockChunkerConfig(), settings=settings)
     assert exc.value.code == "DOCUMENT_PROCESSING_EXISTING_CHUNKS"
 
 
@@ -245,9 +245,9 @@ def test_rechunk_worker_never_parses_extracts_or_writes_kg(db, settings, monkeyp
     for name in ("prepare_graph_build", "advance_graph_build", "make_graph_id", "extract_piece", "configured_writer"):
         monkeypatch.setattr(kg, name, forbidden)
     monkeypatch.setattr(document_parsing, "parse_document", forbidden)
-    for size, overlap, boundary in ((40, 0, "characters"), (60, 5, "line"), (80, 20, "paragraph")):
+    for size, overlap in ((40, 0), (60, 5), (80, 20)):
         result = chunks.prepare_chunk_set(db, doc, state["source_version"], state["graph_build_id"], uuid4(),
-            SegmentationConfig(chunk_size=size, overlap=overlap, boundary=boundary), operation="rechunk", settings=settings)
+            BlockChunkerConfig(min_chunk_chars=0, max_chunk_chars=size, overlap_chars=overlap), operation="rechunk", settings=settings)
         service.manage_rechunk(db, doc, result["job_id"], settings=settings)
         final, _ = finish(db, settings, doc, result["job_id"], assets, encoder=Encoder(db, settings), index=Index(db))
         assert final["status"] == "succeeded"
@@ -306,9 +306,105 @@ def test_existing_m2_handoff_can_be_explicitly_adopted_without_rebuilding(db, se
     job_id, calls = job.id, (len(model.calls), len(writer.calls))
     db.commit()
     adopted = service.manage_rechunk(db, doc, job_id, settings=settings,
-        config=SegmentationConfig(chunk_size=60, overlap=5))
+        config=BlockChunkerConfig(min_chunk_chars=0, max_chunk_chars=60, overlap_chars=5))
     assert adopted["managed"] and adopted["request_id"] == request
     final, _ = finish(db, settings, doc, job_id, assets, graph_provider=model, writer=writer,
         encoder=Encoder(db, settings), index=Index(db))
     assert final["status"] == "succeeded" and (final["source_version"], final["graph_build_id"]) == (source, build)
     assert (len(model.calls), len(writer.calls)) == calls
+
+
+@pytest.mark.parametrize("has_set", [False, True])
+def test_s3_resume_preserves_frozen_config_and_rejects_explicit_difference(db, settings, has_set):
+    from test_chunk_set_builds import ready, prepare
+    values = ready(db, settings)
+    doc = values[0]
+    settings.document_processing_executor_enabled = True
+    config = BlockChunkerConfig(max_chunk_chars=1200, min_chunk_chars=200, overlap_chars=120)
+    if has_set:
+        state = prepare(db, settings, values, config)
+        job_id = state["job_id"]
+    else:
+        job_id = db.scalar(select(DocumentProcessingJob.id))
+    db.commit()
+    first = service.manage_rechunk(db, doc, job_id, settings=settings, config=config)
+    assert first["config"] == config.model_dump()
+    before = kg._snapshot(db.get(DocumentProcessingJob, job_id))
+    db.commit()
+    with pytest.raises(BusinessError) as caught:
+        service.manage_rechunk(db, doc, job_id, settings=settings, config=BlockChunkerConfig())
+    assert caught.value.code == "DOCUMENT_PROCESSING_REQUEST_CONFLICT"
+    db.rollback()
+    assert kg._snapshot(db.get(DocumentProcessingJob, job_id)) == before
+    again = service.manage_rechunk(db, doc, job_id, settings=settings)
+    assert again["config"] == first["config"]
+    service.manage_rechunk(db, doc, job_id, settings=settings, config=config)
+    model, writer = values[5:]
+    counts = len(model.calls), len(writer.calls)
+    final, _ = finish(db, settings, doc, job_id, values[3], graph_provider=model, writer=writer,
+        encoder=Encoder(db, settings), index=Index(db))
+    assert final["status"] == "succeeded" and final["config"] == config.model_dump()
+    assert (len(model.calls), len(writer.calls)) == counts
+
+
+def test_s3_failed_retry_uses_frozen_config_and_existing_chunks(db, settings, monkeypatch):
+    from test_chunk_set_builds import ready, prepare, chunk_snapshot
+    from app.ingestion.block_chunker import SEGMENTATION_VERSION
+    values = ready(db, settings)
+    settings.document_processing_executor_enabled = True
+    config = BlockChunkerConfig(max_chunk_chars=1200, min_chunk_chars=200, overlap_chars=120)
+    state = prepare(db, settings, values, config)
+    job = state["job_id"]
+    service.manage_rechunk(db, values[0], job, settings=settings)
+    index, encoder = Index(db), Encoder(db, settings)
+    index.fail = True
+    with pytest.raises(BusinessError):
+        finish(db, settings, values[0], job, values[3], encoder=encoder, index=index)
+    stored = [chunk_snapshot(c) for c in chunks._chunks(db, state["chunk_set_id"])]
+    before = deepcopy(db.get(DocumentProcessingJob, job).checkpoint)
+    db.commit()
+    index.fail = False
+    monkeypatch.setenv("CHUNK_SIZE_CHARS", "333")
+    monkeypatch.setenv("CHUNK_OVERLAP_CHARS", "111")
+    service.retry_processing(db, values[0], job, settings=settings)
+    final, _ = finish(db, settings, values[0], job, values[3], encoder=encoder, index=index)
+    assert final["status"] == "succeeded" and final["config"] == config.model_dump()
+    assert before["pipeline"]["segmentation_version"] == SEGMENTATION_VERSION
+    assert before["pipeline"]["segmentation_config_sha256"] == config.fingerprint
+    assert [chunk_snapshot(c) for c in chunks._chunks(db, state["chunk_set_id"])] == stored
+
+
+def test_s3_default_and_explicit_default_input_identity(settings):
+    settings.pdf_kg_embedding_revision = "synthetic-default"
+    from app.ingestion.block_chunker import SEGMENTATION_VERSION
+    from app.schemas.document_processing import ProcessDocumentRequest
+    from app.ingestion.frozen_source import json_bytes
+    request = uuid4()
+    omitted = ProcessDocumentRequest(request_id=request)
+    explicit = ProcessDocumentRequest(request_id=request, config=BlockChunkerConfig().model_dump())
+    assert omitted.config == explicit.config
+    a, b = (service.pipeline_contract(settings, r.config) for r in (omitted, explicit))
+    assert a == b and json_bytes(a) == json_bytes(b)
+    assert a["segmentation_version"] == SEGMENTATION_VERSION
+    assert a["segmentation_config_sha256"] == BlockChunkerConfig().fingerprint
+    changed = service.pipeline_contract(settings, BlockChunkerConfig(max_chunk_chars=1200, overlap_chars=120))
+    assert changed != a and changed["provider_sha256"] == a["provider_sha256"]  # KG execution unaffected.
+
+
+@pytest.mark.parametrize("field,value", [
+    ("segmentation_version", "sequential-codepoints-v1"),
+    ("segmentation_config_sha256", "0" * 64),
+    ("config", {"max_chunk_chars": 1800}),
+])
+def test_s3_corrupt_frozen_processing_config_fails_before_any_io(db, settings, monkeypatch, field, value):
+    doc, state, *_ = setup(db, settings, monkeypatch)
+    job = db.get(DocumentProcessingJob, state["job_id"])
+    checkpoint = deepcopy(job.checkpoint)
+    checkpoint["pipeline"][field] = value
+    job.checkpoint = checkpoint
+    db.commit()
+    def forbidden(*args, **kwargs):
+        pytest.fail("Invalid frozen config reached external work")
+    with pytest.raises(BusinessError):
+        step(db, settings, doc, state["job_id"], parser=forbidden)
+    assert service.processing_status(db, doc, state["job_id"])["status"] == "failed"

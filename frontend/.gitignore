@@ -15,6 +15,7 @@
 
 # next.js
 /.next/
+/.next-pdf-structure/
 /out/
 
 # production

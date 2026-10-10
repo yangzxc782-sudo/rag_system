@@ -1,6 +1,7 @@
 """Offline M2 service integration. SQLite checks flow, NOT PostgreSQL triggers/locks."""
 from copy import deepcopy
 from datetime import timedelta
+import json
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -116,7 +117,8 @@ def source(db, assets, text="# 6 技术要求\nZL101 ≥350 MPa", filename="test
     db.add(run)
     b = block(0, text)
     b.document_id, b.parse_run_id = document_id, parse_id
-    frozen = render_frozen_source([b], document_id=document_id, parse_run_id=parse_id, source_version=version, output_prefix="x")
+    frozen = render_frozen_source([b], document_id=document_id, parse_run_id=parse_id, source_version=version,
+                                  output_prefix=f"source/{version}", registered_asset_keys=[])
     key, map_key = f"source/{version}/cleaned.md", f"source/{version}/map.json"
     assets.data[key], assets.data[map_key] = frozen.canonical, frozen.block_map
     row = SourceDocumentVersion(source_version=version, document_id=document_id, parse_run_id=parse_id,
@@ -251,6 +253,7 @@ def test_model_error_is_failed_not_empty_and_retry_is_explicit(db, settings):
 
 @pytest.mark.parametrize("cause_code,logged_code", [
     ("LLM_JSON_INVALID", "LLM_JSON_INVALID"), ("SECRET_UNRECOGNIZED_CODE", "UNCLASSIFIED"),
+    ("MINIO_SERVICE_UNAVAILABLE", "UNCLASSIFIED"), ("KG_LEASE_LOST", "UNCLASSIFIED"),
 ])
 def test_json_failure_diagnostics_keep_prior_empty_units_and_stage_contract(
     db, settings, caplog, cause_code, logged_code,
@@ -280,8 +283,115 @@ def test_json_failure_diagnostics_keep_prior_empty_units_and_stage_contract(
     assert record.document_id == str(doc) and record.graph_build_id == str(build)
     assert record.unit_id == str(units[3].id) and record.unit_index == 3 and record.unit_kind == "clause"
     assert record.cause_code == logged_code
+    assert record.business_error_code == (None if cause_code == "SECRET_UNRECOGNIZED_CODE" else cause_code)
+    assert record.business_error_code_redacted == (cause_code == "SECRET_UNRECOGNIZED_CODE")
+    assert record.phase == "llm_generate" and record.piece_index == 0
+    assert record.exception_type == "BusinessError" and record.job_id == str(job.id)
     rendered = caplog.text + repr(record.__dict__)
     assert "SECRET" not in rendered and body not in rendered and record.exc_info is None
+
+
+@pytest.mark.parametrize("case,phase,exception_type", [
+    ("duplicate_key", "strict_json", "ValueError"),
+    ("schema", "schema_validation", "ValidationError"),
+    ("qualify", "qualify", "ValueError"),
+])
+def test_post_llm_failure_preserves_safe_metadata_and_stage_contract(db, settings, caplog, case, phase, exception_type):
+    from app.llm.api import APILLMProvider
+    from test_api_llm_provider import FakeOpenAIClient, FakeCompletions, FakeCompletion
+    doc, _, build, assets, _ = prepared(db, settings)
+    raw = raw_part()
+    if case == "schema":
+        raw["entities"][0]["name"] = {"SECRET_RESPONSE": "SECRET_VALUE"}
+    elif case == "qualify":
+        raw["entities"][0]["properties"]["anchor_id"] = "SECRET_RESPONSE"
+    content = '{"entities":[],"entities":[],"relationships":[]}' if case == "duplicate_key" else json.dumps(raw)
+    completion = FakeCompletion(content=content)
+    completion.choices[0].finish_reason = "stop"
+    completion.usage = SimpleNamespace(prompt_tokens=6422, completion_tokens=750, total_tokens=7172)
+    api_settings = settings.model_copy(update=dict(llm_provider="api", llm_remote_supports_json_mode=True,
+        llm_remote_model="synthetic", llm_remote_base_url="https://synthetic.invalid/v1",
+        llm_remote_api_key="SECRET_API_KEY"))
+    provider = APILLMProvider(api_settings, client=FakeOpenAIClient(FakeCompletions(response=completion)))
+    writer, fingerprint = Writer(db), db.get(GraphBuild, build).provider_fingerprint
+    db.rollback()
+    with caplog.at_level("INFO"), pytest.raises(BusinessError) as error:
+        advance(db, settings, doc, build, assets, provider, writer)
+    assert error.value.code == "KG_EXTRACTION_FAILED"
+    assert type(error.value.__cause__).__name__ == exception_type
+    failure, = [r for r in caplog.records if getattr(r, "event", None) == "kg_extraction_unit_failed"]
+    success, = [r for r in caplog.records if getattr(r, "event", None) == "kg_llm_response_received"]
+    assert failure.phase == phase and failure.exception_type == exception_type
+    assert failure.cause_code == "UNCLASSIFIED" and failure.business_error_code is None
+    assert failure.exception_file == "kg_extract.py" and failure.exception_line > 0
+    for record in (failure, success):
+        assert record.document_id == str(doc) and record.graph_build_id == str(build)
+        assert record.unit_id == str(service._units(db, build)[0].id) and record.piece_index == 0
+        assert record.finish_reason == "stop" and record.effective_max_tokens == 8192
+        assert record.prompt_tokens == 6422 and record.completion_tokens == 750 and record.total_tokens == 7172
+        assert json.loads(record.getMessage().split("context=", 1)[1])["finish_reason"] == "stop"
+        assert record.exc_info is None
+    if case == "schema":
+        assert failure.validation_errors == [{"path": ["entities", 0, "name"], "type": "string_type"}]
+    assert "SECRET" not in caplog.text + repr([r.__dict__ for r in caplog.records])
+    assert not writer.calls and not [event for event in assets.events if event[0] == "save"]
+    unit, = service._units(db, build)
+    assert unit.status == "failed" and unit.piece_checkpoints == {}
+    assert db.get(GraphBuild, build).provider_fingerprint == fingerprint
+    job = db.scalar(select(DocumentProcessingJob))
+    assert job.status == "failed" and job.chunk_set_id is None
+    assert not job.checkpoint.get("external_write_pending")
+
+
+@pytest.mark.parametrize("during", ["source_read", "before_asset_fence", "piece_asset_save", "provider_close"])
+def test_unit_failure_diagnostics_cover_non_validation_stages(db, settings, monkeypatch, caplog, during):
+    doc, _, build, assets, _ = prepared(db, settings)
+    provider, writer = Provider(db), Writer(db)
+    original = RuntimeError("SECRET_EXCEPTION_BODY")
+    def fail(*args, **kwargs):
+        raise original
+    if during == "source_read":
+        monkeypatch.setattr(assets, "read", fail)
+    elif during == "before_asset_fence":
+        fenced = service._fenced
+        # Fail once so the existing failure-saving fence can still run.
+        did_fail = False
+        def fail_once(*args, **kwargs):
+            nonlocal did_fail
+            if provider.calls and not did_fail:
+                did_fail = True
+                raise original
+            return fenced(*args, **kwargs)
+        monkeypatch.setattr(service, "_fenced", fail_once)
+    elif during == "piece_asset_save":
+        monkeypatch.setattr(assets, "save", fail)
+    else:
+        provider.values = [dict(entities=[{}], relationships=[])]
+        provider.close = fail
+        monkeypatch.setattr(service, "build_llm_provider", lambda settings: provider)
+    with pytest.raises(BusinessError) as error:
+        advance(db, settings, doc, build, assets, None if during == "provider_close" else provider, writer)
+    assert error.value.code == "KG_EXTRACTION_FAILED" and error.value.__cause__ is original
+    record, = [r for r in caplog.records if getattr(r, "event", None) == "kg_extraction_unit_failed"]
+    assert record.phase == during and record.exception_type == "RuntimeError"
+    assert record.piece_index == (None if during == "source_read" else 0)
+    if during == "provider_close":
+        assert record.prior_phase == "schema_validation" and record.prior_exception_type == "ValidationError"
+    assert "SECRET" not in caplog.text + repr(record.__dict__)
+    job = db.scalar(select(DocumentProcessingJob))
+    assert bool(job.checkpoint.get("requires_io_reconciliation")) == (during == "piece_asset_save")
+
+
+def test_unit_failure_diagnostic_error_does_not_replace_primary_failure(db, settings, monkeypatch):
+    doc, _, build, assets, _ = prepared(db, settings)
+    failure = BusinessError("LLM_JSON_INVALID", "SECRET")
+    def broken(*args):
+        raise RuntimeError("SECRET_DIAGNOSTICS")
+    monkeypatch.setattr(service, "extraction_failure_diagnostics", broken)
+    with pytest.raises(BusinessError) as error:
+        advance(db, settings, doc, build, assets, Provider(db, [failure]), Writer(db))
+    assert error.value.code == "KG_EXTRACTION_FAILED" and error.value.__cause__ is failure
+    assert db.get(GraphBuild, build).status == "extraction_failed"
 
 
 def test_table_piece_retry_reuses_completed_piece_and_anchor(db, settings):
@@ -381,6 +491,39 @@ def test_source_corruption_and_changed_provider_refuse_reuse(db, settings):
     with pytest.raises(BusinessError):
         advance(db, settings, doc, build, assets, provider, writer)
     assert not provider.calls and not writer.calls
+
+
+@pytest.mark.parametrize("change", [
+    lambda d: d.update(schema_version=1),
+    lambda d: d["blocks"][0].pop("section_path"),
+    lambda d: d["blocks"][0].pop("content_format"),
+    lambda d: d["blocks"][0].pop("asset_keys"),
+    lambda d: d["blocks"][0].update(asset_keys=["foreign-parse/image.png"]),
+])
+def test_m2_prepare_rejects_invalid_source_map_before_creating_build(db, settings, change):
+    assets = MemoryAssets(db)
+    doc, version = source(db, assets, "# 6 要求\n合成正文")
+    row = db.get(SourceDocumentVersion, version)
+    directory = json.loads(assets.data[row.block_map_object_key])
+    change(directory)
+    raw = json_bytes(directory)
+    assets.data[row.block_map_object_key] = raw
+    # Even a matching byte hash cannot bypass the required v2 structure.
+    row.block_map_sha256 = sha256_bytes(raw)
+    db.commit()
+    with pytest.raises(BusinessError) as error:
+        service.prepare_graph_build(db, doc, version, uuid4(), settings=settings, assets=assets)
+    assert error.value.code == "KG_SOURCE_INVALID"
+    assert not db.scalar(select(GraphBuild.id))
+    assert not db.scalar(select(KGExtractionUnit.id))
+    assert all(event == "read" for event, _ in assets.events)
+
+
+def test_source_reader_rejects_cross_directory_asset_pair_before_reads():
+    assets = SimpleNamespace(read=lambda *args: pytest.fail("must reject before asset IO"))
+    with pytest.raises(ValueError, match="directories disagree"):
+        service._source_text({"canonical_object_key": "run-a/cleaned.md",
+                              "block_map_object_key": "run-b/source-map.json"}, assets)
 
 
 def test_disabled_build_performs_no_external_io(db, settings):

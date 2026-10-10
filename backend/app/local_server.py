@@ -4,6 +4,7 @@ No public bind, forwarded-peer middleware or deployment flag can enable this
 capability. Do not expose this unauthenticated server through a reverse proxy.
 """
 from ipaddress import ip_address
+import signal
 from urllib.parse import urlsplit
 
 import uvicorn
@@ -50,9 +51,41 @@ def server_config(app, *, port=8000):
                           proxy_headers=False, forwarded_allow_ips="", access_log=False)
 
 
+class LocalServer(uvicorn.Server):
+    """Consume Uvicorn's SIGINT replay only after verified successful shutdown."""
+
+    def __init__(self, config):
+        super().__init__(config)
+        self.shutdown_completed = False
+
+    def _check_lifespan(self, phase):
+        # Uvicorn logs ASGI failure messages but does not raise them to run().
+        if any(getattr(self.lifespan, name, False) for name in
+               ("startup_failed", "shutdown_failed", "error_occurred")):
+            raise RuntimeError(f"Local ASGI lifespan {phase} failed; see Uvicorn logs")
+
+    async def startup(self, sockets=None):
+        await super().startup(sockets=sockets)
+        self._check_lifespan("startup")
+
+    async def shutdown(self, sockets=None):
+        await super().shutdown(sockets=sockets)
+        self._check_lifespan("shutdown")
+        self.shutdown_completed = self.started and not self.force_exit
+
+    def run(self, sockets=None):
+        try:
+            return super().run(sockets=sockets)
+        except KeyboardInterrupt:
+            # 0.49 replays captured signals after shutdown. Never hide an early
+            # interruption, forced exit, or a failure in startup/lifespan/shutdown.
+            if not (self.shutdown_completed and self._captured_signals == [signal.SIGINT]):
+                raise
+
+
 def main():
     from app.main import create_app
-    uvicorn.Server(server_config(create_app())).run()
+    LocalServer(server_config(create_app())).run()
 
 
 if __name__ == "__main__":

@@ -3,16 +3,38 @@ from copy import deepcopy
 from datetime import date
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from pydantic import ValidationError
 
 from app.extraction.kg_protocol import ANCHOR_ADAPTER, AnchorEnd, format_anchor_end, format_anchor_start, validate_anchors
 from app.extraction.kg_units import make_graph_id, render_tagged_source, split_units
-from app.extraction.kg_extract import TEMPLATE_SHA256, qualify, strict_json, template
-from app.ingestion.frozen_source import strip_kg_markers
+from app.extraction.kg_extract import (TEMPLATE_SHA256, extract_piece, extraction_failure_diagnostics,
+    qualify, strict_json, template)
+from app.ingestion.frozen_source import render_frozen_source, strip_kg_markers
+from pdf_source_fixtures import structured_source_blocks
 
 GRAPH = "KG-20260929-GBT94382013"
+
+
+def test_source_map_v2_preserves_m2_units_anchors_and_extraction_pieces():
+    blocks, identity = structured_source_blocks()
+    frozen = render_frozen_source(blocks, **identity, output_prefix="run", registered_asset_keys=[])
+    entries = json.loads(frozen.block_map)["blocks"]
+    text = frozen.canonical.decode("utf-8")
+    units = split_units(text, "KG-SYNTHETIC", block_directory=entries)
+    # Golden M2 output captured before adding source-map structural metadata.
+    assert [(u.source_start, u.source_end, u.anchor.anchor_id, u.input_sha256, len(u.pieces)) for u in units] == [
+        (6, 11, "KG-SYNTHETIC::C-6-1", "e10b64a4a2a78ea62cc8b229c55fba832a0dd61be4427c16445c5621ced4c8d9", 1),
+        (13, 3092, "KG-SYNTHETIC::T-6-1", "a6a499d7620581319f835f7db1023904f58327be67eeb57e7b2fec4a6cd7ab54", 3),
+        (3094, 3110, "KG-SYNTHETIC::C-6-2", "a486362bcf4bf218945829d31ccaead699139b9e2dcb5c3cbabadf291ecb11a5", 1),
+        (3120, 3122, "KG-SYNTHETIC::C-6.1-1", "091feca20be4216b82b50c3419542a91158e6be64dcfa2e732877a99cc8bf38a", 1),
+    ]
+    # Unit extraction still consumes its original fields; this is not a v1 reader fallback.
+    previous_fields = [{k: v for k, v in entry.items() if k not in {
+        "section_path", "content_format", "asset_keys"}} for entry in entries]
+    assert units == split_units(text, "KG-SYNTHETIC", block_directory=previous_fields)
 
 
 def test_actual_package_annotation_samples():
@@ -199,3 +221,68 @@ def test_structurally_invalid_results_are_errors_not_empty_success(raw):
 def test_strict_response_json(raw):
     with pytest.raises((ValueError, UnicodeError)):
         strict_json(raw)
+
+
+@pytest.mark.parametrize("case,phase,exception", [
+    ("duplicate_key", "strict_json", ValueError),
+    ("schema", "schema_validation", ValidationError),
+    ("reserved_property", "qualify", ValueError),
+    ("anchor", "anchor_validation", ValidationError),
+])
+def test_extract_diagnostics_identify_actual_phase_without_changing_exception(case, phase, exception, caplog):
+    data, metadata = raw_part(), anchor("clause")
+    if case == "schema":
+        data["entities"][0]["name"] = {"SECRET_RESPONSE": "SECRET_INPUT"}
+    elif case == "reserved_property":
+        data["entities"][0]["properties"]["anchor_id"] = "SECRET_PROPERTY"
+    elif case == "anchor":
+        metadata["clause_ref"] = "SECRET_INVALID_ANCHOR"
+    content = '{"entities":[],"entities":[],"relationships":[]}' if case == "duplicate_key" else json.dumps(data)
+    diagnostics = {"response": "SECRET_RESPONSE", "prompt": "SECRET_PROMPT", "Authorization": "SECRET_KEY"}
+    provider = SimpleNamespace(generate=lambda request: SimpleNamespace(text=content))
+    with caplog.at_level("INFO"), pytest.raises(exception) as error:
+        extract_piece(provider, text="SECRET_SOURCE", filename="SECRET_FILENAME", anchor_metadata=metadata,
+                      piece_index=2, timeout_seconds=120, max_tokens=8192, diagnostics=diagnostics)
+    assert diagnostics["phase"] == phase and diagnostics["piece_index"] == 2
+    assert diagnostics["effective_max_tokens"] == 8192 and diagnostics["finish_reason"] is None
+    details = extraction_failure_diagnostics(error.value, phase)
+    assert details["exception_type"] == exception.__name__
+    assert details["exception_file"] == "kg_extract.py" and details["exception_line"] > 0
+    if case == "schema":
+        assert details["validation_errors"] == [{"path": ["entities", 0, "name"], "type": "string_type"}]
+    else:
+        assert "validation_errors" not in details
+    assert "SECRET" not in repr(details) + caplog.text + repr([r.__dict__ for r in caplog.records])
+
+
+def test_schema_diagnostics_redact_unknown_keys_and_bound_error_count():
+    data = raw_part()
+    data["SECRET_ROOT"] = "SECRET_INPUT"
+    data["entities"][0]["SECRET_ENTITY_FIELD"] = "SECRET_INPUT"
+    # Even known field names beneath free-form properties/provenance are not schema paths.
+    data["entities"][0]["properties"][7] = "SECRET_PROPERTY"
+    data["relationships"][0]["provenance"][9] = "SECRET_PROVENANCE"
+    with pytest.raises(ValidationError) as error:
+        qualify(data, anchor(), 0)
+    diagnostics = extraction_failure_diagnostics(error.value, "schema_validation")
+    paths = [entry["path"] for entry in diagnostics["validation_errors"]]
+    assert ["<redacted>"] in paths
+    assert ["entities", 0, "<redacted>"] in paths
+    assert ["entities", 0, "properties", "<redacted>"] in paths
+    assert ["relationships", 0, "provenance", "<redacted>"] in paths
+    assert "SECRET" not in repr(diagnostics)
+    data = {"entities": [{} for _ in range(30)], "relationships": []}
+    with pytest.raises(ValidationError) as many:
+        qualify(data, anchor(), 0)
+    diagnostics = extraction_failure_diagnostics(many.value, "schema_validation")
+    assert diagnostics["validation_error_count"] == 120
+    assert len(diagnostics["validation_errors"]) == 8 and diagnostics["validation_errors_truncated"]
+
+
+def test_schema_diagnostics_failure_is_best_effort():
+    class UnreadableValidation(ValidationError):
+        def errors(self, **kwargs):
+            raise RuntimeError("SECRET_DIAGNOSTIC_ERROR")
+    error = UnreadableValidation.from_exception_data("synthetic", [])
+    diagnostics = extraction_failure_diagnostics(error, "schema_validation")
+    assert diagnostics == {"exception_type": "UnreadableValidation", "diagnostics_unavailable": True}

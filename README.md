@@ -1,6 +1,14 @@
 # 铸型工艺知识库 RAG 管理系统
 
-## 当前 PDF/KG 边界（M5，2026-10-07）
+## 当前 PDF/KG 边界（结构感知恢复 S4，2026-10-08）
+
+PDF 唯一切分实现为 `pdf-block-aware-codepoints-v1`，读取冻结 source-map v2，保存 manifest v3。
+六字段默认配置由后端 BlockChunkerConfig 统一提供：max_chunk_chars=1800、min_chunk_chars=200、
+overlap_chars=0、max_table_chars=4000、keep_table_intact=true、keep_formula_with_context=true。
+完整处理和重切分共用表单；旧 chunk_size/overlap/boundary 拒绝，旧缓存须显式丢弃。
+正文与表格各用各的阈值，overlap 尽量添加且可为 0；完整章节路径保留，显示标题取最后一级前 255 个 code points。
+旧 sequential/adapter PDF 入口已退役，无旧 source-map/算法 fallback；先构图后切分的顺序不变。
+本轮未进入 S5，未运行真实 PDF/LLM/外部存储验收；以下 M0–M5 内容说明既有架构边界。
 
 上传和解析入口只接受 PDF；后端独立核对扩展名与 PDF 文件头，旧环境配置不能扩大准入。
 Markdown Native 上传、AST 解析、切片路径已退役；Markdown 仍用于内部解析和清洗产物。
@@ -9,7 +17,7 @@ Markdown Native 上传、AST 解析、切片路径已退役；Markdown 仍用于
 解析成功返回 `cleaned_source_ready`、`source_version`、原文字符数及 `chunk_count=0`。
 M2 已增加冻结来源后的构图服务：table/clause 连续抽取单元、分步模型调用与检查点、
 有界原子 Neo4j 写入、ready/ready_empty 封存。构图入口默认关闭（`KG_BUILD_ENABLED=false`），
-M3 增加独立 ChunkSet 任务：顺序切分、kg_refs 区间映射、向量复用/计算、独立索引验证及发布。
+M3 增加独立 ChunkSet 任务：结构感知连续区间切分、kg_refs 区间映射、向量复用/计算、独立索引验证及发布。
 M5 完整处理入口创建一个持久任务，由后台逐阶段推进；原有手动 advance 只用于未接入后台的任务。
 re-chunk 复用来源/图谱，不调用解析或构图。
 `PDF_KG_CHUNKS_ENABLED=false` 与 `PDF_KG_SEARCH_ENABLED=false` 默认分开关闭。
@@ -281,7 +289,7 @@ curl http://127.0.0.1:8000/api/v1/health/services
 - `SimpleParser`：支持 `.txt`、`.md`、`.csv` 轻量文本解析，优先 UTF-8 解码，失败时使用 `errors="replace"` 兜底。
 - 复杂格式占位解析：PDF、Word、Excel、图片暂时生成明确占位解析结果，后续由 MinerU 替换。
 - `MinerUParser` 预留边界：保留 endpoint、timeout 和统一接口，但第三阶段不强制接入真实 MinerU 服务。
-- 基础字符 chunker：默认 `CHUNK_SIZE_CHARS=1000`，`CHUNK_OVERLAP_CHARS=100`。
+- 历史基础字符 chunker 已退出 PDF 主路径；旧两个 Settings/环境示例已移除，当前六字段契约见文首。
 - `document_chunks.source_metadata` JSONB 来源元数据字段迁移文件。
 - 同步解析接口：`POST /api/v1/documents/{document_id}/parse`。
 - chunk 列表接口：`GET /api/v1/documents/{document_id}/chunks?limit=50&offset=0`。

@@ -40,7 +40,6 @@ def dependencies(monkeypatch, *, enabled=True):
     settings.pdf_cleaning_enabled = enabled
     settings.pdf_cleaning_profile = "iso_en"
     settings.pdf_cleaning_backfill_enabled = False
-    settings.chunk_size_chars = 10000
     monkeypatch.setattr(document_parsing, "get_settings", lambda: settings)
     return client, uploads
 

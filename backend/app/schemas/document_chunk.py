@@ -61,6 +61,8 @@ class DocumentChunkRead(BaseModel):
     page_end: int | None = None
     section_title: str | None = None
     chunk_type: str | None = None
+    chunk_method: str | None = None
+    content_format: str | None = None
     source_metadata: dict[str, Any] | None = None
     chunk_set_id: UUID | None = None
     source_version: UUID | None = None
@@ -84,6 +86,8 @@ class DocumentChunkRead(BaseModel):
             page_end=chunk.page_end,
             section_title=chunk.section_title,
             chunk_type=chunk.chunk_type,
+            chunk_method=chunk.chunk_method,
+            content_format=chunk.content_format,
             source_metadata=chunk.source_metadata,
             **{key: chunk.__dict__.get(key) for key in ("chunk_set_id", "source_version", "source_start", "source_end", "content_sha256")},
             embedding_status=chunk.embedding_status,

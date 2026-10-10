@@ -2,16 +2,79 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 from pathlib import Path
 import re
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.extraction.kg_protocol import ANCHOR_ADAPTER
 from app.ingestion.frozen_source import json_bytes, sha256_bytes
 from app.llm.provider import LLMGenerateRequest, LLMProvider
+from app.llm.openai_chat_transport import capture_generation_diagnostics
+
+logger = logging.getLogger(__name__)
+_SCHEMA_ERROR_TYPES = frozenset({
+    "missing", "extra_forbidden", "string_type", "string_too_short", "string_too_long",
+    "dict_type", "list_type", "model_type", "too_long", "invalid_key",
+})
+_ENTITY_FIELDS = frozenset({"id", "type", "name", "properties", "provenance"})
+_RELATIONSHIP_FIELDS = frozenset({"source_id", "target_id", "type", "properties", "provenance"})
+_DIAGNOSTIC_FIELDS = frozenset({
+    "document_id", "graph_build_id", "job_id", "unit_id", "unit_index", "unit_kind", "piece_index",
+    "phase", "prior_phase", "effective_max_tokens", "finish_reason", "prompt_tokens",
+    "completion_tokens", "total_tokens",
+})
+
+
+def extraction_log_context(diagnostics: dict) -> dict:
+    # Values are assigned by the stage runner or the transport's typed metadata filter.
+    # Do not serialize arbitrary future entries added to this internal work dictionary.
+    return {key: value for key, value in diagnostics.items() if key in _DIAGNOSTIC_FIELDS}
+
+
+def _schema_error_path(location: tuple) -> list:
+    """Only schema positions; arbitrary extra keys/property names are never logged."""
+    if not location or location[0] not in ("entities", "relationships"):
+        return ["<redacted>"]
+    path = [location[0]]
+    if len(location) == 1:
+        return path
+    if type(location[1]) is not int or not 0 <= location[1] <= 1_000_000:
+        return path + ["<redacted>"]
+    path.append(location[1])
+    if len(location) > 2:
+        fields = _ENTITY_FIELDS if location[0] == "entities" else _RELATIONSHIP_FIELDS
+        path.append(location[2] if type(location[2]) is str and location[2] in fields else "<redacted>")
+    if len(location) > 3:
+        path.append("<redacted>")
+    return path
+
+
+def extraction_failure_diagnostics(exc: Exception, phase: str) -> dict:
+    """Bounded diagnostic fields, never exception text, input, context or traceback."""
+    result = {"exception_type": type(exc).__name__}
+    try:
+        trace = exc.__traceback__
+        while trace is not None:
+            code = trace.tb_frame.f_code
+            filename = Path(code.co_filename).name
+            if filename in {"kg_extract.py", "document_graph_builds.py", "openai_chat_transport.py"}:
+                result.update(exception_file=filename, exception_function=code.co_name,
+                              exception_line=trace.tb_lineno)
+            trace = trace.tb_next
+        if phase == "schema_validation" and isinstance(exc, ValidationError):
+            errors = exc.errors(include_input=False, include_context=False, include_url=False)
+            result.update(validation_error_count=exc.error_count(),
+                validation_errors=[{
+                    "path": _schema_error_path(error["loc"]),
+                    "type": error["type"] if error["type"] in _SCHEMA_ERROR_TYPES else "validation_error",
+                } for error in errors[:8]], validation_errors_truncated=len(errors) > 8)
+    except Exception:
+        result["diagnostics_unavailable"] = True
+    return result
 
 PACKAGE_TEMPLATE_SHA256 = "fefa92ef1b7f80ac1fe524f6031e6ad6d1f0d45f21688b6f1fb173346e431613"
 # Semantic JSON hash is portable across Git line-ending conversions. The
@@ -94,14 +157,20 @@ def strict_json(raw: str, *, max_bytes: int = 2_000_000) -> dict:
     return data
 
 
-def qualify(raw: dict, anchor_metadata: dict, piece_index: int) -> dict:
+def qualify(raw: dict, anchor_metadata: dict, piece_index: int, *, diagnostics: dict | None = None) -> dict:
     """Package whitelist/from-to semantics with strict identity conflict checks.
 
 Malformed output is an error. Valid output with no qualifying relationship is
 an auditable empty result. IDs and ownership are assigned by us, not the model.
 """
-    pack, anchor = template(), ANCHOR_ADAPTER.validate_python(anchor_metadata)
+    diagnostics = diagnostics if diagnostics is not None else {}
+    diagnostics["phase"] = "template_validation"
+    pack = template()
+    diagnostics["phase"] = "anchor_validation"
+    anchor = ANCHOR_ADAPTER.validate_python(anchor_metadata)
+    diagnostics["phase"] = "schema_validation"
     part = RawExtraction.model_validate(raw)
+    diagnostics["phase"] = "qualify"
     prefix = anchor.anchor_id + (f"::p{piece_index}" if piece_index else "")
     raw_entities, entities, raw_to_id = {}, {}, {}
     rejected_entities = rejected_relationships = 0
@@ -154,7 +223,11 @@ an auditable empty result. IDs and ownership are assigned by us, not the model.
 
 
 def extract_piece(provider: LLMProvider, *, text: str, filename: str, anchor_metadata: dict,
-                  piece_index: int, timeout_seconds: float, max_tokens: int) -> dict:
+                  piece_index: int, timeout_seconds: float, max_tokens: int,
+                  diagnostics: dict | None = None) -> dict:
+    diagnostics = diagnostics if diagnostics is not None else {}
+    diagnostics.update(phase="request_build", piece_index=piece_index, effective_max_tokens=max_tokens,
+                       finish_reason=None, prompt_tokens=None, completion_tokens=None, total_tokens=None)
     pack = template()
     # The full current template includes all rules (including casting ownership),
     # value objects and provenance. Source is data, never executable instructions.
@@ -163,11 +236,24 @@ def extract_piece(provider: LLMProvider, *, text: str, filename: str, anchor_met
               + json.dumps(pack, ensure_ascii=False))
     prompt = json.dumps(dict(document=filename, heading=anchor_metadata.get("heading", ""),
                              kind=anchor_metadata["anchor_type"], source=text), ensure_ascii=False)
-    result = provider.generate(LLMGenerateRequest.from_prompt(
+    request = LLMGenerateRequest.from_prompt(
         prompt, system, temperature=0.1, json_mode=True, timeout_seconds=timeout_seconds,
         max_tokens=max_tokens,
-    ))
-    return qualify(strict_json(result.text), anchor_metadata, piece_index)
+    )
+    diagnostics["phase"] = "llm_generate"
+    with capture_generation_diagnostics(diagnostics):
+        result = provider.generate(request)
+    # One bounded object is visible with the default console formatter too.
+    # Diagnostics contain program-owned IDs/phases and allowlisted transport metadata only.
+    try:
+        context = extraction_log_context(diagnostics)
+        logger.info("KG LLM response received: context=%s", json.dumps(context, separators=(",", ":")),
+                    extra={"event": "kg_llm_response_received", **context})
+    except Exception:
+        pass
+    diagnostics["phase"] = "strict_json"
+    raw = strict_json(result.text)
+    return qualify(raw, anchor_metadata, piece_index, diagnostics=diagnostics)
 
 
 def merge_parts(parts: list[dict]) -> dict:

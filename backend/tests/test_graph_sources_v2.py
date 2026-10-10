@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
 
 from app.models import DocumentChunk, SourceDocumentVersion, KGExtractionUnit
-from app.ingestion.sequential_chunker import SegmentationConfig
+from app.ingestion.block_chunker import BlockChunkerConfig
 from app.rag.context_builder import build_rag_context, TRUNCATION_MARKER, format_context_for_prompt
 from app.rag.graph_context_builder import build_graph_context, format_graph_context_for_prompt
 from app.services.graph_sources import GraphSourceAuthority, validate_evidence_bindings
@@ -50,7 +50,7 @@ def setup(db, settings, config=None, empty=False):
     settings.rag_graph_context_max_chars = 20000
     values = ready(db, settings, empty=empty)
     encoder,index=Encoder(db,settings),Index(db)
-    built=finish(db,settings,values,prepare(db,settings,values,config or SegmentationConfig(chunk_size=1000,overlap=0)),encoder,index)
+    built=finish(db,settings,values,prepare(db,settings,values,config or BlockChunkerConfig(min_chunk_chars=0, max_chunk_chars=1000,overlap_chars=0)),encoder,index)
     context=context_for(db,settings,built["chunk_set_id"])
     authority=GraphSourceAuthority(settings,sessionmaker(bind=db.get_bind(),autoflush=False))
     return values,built,context,authority,encoder,index
@@ -118,8 +118,8 @@ def test_three_sequential_sets_reuse_graph_and_old_reference_is_restorable(db,se
     for name in ("prepare_graph_build","advance_graph_build","make_graph_id","extract_piece","configured_writer"):
         monkeypatch.setattr(__import__("app.services.document_graph_builds",fromlist=[name]),name,
             Mock(side_effect=AssertionError("M4/rechunk must not construct graph")))
-    for config in [SegmentationConfig(chunk_size=17,overlap=0,boundary="characters"),
-                   SegmentationConfig(chunk_size=42,overlap=9,boundary="line")]:
+    for config in [BlockChunkerConfig(min_chunk_chars=0, max_chunk_chars=17,overlap_chars=0),
+                   BlockChunkerConfig(min_chunk_chars=0, max_chunk_chars=42,overlap_chars=9)]:
         newer=finish(db,settings,values,prepare(db,settings,values,config,True),encoder,index)
         current=context_for(db,settings,newer["chunk_set_id"])
         current_bindings=authority.resolve(current)
@@ -134,7 +134,7 @@ def test_three_sequential_sets_reuse_graph_and_old_reference_is_restorable(db,se
 
 
 def test_retained_chunks_with_gap_do_not_cover_unit(db,settings):
-    _,_,context,authority,_,_=setup(db,settings,SegmentationConfig(chunk_size=10,overlap=0))
+    _,_,context,authority,_,_=setup(db,settings,BlockChunkerConfig(min_chunk_chars=0, max_chunk_chars=10,overlap_chars=0))
     anchors=authority.resolve(context)
     table=next(a for a in anchors if a.ref.anchor_type=="table")
     origins=sorted(table.provenance,key=lambda p:p.effective_start)
@@ -182,7 +182,7 @@ def test_phase13_roundtrip_restore_after_rechunk_and_fingerprint_guard(db,settin
     for view in views.values():
         if view.kind=="graph":
             assert read_graph_payload(view.payload).ref.anchor_type in {"table","clause"}
-    finish(db,settings,values,prepare(db,settings,values,SegmentationConfig(chunk_size=21,overlap=3),True),encoder,index)
+    finish(db,settings,values,prepare(db,settings,values,BlockChunkerConfig(min_chunk_chars=0, max_chunk_chars=21,overlap_chars=3),True),encoder,index)
     plan,_,request=nodes._evidence(repo,identity,turn,saved,"q")
     assert plan.graph.evidence==graph.evidence
     assert prompt_fingerprint(request.messages)==saved[1].prompt_fingerprint
@@ -283,3 +283,16 @@ def test_first_attempt_build_persist_reorder_and_generate_guard(db, settings, mo
         assert result["stage"] == "generated" and len(nodes.provider.calls) == 1
         assert nodes.provider.calls[0].messages == first_requests[0].messages
         assert prompt_fingerprint(nodes.provider.calls[0].messages) == saved["evidence"][1].prompt_fingerprint
+
+
+@pytest.mark.parametrize("field,value", [
+    ("chunk_method", "sequential"), ("content_format", "corrupt"), ("page_start", 99),
+    ("section_title", "corrupt"), ("token_count", -1),
+])
+def test_structural_sql_columns_must_match_snapshot_metadata(db, settings, field, value):
+    values, built, context, authority, _, _ = setup(db, settings)
+    chunk = db.get(DocumentChunk, UUID(context.chunks[0].chunk_id))
+    setattr(chunk, field, value)
+    db.commit()
+    with pytest.raises(ValueError, match="ownership/admission"):
+        authority.resolve(context)

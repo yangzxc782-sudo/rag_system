@@ -65,10 +65,6 @@ class Settings(BaseSettings):
     upload_allowed_content_types: str = ""
     backend_cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
 
-    # Shared sizing settings remain in use by the MinerU block-aware chunker.
-    chunk_size_chars: int = 1000
-    chunk_overlap_chars: int = 100
-
     embedding_provider: str = "local_qwen3"
     embedding_model: str = "Qwen3-Embedding-0.6B"
     embedding_model_path: str = "D:/rag_system/models/Qwen3-Embedding-0.6B"

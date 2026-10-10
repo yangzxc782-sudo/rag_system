@@ -1,5 +1,15 @@
 # PDF 文本清洗服务
 
+## 当前接入边界（结构感知恢复 S4）
+
+当前 PDF 清洗必需且默认开启，显式关闭会拒绝解析；旧非 PDF/关闭 fallback 不再适用。
+清洗块由共享 renderer 渲染后冻结为 canonical_text/source-map v2。构图完成后，唯一
+block_chunker 从冻结目录读取章节/格式/资产及精确区间，不再从可变 DocumentBlock 重渲染切片。
+chunk.content 始终等于 canonical_text[start:end]，不存在旧 renderer adapter 或 sequential 分支。
+正文、表格、公式及尽力 overlap 使用完整六字段配置，详见 pdf-only-kg-pipeline.md 的 S4/S2 节。
+下文保留清洗器初次接入的历史设计与测试记录；默认关闭、parse 后立即创建 chunk 等描述已被上述流程替代。
+本轮不修改 cleaner 规则、真实配置或任何历史数据。
+
 ## 接入与启用
 
 清洗接入 `document_parsing._parse_document_with_mineru`：现有 MinerU 请求完成后，先由 `normalize_mineru_result` 生成结构块，再调用 `clean_pdf_blocks`。每次解析请求仍只调用一次 MinerU。清洗仅适用于 PDF，默认关闭，非 PDF 和关闭时使用原路径。

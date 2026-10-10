@@ -1,5 +1,8 @@
 # M5：持久处理与删除生命周期
 
+> S4 更新：当前处理请求使用 BlockChunkerConfig 完整六字段、唯一结构切分版本和配置指纹；
+> 本文后半的 M5 初次验收记录保留为历史，不代表已执行 S5 或本轮真实服务验收。
+
 本阶段复用 M0 的 DocumentProcessingJob、SourceDocumentVersion、GraphBuild、KGExtractionUnit、ChunkSet；不新增概念表，不修改旧迁移。任务 checkpoint 的 `pipeline` 保存版本 1 的处理请求（顺序切分配置、解析/模型/向量配置指纹），与原有阶段检查点合并保存。请求 UUID 与输入指纹共同去重；相同请求不得更换配置。
 
 完整入口只接受 PDF，创建持久任务后返回 202。默认关闭的本机执行器逐步执行解析/清洗冻结、构图、切分、向量批次、索引验证和发布；网络调用在 SQL 事务外。处理请求不会启用新版搜索准入。已有新版来源可继续处理；已有 legacy chunk 的 PDF 不自动重解析或迁移。
@@ -22,13 +25,19 @@ SQL 最终化继续执行知识条目清理和问答证据脱敏，保留聊天�
 
 | 接口 | 行为 |
 | --- | --- |
-| `POST /documents/{id}/process` | `{request_id, config:{chunk_size,overlap,boundary}}`；202 返回已持久化任务，重用同一请求 UUID 处理网络结果未知；配置冲突返回 409 |
-| `GET /documents/{id}/processing-jobs` | 默认最近 20 个，最多 100 个；含服务/检索开关、任务版本身份、阶段、单元/chunk/embedding 统计与恢复能力 |
+| `POST /documents/{id}/process` | `{request_id, config:{max_chunk_chars,min_chunk_chars,overlap_chars,max_table_chars,keep_table_intact,keep_formula_with_context}}`；可省略 config/合法部分补齐，null/旧字段拒绝；202 返回持久任务，配置冲突返回 409 |
+| `GET /documents/{id}/processing-jobs` | 最近任务、开关、版本、统计与恢复能力；附权威 segmentation_defaults/segmentation_version |
 | `GET /documents/{id}/processing-jobs/{job}` | 只读查询一个任务；不隐式 claim、恢复或触发模型 |
 | `POST .../{job}/retry` | 仅失败或已过期的 managed 任务；保留身份和计数，不刷新为新的 parse_run 来伪装 re-chunk |
 | `POST .../{job}/cancel` | 排队/失败任务终止；运行任务请求协作取消；索引返回后、SQL 发布前再次检查取消 |
-| `POST .../{job}/resume` | 显式接入已存在的 M2/M3 queued/failed 任务；失败任务接入后仍需显式 retry；已有 ChunkSet 使用其原配置 |
+| `POST .../{job}/resume` | 显式接入 M2/M3 queued/failed；失败仍需显式 retry；省略 config 复用冻结配置（未冻结才用默认），null 拒绝，显式不同配置冲突 |
 | `POST /documents/{id}/chunk-sets` | 新增 `auto_run`，默认 false；页面在执行器已启用时提交 true，显式 re-chunk 后由后台继续 |
+| `GET /documents/{id}/chunk-sets` | 版本、冻结配置及相同的 segmentation_defaults/segmentation_version；不新增 defaults endpoint |
+| `POST /documents/{id}/chunk-sets/{set}/advance` | 只接受 retry，拒绝配置覆盖；使用该 set 的冻结六字段、版本与指纹 |
+
+默认值只有后端 BlockChunkerConfig 一处定义，前端表单必须取得有效 defaults 才能提交。
+缓存保存请求 UUID、六字段及切分版本；旧/损坏/未知版本缓存须用户显式丢弃，不自动转换或重发。
+合法缓存 reload 保留原配置，确认任务不存在后才允许用户显式重发原请求。
 
 已接入后台的任务拒绝手动 advance 并发推进。页面缓存请求 UUID 与配置；网络结果不确定时先 GET，再复用原请求。页面轮询不会自动重试失败或过期任务。取消后的任务不可原地恢复；已发布的旧 ChunkSet 继续可用，未发布资产留待授权清理。重切分后历史版本继续保留。UI 明确区分 ready_empty 成功空图与 failed。
 

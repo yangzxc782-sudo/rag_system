@@ -8,15 +8,18 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 import json
 import logging
+from pathlib import PurePosixPath
 from uuid import UUID, uuid4
 
 from sqlalchemy import func, inspect, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.core import errors as error_codes
 from app.core.config import get_settings
 from app.core.errors import BusinessError, LLM_ERROR_STATUS_CODES
-from app.extraction.kg_extract import EXTRACTION_VERSION, TEMPLATE_SHA256, extract_piece, merge_parts, strict_json, template
+from app.extraction.kg_extract import (EXTRACTION_VERSION, TEMPLATE_SHA256, extract_piece,
+    extraction_failure_diagnostics, extraction_log_context, merge_parts, strict_json, template)
 from app.extraction.kg_protocol import ANCHOR_ADAPTER
 from app.extraction.kg_units import RULE_SHA256, RULE_VERSION, make_graph_id, split_units
 from app.extraction.kg_writer import configured_writer, validate_payload
@@ -33,6 +36,27 @@ from app.services.object_storage import get_object_bytes_from_minio, upload_byte
 READY = {"ready", "ready_empty"}
 SUCCEEDED = {"succeeded_nonempty", "succeeded_empty"}
 logger = logging.getLogger(__name__)
+# Trusted application constants, not arbitrary exception strings or detail values.
+_DIAGNOSTIC_BUSINESS_CODES = frozenset(
+    value for name, value in vars(error_codes).items() if type(value) is str and name == value
+) | {"KG_LEASE_LOST", "KG_SOURCE_INVALID", "KG_INDEX_INCONSISTENT"}
+
+
+def _log_unit_failure(exc: Exception, diagnostics: dict) -> None:
+    try:
+        code = exc.code if isinstance(exc, BusinessError) and type(exc.code) is str else None
+        context = {**extraction_log_context(diagnostics),
+            **extraction_failure_diagnostics(exc, diagnostics["phase"]),
+            "cause_code": code if code in LLM_ERROR_STATUS_CODES else "UNCLASSIFIED",
+            "business_error_code": code if code in _DIAGNOSTIC_BUSINESS_CODES else None,
+            "business_error_code_redacted": code is not None and code not in _DIAGNOSTIC_BUSINESS_CODES}
+        if diagnostics["phase"] == "provider_close" and exc.__context__ is not None:
+            context["prior_exception_type"] = type(exc.__context__).__name__
+        logger.warning("KG extraction unit failed: context=%s",
+            json.dumps(context, separators=(",", ":")), extra={"event": "kg_extraction_unit_failed", **context})
+    except Exception:
+        # A diagnostic formatter/handler failure must not alter the stage error or recovery.
+        pass
 
 
 def _error(code: str, status=409) -> BusinessError:
@@ -88,9 +112,12 @@ class GraphAssets:
 
 
 def _source_text(source: dict, assets: GraphAssets) -> tuple[str, list[dict]]:
+    output_prefix = str(PurePosixPath(source["canonical_object_key"]).parent)
+    if str(PurePosixPath(source["block_map_object_key"]).parent) != output_prefix:
+        raise ValueError("Frozen source asset directories disagree")
     canonical = assets.read(source["bucket_name"], source["canonical_object_key"], source["canonical_sha256"])
     directory = assets.read(source["bucket_name"], source["block_map_object_key"], source["block_map_sha256"])
-    text = verify_frozen_source(canonical, directory, **{key: source[key] for key in (
+    text = verify_frozen_source(canonical, directory, output_prefix=output_prefix, **{key: source[key] for key in (
         "source_version", "document_id", "parse_run_id", "canonical_sha256", "block_map_sha256", "character_count")})
     return text, json.loads(directory)["blocks"]
 
@@ -299,26 +326,27 @@ def advance_graph_build(db: Session, document_id: UUID, build_id: UUID, *, retry
     source = _snapshot(_source(db, document_id, build.source_version))
     build_data, all_units, filename = _snapshot(build), [_snapshot(u) for u in units], job.checkpoint["filename"]
     unit_data = _snapshot(unit) if unit else None
+    diagnostics = dict(document_id=str(document_id), graph_build_id=str(build_id), job_id=str(job.id),
+        unit_id=str(unit_data["id"]) if unit_data else None,
+        unit_index=unit_data["unit_index"] if unit_data else None,
+        unit_kind=unit_data["kind"] if unit_data else None,
+        piece_index=None, phase="source_read", effective_max_tokens=settings.kg_llm_max_tokens)
     db.commit()
     try:
         text, blocks = _source_text(source, assets)
+        diagnostics["phase"] = "unit_split"
         drafts = split_units(text, build_data["graph_id"], block_directory=blocks)
+        diagnostics["phase"] = "unit_verify"
         _verify_drafts(drafts, all_units)
         if unit_data:
             _advance_unit(db, document_id, build_id, lease, unit_data, drafts[unit_data["unit_index"]],
-                          source, build_data, filename, settings, assets, provider)
+                          source, build_data, filename, settings, assets, provider, diagnostics)
         else:
             _finish_build(db, document_id, build_id, lease, all_units, source, build_data, settings, assets, writer)
     except Exception as exc:
         db.rollback()
         if unit_data:
-            cause_code = exc.code if (isinstance(exc, BusinessError) and type(exc.code) is str
-                                      and exc.code in LLM_ERROR_STATUS_CODES) else "UNCLASSIFIED"
-            context = dict(document_id=str(document_id), graph_build_id=str(build_id),
-                unit_id=str(unit_data["id"]), unit_index=unit_data["unit_index"],
-                unit_kind=unit_data["kind"], cause_code=cause_code)
-            logger.warning("KG extraction unit failed: context=%s",
-                json.dumps(context, separators=(",", ":")), extra={"event": "kg_extraction_unit_failed", **context})
+            _log_unit_failure(exc, diagnostics)
         try:
             document, job, build = _fenced(db, document_id, build_id, lease)
             code = "KG_EXTRACTION_FAILED" if unit_data else "KG_WRITE_FAILED"
@@ -342,54 +370,74 @@ def advance_graph_build(db: Session, document_id: UUID, build_id: UUID, *, retry
     return graph_build_status(db, document_id, build_id)
 
 
-def _advance_unit(db, document_id, build_id, lease, unit, draft, source, build, filename, settings, assets, provider):
+def _advance_unit(db, document_id, build_id, lease, unit, draft, source, build, filename, settings, assets, provider, diagnostics):
+    diagnostics["phase"] = "piece_checkpoint_validation"
     checkpoints = dict(unit["piece_checkpoints"])
     if any(key not in {str(i) for i in range(len(draft.pieces))} for key in checkpoints):
         raise ValueError("Invalid piece checkpoint index")
     saved_parts = {}
     for piece_index, checkpoint in checkpoints.items():
+        diagnostics.update(phase="piece_checkpoint_read", piece_index=int(piece_index))
         saved = _read_result(assets, source, checkpoint["object_key"], checkpoint["sha256"])
         if (saved["unit_id"] != str(unit["id"]) or saved["input_sha256"] != unit["input_sha256"]
                 or saved["piece_index"] != int(piece_index)):
             raise ValueError("Piece checkpoint ownership mismatch")
         saved_parts[piece_index] = saved["part"]
+    diagnostics.update(phase="before_llm_fence", piece_index=None)
     _fenced(db, document_id, build_id, lease)
+    diagnostics["phase"] = "before_llm_commit"
     db.commit()
+    diagnostics["phase"] = "piece_selection"
     index = next(i for i in range(len(draft.pieces)) if str(i) not in checkpoints)
+    diagnostics.update(phase="provider_init", piece_index=index)
     owns_provider = provider is None
     if owns_provider:
         provider = build_llm_provider(settings)
     try:
         part = extract_piece(provider, text=draft.pieces[index], filename=filename,
             anchor_metadata=unit["allocated_anchor_metadata"], piece_index=index,
-            timeout_seconds=settings.kg_model_timeout_seconds, max_tokens=settings.kg_llm_max_tokens)
+            timeout_seconds=settings.kg_model_timeout_seconds, max_tokens=settings.kg_llm_max_tokens,
+            diagnostics=diagnostics)
     finally:
         if owns_provider:
-            provider.close()
+            try:
+                provider.close()
+            except Exception:
+                diagnostics["prior_phase"] = diagnostics["phase"]
+                diagnostics["phase"] = "provider_close"
+                raise
     # The model may finish after lease takeover or deletion admission. Recheck
     # before writing even an orphaned object, then release SQL before storage IO.
+    diagnostics["phase"] = "before_asset_fence"
     _, job, _ = _fenced(db, document_id, build_id, lease)
     from app.services.document_processing import begin_external_write
     begin_external_write(job)
+    diagnostics["phase"] = "external_write_commit"
     db.commit()
     prefix = f"kg-assets/{document_id}/{source['source_version']}/{build_id}/units/{unit['id']}"
     envelope = dict(unit_id=str(unit["id"]), input_sha256=unit["input_sha256"], piece_index=index, part=part)
+    diagnostics["phase"] = "piece_asset_save"
     key, digest = assets.save(source["bucket_name"], f"{prefix}/pieces", envelope)
     checkpoints[str(index)] = dict(object_key=key, sha256=digest)
     saved_parts[str(index)] = part
     completed = len(checkpoints) == len(draft.pieces)
     result = result_key = result_hash = None
     if completed:
+        diagnostics["phase"] = "merge_parts"
         parts = [saved_parts[str(i)] for i in range(len(draft.pieces))]
         result = merge_parts(parts)
         if not result["relationships"]:
             result["entities"] = []
+        diagnostics["phase"] = "unit_result_save"
         result_key, result_hash = assets.save(source["bucket_name"], f"{prefix}/result", dict(
             unit_id=str(unit["id"]), input_sha256=unit["input_sha256"], result=result))
+    diagnostics["phase"] = "after_asset_fence"
     _, job, _ = _fenced(db, document_id, build_id, lease)
+    diagnostics["phase"] = "unit_checkpoint_validation"
     row = db.get(KGExtractionUnit, unit["id"])
     if row.status != "extracting" or row.piece_checkpoints != unit["piece_checkpoints"]:
         raise ValueError("Concurrent unit change")
+    diagnostics["phase"] = "unit_state_update"
     row.piece_checkpoints = checkpoints
     if completed:
         row.has_qualified_triples = bool(result["relationships"])
@@ -398,6 +446,7 @@ def _advance_unit(db, document_id, build_id, lease, unit, draft, source, build, 
     else:
         row.status = "pending"
     _release(job, "queued", _now(db))
+    diagnostics["phase"] = "unit_commit"
     db.commit()
 
 

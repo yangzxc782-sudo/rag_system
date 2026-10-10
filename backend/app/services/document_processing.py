@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.core.errors import BusinessError
 from app.ingestion.frozen_source import json_bytes, sha256_bytes
-from app.ingestion.sequential_chunker import SegmentationConfig
+from app.ingestion.block_chunker import BlockChunkerConfig, SEGMENTATION_VERSION, frozen_config
 from app.models import Document, DocumentChunk, DocumentParseRun, DocumentProcessingJob, SourceDocumentVersion
 from app.models.document_chunk_set import ChunkSet
 from app.services.document_operation_guard import DocumentOperationGuard
@@ -27,6 +27,7 @@ def error(code: str, status: int = 409) -> BusinessError:
 
 
 def pipeline_contract(settings, config, *, operation="process"):
+    config = BlockChunkerConfig.model_validate(config)
     # Secrets never enter the durable checkpoint or public diagnostics.
     parser = {key: getattr(settings, key) for key in (
         "document_parser_provider", "mineru_parse_mode", "mineru_enable_ocr", "mineru_save_intermediate",
@@ -35,7 +36,8 @@ def pipeline_contract(settings, config, *, operation="process"):
         embedding = embedding_fingerprint(settings)
     except ValueError as exc:
         raise error("DOCUMENT_PROCESSING_EMBEDDING_CONFIG_INVALID", 422) from exc
-    return dict(version=1, config=config.model_dump(),
+    return dict(version=1, config=config.model_dump(), segmentation_version=SEGMENTATION_VERSION,
+                segmentation_config_sha256=config.fingerprint,
                 parser_sha256=sha256_bytes(json_bytes(parser)) if operation == "process" else None,
                 provider_sha256=provider_fingerprint(settings) if operation == "process" else None,
                 embedding_sha256=embedding)
@@ -46,6 +48,13 @@ def _enabled(settings, *, operation="process"):
         raise error("DOCUMENT_PROCESSING_EXECUTOR_DISABLED", 503)
     if not settings.pdf_kg_chunks_enabled or operation == "process" and (not settings.kg_build_enabled or not settings.pdf_cleaning_enabled):
         raise error("DOCUMENT_PROCESSING_CONFIG_INVALID", 503)
+
+
+def _frozen_pipeline_config(pipeline):
+    try:
+        return frozen_config(pipeline["config"], pipeline["segmentation_config_sha256"], pipeline["segmentation_version"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise error("DOCUMENT_PROCESSING_INPUT_CHANGED") from exc
 
 
 def _locked(db: Session, doc_id: UUID, job_id: UUID) -> tuple[Document, DocumentProcessingJob]:
@@ -119,7 +128,8 @@ def list_processing_jobs(db: Session, document_id: UUID, *, settings, limit: int
     active = db.scalar(select(DocumentProcessingJob.id).where(DocumentProcessingJob.document_id == document_id,
         DocumentProcessingJob.status.in_(ACTIVE)).limit(1))
     has_chunks = db.scalar(select(DocumentChunk.id).where(DocumentChunk.document_id == document_id).limit(1))
-    result = dict(items=[{**public_job(j, _now(db)), **job_progress(db, j)} for j in jobs],
+    result = dict(segmentation_defaults=BlockChunkerConfig().model_dump(), segmentation_version=SEGMENTATION_VERSION,
+        items=[{**public_job(j, _now(db)), **job_progress(db, j)} for j in jobs],
         total=db.scalar(select(func.count()).select_from(DocumentProcessingJob).where(DocumentProcessingJob.document_id == document_id)),
         executor_enabled=settings.document_processing_executor_enabled, search_enabled=settings.pdf_kg_search_enabled,
         can_process=bool(settings.document_processing_executor_enabled and not active and not has_chunks
@@ -128,7 +138,7 @@ def list_processing_jobs(db: Session, document_id: UUID, *, settings, limit: int
     return result
 
 
-def request_processing(db: Session, document_id: UUID, request_id: UUID, config: SegmentationConfig, *, settings) -> dict:
+def request_processing(db: Session, document_id: UUID, request_id: UUID, config: BlockChunkerConfig, *, settings) -> dict:
     _enabled(settings)
     require_graph_schema(db)
     contract = pipeline_contract(settings, config)
@@ -162,14 +172,22 @@ def request_processing(db: Session, document_id: UUID, request_id: UUID, config:
     return processing_status(db, document_id, job.id)
 
 
-def manage_rechunk(db: Session, document_id: UUID, job_id: UUID, *, settings, config: SegmentationConfig | None = None) -> dict:
+def manage_rechunk(db: Session, document_id: UUID, job_id: UUID, *, settings, config: BlockChunkerConfig | None = None) -> dict:
     """Explicitly opt an existing M2/M3 task into background execution."""
     _, job = _locked(db, document_id, job_id)
     _enabled(settings, operation=job.operation)
     if job.status not in {"queued", "failed"} or not job.graph_build_id:
         raise error("DOCUMENT_PROCESSING_NOT_QUEUED")
     row = db.get(ChunkSet, job.chunk_set_id) if job.chunk_set_id else None
-    config = SegmentationConfig.model_validate(row.segmentation_config) if row else config or SegmentationConfig()
+    saved = job.checkpoint.get("pipeline")
+    frozen = (frozen_config(row.segmentation_config, row.segmentation_config_sha256, row.segmentation_version)
+        if row else _frozen_pipeline_config(saved)
+        if saved else None)
+    if config is not None:
+        config = BlockChunkerConfig.model_validate(config)
+        if frozen is not None and config != frozen:
+            raise error("DOCUMENT_PROCESSING_REQUEST_CONFLICT")
+    config = frozen if frozen is not None else config if config is not None else BlockChunkerConfig()
     contract = pipeline_contract(settings, config, operation=job.operation)
     if row and row.embedding_fingerprint != contract["embedding_sha256"]:
         raise error("DOCUMENT_PROCESSING_INPUT_CHANGED")
@@ -284,7 +302,7 @@ def advance_processing(db: Session, document_id: UUID, job_id: UUID, *, settings
     source, build, chunk_set, request = job.source_version, job.graph_build_id, job.chunk_set_id, job.request_id
     lease, initial_fence = None, job.fencing_token
     try:
-        config = SegmentationConfig.model_validate(expected["config"])
+        config = _frozen_pipeline_config(expected)
         if expected != pipeline_contract(settings, config, operation=job.operation):
             raise error("DOCUMENT_PROCESSING_INPUT_CHANGED")
         if source is None:

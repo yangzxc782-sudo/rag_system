@@ -2,33 +2,38 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { processingRequest, type ProcessingJob, type ProcessingJobs } from "@/lib/document-processing";
-import type { SegmentationConfig } from "@/lib/chunk-sets";
+import { processingRequest, readPendingProcessing, type PendingProcessing, type ProcessingJob, type ProcessingJobs } from "@/lib/document-processing";
+import { configError, readSegmentationDefaults, type BlockChunkerConfig } from "@/lib/chunk-sets";
+import BlockChunkerConfigFields from "@/components/BlockChunkerConfigFields";
 
 const stages: Record<string, string> = {
   uploaded: "等待解析", parsing: "解析与清洗", source_ready: "来源已冻结", kg_extracting: "知识抽取",
-  kg_writing: "图谱写入与验证", kg_ready: "图谱完成", chunking: "顺序切分", chunks_ready: "切片完成",
+  kg_writing: "图谱写入与验证", kg_ready: "图谱完成", chunking: "结构感知切分", chunks_ready: "切片完成",
   embedding: "向量化", indexing: "索引验证与发布", indexed: "已发布",
 };
 const statuses: Record<string, string> = {
   queued: "排队中", running: "执行中", failed: "失败，等待处理", cancelled: "已取消", succeeded: "成功", retry_wait: "等待重试",
 };
-type Pending = { request_id: string; config: SegmentationConfig };
-
 export default function DocumentProcessingPanel({ documentId }: { documentId: string }) {
   const router = useRouter();
   const [data, setData] = useState<ProcessingJobs | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [config, setConfig] = useState<SegmentationConfig>({ chunk_size: 1200, overlap: 120, boundary: "paragraph" });
-  const pending = useRef<Pending | null>(null);
+  const [config, setConfig] = useState<BlockChunkerConfig | null>(null);
+  const [cacheError, setCacheError] = useState<string | null>(null);
+  const [hasPending, setHasPending] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const pending = useRef<PendingProcessing | null>(null);
   const knownStage = useRef<string | null>(null);
   const storageKey = `pdf-process-request:${documentId}`;
 
   const refresh = useCallback(async () => {
-    const next = await processingRequest<ProcessingJobs>(documentId);
-    setData(next);
-    return next;
+    try {
+      const next = await processingRequest<ProcessingJobs>(documentId);
+      const defaults = readSegmentationDefaults(next);
+      setData(next); setConfig(current => current ?? defaults); setLoadError(null);
+      return next;
+    } catch (value) { setData(null); throw value; }
   }, [documentId]);
 
   useEffect(() => {
@@ -38,21 +43,30 @@ export default function DocumentProcessingPanel({ documentId }: { documentId: st
       try {
         const next = await processingRequest<ProcessingJobs>(documentId);
         if (disposed) return;
-        setData(next); setError(null);
+        const defaults = readSegmentationDefaults(next);
+        setData(next); setLoadError(null);
+        const stored = sessionStorage.getItem(storageKey);
+        if (stored) {
+          try {
+            const cached = readPendingProcessing(stored, next.segmentation_version);
+            pending.current = cached; setHasPending(true); setConfig(cached.config); setCacheError(null);
+          } catch (value) { setCacheError(value instanceof Error ? value.message : "缓存请求不可用"); }
+        } else { setConfig(current => current ?? defaults); }
+
         const stage = next.items.map(j => `${j.job_id}:${j.stage}:${j.status}`).join("|");
         if (knownStage.current !== null && knownStage.current !== stage) router.refresh();
         knownStage.current = stage;
         timer = setTimeout(poll, next.items.some(j => ["queued", "running", "retry_wait"].includes(j.status)) ? 2000 : 10000);
       } catch (value) {
         if (!disposed) {
-          setError(value instanceof Error ? value.message : "任务状态不可用");
+          setData(null); setLoadError(value instanceof Error ? value.message : "任务状态不可用");
           timer = setTimeout(poll, 5000);
         }
       }
     }
     void poll();
     return () => { disposed = true; if (timer) clearTimeout(timer); };
-  }, [documentId, router]);
+  }, [documentId, router, storageKey]);
 
   async function action(run: () => Promise<void>) {
     if (busy) return;
@@ -65,44 +79,40 @@ export default function DocumentProcessingPanel({ documentId }: { documentId: st
   async function start() {
     const next = await refresh(); // Network uncertainty is resolved before reposting.
     const stored = sessionStorage.getItem(storageKey);
-    if (!pending.current && stored) pending.current = JSON.parse(stored) as Pending;
+    if (!pending.current && stored) pending.current = readPendingProcessing(stored, next.segmentation_version);
     if (pending.current && next.items.some(j => j.request_id === pending.current?.request_id)) {
-      pending.current = null; sessionStorage.removeItem(storageKey); return;
+      pending.current = null; setHasPending(false); sessionStorage.removeItem(storageKey); return;
     }
     if (!pending.current) {
-      if (!Number.isInteger(config.chunk_size) || !Number.isInteger(config.overlap) || config.chunk_size < 1
-        || config.chunk_size > 60000 || config.overlap < 0 || config.overlap >= config.chunk_size) {
-        throw new Error("块大小须为 1–60000 的整数，重叠须小于块大小。");
-      }
-      pending.current = { request_id: crypto.randomUUID(), config };
-      sessionStorage.setItem(storageKey, JSON.stringify(pending.current));
+      const invalid = configError(config);
+      if (invalid || !config) throw new Error(invalid ?? "切分配置尚未加载");
+      pending.current = { request_id: crypto.randomUUID(), config: { ...config }, segmentation_version: next.segmentation_version };
+      sessionStorage.setItem(storageKey, JSON.stringify(pending.current)); setHasPending(true);
     }
-    await processingRequest<ProcessingJob>(documentId, "/process", pending.current);
-    pending.current = null; sessionStorage.removeItem(storageKey);
+    const { request_id, config: frozen } = pending.current;
+    await processingRequest<ProcessingJob>(documentId, "/process", { request_id, config: frozen });
+    pending.current = null; setHasPending(false); sessionStorage.removeItem(storageKey);
   }
 
   async function control(job: ProcessingJob, operation: "retry" | "cancel" | "resume") {
     const current = await processingRequest<ProcessingJob>(documentId, `/processing-jobs/${job.job_id}`);
     if (operation === "retry" && !current.can_retry) throw new Error("当前任务不可重试，请刷新状态。");
-    await processingRequest(documentId, `/processing-jobs/${job.job_id}/${operation}`, operation === "resume" ? { config } : {});
+    await processingRequest(documentId, `/processing-jobs/${job.job_id}/${operation}`, operation === "resume" && !current.chunk_set_id && !current.config ? { config } : {});
   }
 
   return <section className="grid gap-3 rounded-md border border-slate-200 bg-white p-5 text-sm">
     <h2 className="text-xl font-semibold">PDF 完整处理</h2>
-    <p>解析清洗并冻结来源 → 构图 → 顺序切分 → 向量化 → 索引发布。离开页面后任务仍由服务端执行。</p>
+    <p>解析清洗并冻结来源 → 构图 → 结构感知切分 → 向量化 → 索引发布。离开页面后任务仍由服务端执行。</p>
     <p>处理服务：{data?.executor_enabled ? "已启用" : "未启用"}；新版检索准入：{data?.search_enabled ? "已启用" : "未启用"}。</p>
-    <div className="flex flex-wrap gap-3">
-      <label>块大小 <input className="w-24 border p-1" type="number" value={config.chunk_size} min={1} max={60000} disabled={busy}
-        onChange={e => setConfig({ ...config, chunk_size: Number(e.target.value) })} /></label>
-      <label>重叠字符数 <input className="w-24 border p-1" type="number" value={config.overlap} min={0} disabled={busy}
-        onChange={e => setConfig({ ...config, overlap: Number(e.target.value) })} /></label>
-      <label>顺序切分边界 <select value={config.boundary} disabled={busy} className="border p-1"
-        onChange={e => setConfig({ ...config, boundary: e.target.value as SegmentationConfig["boundary"] })}>
-        <option value="paragraph">优先段落</option><option value="line">优先换行</option><option value="characters">固定字符数</option>
-      </select></label>
-    </div>
+    <BlockChunkerConfigFields value={config} onChange={setConfig} disabled={busy || !data || hasPending || !!cacheError} />
+    {hasPending ? <p>有待确认请求；先查询任务，再使用同一请求 ID 和冻结配置确认提交结果。</p> : null}
+    {cacheError ? <div role="alert" className="text-amber-800"><p>{cacheError}</p>
+      <button type="button" disabled={busy} className="rounded border px-3 py-2" onClick={() => {
+        sessionStorage.removeItem(storageKey); pending.current = null; setHasPending(false); setCacheError(null);
+        if (data) setConfig(readSegmentationDefaults(data));
+      }}>丢弃不支持的缓存请求</button></div> : null}
     <div className="flex gap-3">
-      <button disabled={busy || !data?.can_process} className="rounded border px-3 py-2 disabled:opacity-50"
+      <button disabled={busy || !data || (!data.can_process && !hasPending) || !config || !!configError(config) || !!cacheError} className="rounded border px-3 py-2 disabled:opacity-50"
         onClick={() => void action(start)}>开始完整处理</button>
       <button disabled={busy} className="rounded border px-3 py-2" onClick={() => void action(async () => { await refresh(); })}>刷新任务状态</button>
     </div>
@@ -121,6 +131,7 @@ export default function DocumentProcessingPanel({ documentId }: { documentId: st
         {job.can_cancel ? <button disabled={busy || job.cancel_requested} className="rounded border px-3 py-2" onClick={() => void action(() => control(job, "cancel"))}>取消任务</button> : null}
       </div>
     </article>)}
+    {loadError ? <p role="alert" className="text-amber-800">{loadError}</p> : null}
     {error ? <p role="alert" className="text-amber-800">{error}</p> : null}
   </section>;
 }

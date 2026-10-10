@@ -24,7 +24,7 @@ class EvidencePlan:
 def validate_graph_sources(graph: GraphContext, context: RagContext) -> GraphContext:
     """Recheck exact final citation intervals; SQL authority is checked separately on restore."""
     from app.extraction.kg_protocol import ANCHOR_ADAPTER
-    from app.ingestion.sequential_chunker import overlaps
+    from app.ingestion.source_intervals import overlaps
     chunks = {(c.document_id, c.chunk_id, c.citation_id): c for c in context.chunks}
     def valid(item):
         if not item.provenance or not item.binding.fully_covered:

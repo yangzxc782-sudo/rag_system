@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import ast
 from copy import deepcopy
 from dataclasses import asdict, replace
-from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -15,12 +13,8 @@ from sqlalchemy.pool import StaticPool
 
 from app.db.base import Base
 from app.models import Document, DocumentBlock, DocumentChunk, DocumentChunkBlock, DocumentParseRun
-from app.ingestion.block_chunker import BlockChunkerConfig, build_block_aware_chunks
 from app.ingestion.chunk_drafts import ChunkBlockRef
 from pdf_source_fixtures import pdf_draft
-from app.ingestion.mineru.normalizer import normalize_mineru_result
-from app.services.document_blocks import add_document_blocks
-from test_document_parsing_mineru import fake_parse_result
 
 
 class TrackedSession(Session):
@@ -98,23 +92,18 @@ def write(db, document_id, drafts):
     return DocumentChunkWriter(db).write(document_id=document_id, drafts=drafts)
 
 
-def adapt(result):
-    from app.ingestion.chunk_adapters import adapt_mineru_chunks
-
-    return adapt_mineru_chunks(result)
-
-
-def mineru_result(db, document, size=120, overlap=0):
+def linked_drafts(db, document):
+    """Synthetic neutral drafts for the shared writer, not a second PDF path."""
     run = DocumentParseRun(id=uuid4(), document_id=document.id, parser_provider="mineru_api")
     db.add(run)
     db.flush()
-    normalized = normalize_mineru_result(fake_parse_result(), document_id=str(document.id),
-                                        parse_run_id=str(run.id), output_prefix="parsed-assets")
-    blocks = add_document_blocks(db, document_id=document.id, parse_run_id=run.id, blocks=normalized.blocks)
+    blocks = [DocumentBlock(id=uuid4(), document_id=document.id, parse_run_id=run.id,
+        block_index=i, block_type="text", text=f"synthetic {i}") for i in range(2)]
+    db.add_all(blocks)
     db.commit()
-    result = build_block_aware_chunks(blocks, parse_run_id=str(run.id), config=BlockChunkerConfig(
-        max_chunk_chars=size, min_chunk_chars=0, overlap_chars=overlap))
-    return result, run
+    drafts = [replace(pdf_draft(content=f"synthetic {i}"), chunk_index=i, parse_run_id=run.id,
+        block_refs=(ChunkBlockRef(block_id=block.id, block_order=0),)) for i, block in enumerate(blocks)]
+    return drafts, run
 
 
 def test_shared_writer_preserves_null_run_and_pdf_fixture_metadata(db, document):
@@ -141,69 +130,23 @@ def test_shared_writer_preserves_null_run_and_pdf_fixture_metadata(db, document)
     assert stored.source_metadata["kg_refs"][0]["graph_id"] == "G"
 
 
-def legacy_reference(result, document_id, run_id):
-    """Frozen field projection of d9a3d16's two persistence helpers, no new adapter."""
-    objects = [DocumentChunk(
-        id=uuid4(), document_id=document_id, parse_run_id=run_id,
-        chunk_index=item.chunk_index, content=item.content, token_count=item.estimated_token_count,
-        page_start=item.page_start, page_end=item.page_end, section_title=item.section_title,
-        chunk_type=item.chunk_type, chunk_method=item.chunk_method, content_format=item.content_format,
-        source_metadata=dict(item.source_metadata), embedding=None, embedding_model=None,
-        embedding_dim=None, embedding_status="not_started",
-    ) for item in result.chunks]
-    ids = {item.chunk_index: item.id for item in objects}
-    from uuid import UUID
-    mappings = [DocumentChunkBlock(id=uuid4(), chunk_id=ids[link.chunk_index],
-                block_id=UUID(link.block_id), block_order=link.block_order) for link in result.links]
-    return objects, mappings
-
-
-def projection(chunks, mappings):
-    indexes = {chunk.id: chunk.chunk_index for chunk in chunks}
-    values = [{column.key: getattr(chunk, column.key) for column in DocumentChunk.__table__.columns
-               if column.key not in {"id", "created_at", "updated_at"}} for chunk in chunks]
-    links = [(indexes[mapping.chunk_id], mapping.block_id, mapping.block_order) for mapping in mappings]
-    return values, links
-
-
-@pytest.mark.parametrize("size,overlap", [(120, 0), (70, 20), (1000, 0)])
-def test_mineru_adapter_writer_equals_pre_m3_persistence(db, document, size, overlap):
-    result, run = mineru_result(db, document, size, overlap)
-    before = deepcopy(asdict(result))
-    expected = projection(*legacy_reference(result, document.id, run.id))
-    drafts = adapt(result)
+def test_shared_writer_preserves_order_content_metadata_and_links(db, document):
+    drafts, run = linked_drafts(db, document)
+    before = deepcopy([asdict(d) for d in drafts])
     actual = write(db, document.id, drafts)
-    mappings = [
-        mapping for chunk in actual for mapping in sorted(chunk.block_mappings, key=lambda item: item.block_order)]
-    assert projection(actual, mappings) == expected
-    assert all(item.parse_run_id == run.id for item in actual)
-    assert asdict(result) == before
-    assert all(isinstance(ref, ChunkBlockRef) for draft in drafts for ref in draft.block_refs)
-
-
-@pytest.mark.parametrize("bad_link", ["missing", "invalid", "unknown_chunk"])
-def test_adapter_rejects_dangling_links(db, document, bad_link):
-    result, _run = mineru_result(db, document)
-    link = result.links[0]
-    link = replace(link, block_id=None if bad_link == "missing" else "not-a-uuid") if bad_link != "unknown_chunk" else replace(link, chunk_index=99)
-    with pytest.raises(ValueError):
-        adapt(replace(result, links=[link]))
-    assert count(db, DocumentChunk) == 0
-
-
-def test_adapter_copies_metadata_and_keeps_link_order(db, document):
-    result, _run = mineru_result(db, document)
-    drafts = adapt(result)
-    assert [(draft.chunk_index, ref.block_order, str(ref.block_id)) for draft in drafts for ref in draft.block_refs] == [
-        (link.chunk_index, link.block_order, link.block_id) for link in result.links]
-    drafts[0].source_metadata["block_ids"].append("changed")
-    assert "changed" not in result.chunks[0].source_metadata["block_ids"]
+    assert [asdict(d) for d in drafts] == before
+    for chunk, draft in zip(actual, drafts, strict=True):
+        assert chunk.parse_run_id == run.id
+        for name in ("content", "token_count", "section_title", "chunk_type", "chunk_method", "content_format", "source_metadata"):
+            assert getattr(chunk, name) == getattr(draft, name)
+        assert [(m.block_id, m.block_order) for m in chunk.block_mappings] == [(r.block_id, r.block_order) for r in draft.block_refs]
+    drafts[0].source_metadata["kg_refs"].clear()
+    assert actual[0].source_metadata["kg_refs"]
 
 
 @pytest.mark.parametrize("invalid", ["missing_block", "wrong_document", "wrong_run", "null_run", "duplicate_order"])
 def test_writer_rejects_invalid_block_provenance_before_adding_chunks(db, document, invalid):
-    result, _run = mineru_result(db, document)
-    drafts = adapt(result)
+    drafts, _run = linked_drafts(db, document)
     first = drafts[0]
     ref = first.block_refs[0]
     if invalid == "missing_block":
@@ -231,8 +174,7 @@ def test_writer_rejects_invalid_block_provenance_before_adding_chunks(db, docume
 
 @pytest.mark.parametrize("failure_stage", ["chunks", "mappings"])
 def test_writer_partial_flush_is_rollbackable_and_never_commits(db, document, failure_stage):
-    result, _run = mineru_result(db, document)
-    drafts = adapt(result)
+    drafts, _run = linked_drafts(db, document)
     commits = db.commits
     observed = []
 
@@ -258,10 +200,3 @@ def test_empty_writer_does_not_flush_or_commit(db, document, monkeypatch):
     document_id = document.id
     monkeypatch.setattr(db, "flush", lambda *args, **kwargs: pytest.fail("empty write flushed"))
     assert write(db, document_id, []) == []
-
-
-def test_adapter_is_a_pure_domain_conversion():
-    path = Path(__file__).resolve().parents[1] / "app/ingestion/chunk_adapters.py"
-    tree = ast.parse(path.read_text(encoding="utf-8"))
-    modules = [node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)]
-    assert not any(name and name.startswith(("sqlalchemy", "app.models", "app.services")) for name in modules)

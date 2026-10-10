@@ -1,9 +1,11 @@
-"""Staged sequential retrieval builds. No parser or KG mutation calls.
+"""Staged structural retrieval builds. No parser or KG mutation calls.
 
 Every external call uses snapshots after SQL commit. Publication is a short
 Document-first fenced transaction; historical ChunkSets are never rewritten.
 """
 from datetime import timedelta
+from dataclasses import replace
+from pathlib import PurePosixPath
 from uuid import UUID, uuid4, uuid5
 import json
 import logging
@@ -13,13 +15,14 @@ from sqlalchemy.orm import Session, undefer
 
 from app.core.config import get_settings
 from app.core.errors import BusinessError
-from app.ingestion.frozen_source import json_bytes, sha256_bytes
-from app.ingestion.sequential_chunker import SegmentationConfig, SEGMENTATION_VERSION, split_sequential
+from app.ingestion.frozen_source import FrozenSource, json_bytes, sha256_bytes
+from app.ingestion.block_chunker import BlockChunkerConfig, SEGMENTATION_VERSION, build_block_aware_chunks, frozen_config
+from app.ingestion.chunk_anchors import anchor_intervals, refs_for_interval
 from app.models import Document, DocumentChunk, DocumentBlock, DocumentChunkBlock, SourceDocumentVersion, GraphBuild, DocumentProcessingJob
 from app.models.document_chunk_set import ChunkSet
 from app.retrieval.embeddings import get_embedding_provider
 from app.search_engine.versioned_index import VersionedIndex, index_name, indexing_failure_details, payload_digest
-from app.services.document_graph_builds import GraphAssets, _source_text, _snapshot, _now, _utc, load_anchor_index, require_graph_schema
+from app.services.document_graph_builds import GraphAssets, _snapshot, _now, _utc, load_anchor_index, require_graph_schema
 from app.services.document_operation_guard import DocumentOperationGuard
 from app.services.embedding_contract import embedding_fingerprint, vector32
 from app.services.search_index import extract_exact_terms
@@ -59,7 +62,8 @@ def _build(db, doc, source, build):
 
 
 def prepare_chunk_set(db: Session, document_id: UUID, source_version: UUID, graph_build_id: UUID,
-                      request_id: UUID, config: SegmentationConfig, *, operation="process", settings=None, worker_id=None) -> dict:
+                      request_id: UUID, config: BlockChunkerConfig, *, operation="process", settings=None, worker_id=None) -> dict:
+    config = BlockChunkerConfig.model_validate(config)
     settings = settings or get_settings()
     fingerprint = _enabled(settings)
     require_chunk_schema(db)
@@ -74,10 +78,15 @@ def prepare_chunk_set(db: Session, document_id: UUID, source_version: UUID, grap
     from app.services.document_processing import reject_managed_step
     if job and not job.chunk_set_id:
         reject_managed_step(job, worker_id)
+        pipeline = job.checkpoint.get("pipeline")
+        if pipeline and frozen_config(pipeline["config"], pipeline["segmentation_config_sha256"],
+                                      pipeline["segmentation_version"]) != config:
+            raise error("CHUNK_REQUEST_CONFLICT")
     if job and job.chunk_set_id:
         existing = db.get(ChunkSet, job.chunk_set_id)
         if (existing.source_version != source_version or existing.graph_build_id != graph_build_id
-                or existing.segmentation_config_sha256 != config.fingerprint or existing.embedding_fingerprint != fingerprint):
+                or frozen_config(existing.segmentation_config, existing.segmentation_config_sha256,
+                                 existing.segmentation_version) != config or existing.embedding_fingerprint != fingerprint):
             raise error("CHUNK_REQUEST_CONFLICT")
         set_id = existing.id
         db.commit()
@@ -108,14 +117,17 @@ def prepare_chunk_set(db: Session, document_id: UUID, source_version: UUID, grap
         segmentation_config_sha256=config.fingerprint, embedding_fingerprint=fingerprint, status="pending")
     db.add(row)
     db.flush()
+    chunk_input = dict(source=str(source_version), build=str(graph_build_id), segmentation_version=SEGMENTATION_VERSION,
+        config=config.model_dump(), segmentation_config_sha256=config.fingerprint, embedding=fingerprint)
+    chunk_input_sha256 = sha256_bytes(json_bytes(chunk_input))
     if job is None:
         job = DocumentProcessingJob(document_id=document_id, operation=operation, request_id=request_id,
-            input_fingerprint=sha256_bytes(json_bytes(dict(source=str(source_version), build=str(graph_build_id),
-                config=config.fingerprint, embedding=fingerprint))), source_version=source_version, graph_build_id=graph_build_id,
+            input_fingerprint=chunk_input_sha256, source_version=source_version, graph_build_id=graph_build_id,
             stage="kg_ready", status="queued", attempt_count=0)
         db.add(job)
     job.chunk_set_id = row.id
     job.checkpoint = {**(job.checkpoint or {}), "base_revision": document.publication_revision,
+                      "chunk_input": chunk_input, "chunk_input_sha256": chunk_input_sha256,
                       "base_chunk_set": str(document.current_chunk_set_id) if document.current_chunk_set_id else None}
     # One lease per bounded batch, plus explicit failure recovery attempts.
     job.max_attempts = job.attempt_count + settings.pdf_kg_max_chunks + 10
@@ -160,7 +172,8 @@ def chunk_set_status(db: Session, document_id: UUID, set_id: UUID, *, settings=N
     result = dict(chunk_set_id=row.id, document_id=document_id, source_version=row.source_version,
         graph_build_id=row.graph_build_id, request_id=job.request_id, operation=job.operation, status=row.status,
         job_status=job.status, stage=job.stage, chunk_count=row.chunk_count, embedding_counts=counts,
-        segmentation_config=row.segmentation_config, is_current=document.current_chunk_set_id == row.id,
+        segmentation_config=row.segmentation_config, segmentation_version=row.segmentation_version,
+        segmentation_config_sha256=row.segmentation_config_sha256, is_current=document.current_chunk_set_id == row.id,
         publication_revision=document.publication_revision, index_name=row.index_name,
         last_error_code=job.last_error_code, lease_expires_at=job.lease_expires_at,
         job_id=job.id, managed="pipeline" in job.checkpoint,
@@ -187,7 +200,8 @@ def list_chunk_sets(db: Session, document_id: UUID, *, limit=20, offset=0) -> di
     current = next((item for item in items if item["chunk_set_id"] == current_id), None)
     if current_id and current is None:
         current = chunk_set_status(db, document_id, current_id)
-    return dict(items=items, current=current, process_ready=initial, total=total, limit=limit, offset=offset)
+    return dict(items=items, current=current, process_ready=initial, total=total, limit=limit, offset=offset,
+        segmentation_defaults=BlockChunkerConfig().model_dump(), segmentation_version=SEGMENTATION_VERSION)
 
 
 def _chunks(db, set_id):
@@ -196,19 +210,53 @@ def _chunks(db, set_id):
 
 
 def _drafts(source, row, anchors, assets, settings):
-    text, blocks = _source_text(source, assets)
-    config = SegmentationConfig.model_validate(row["segmentation_config"])
-    if row["segmentation_version"] != SEGMENTATION_VERSION or config.fingerprint != row["segmentation_config_sha256"]:
-        raise ValueError("Unknown or corrupt segmentation contract")
-    drafts = split_sequential(text, config, document_id=row["document_id"], source_version=row["source_version"],
-        graph_build_id=row["graph_build_id"], anchors=anchors, blocks=blocks, max_chunks=settings.pdf_kg_max_chunks)
+    config = frozen_config(row["segmentation_config"], row["segmentation_config_sha256"], row["segmentation_version"])
+    if source["document_id"] != row["document_id"] or source["source_version"] != row["source_version"]:
+        raise ValueError("Frozen source belongs to another chunk set")
+    prefix = str(PurePosixPath(source["canonical_object_key"]).parent)
+    if str(PurePosixPath(source["block_map_object_key"]).parent) != prefix:
+        raise ValueError("Frozen source asset directories disagree")
+    frozen = FrozenSource(source_version=source["source_version"],
+        canonical=assets.read(source["bucket_name"], source["canonical_object_key"], source["canonical_sha256"]),
+        block_map=assets.read(source["bucket_name"], source["block_map_object_key"], source["block_map_sha256"]),
+        character_count=source["character_count"], canonical_sha256=source["canonical_sha256"],
+        block_map_sha256=source["block_map_sha256"])
+    result = build_block_aware_chunks(frozen, document_id=row["document_id"], parse_run_id=source["parse_run_id"],
+        output_prefix=prefix, config=config, segmentation_version=row["segmentation_version"], max_chunks=settings.pdf_kg_max_chunks)
+    anchor_rows = anchor_intervals(anchors, document_id=row["document_id"], source_version=row["source_version"],
+        graph_build_id=row["graph_build_id"], character_count=source["character_count"])
+    tables = {b["block_id"]: b for b in json.loads(frozen.block_map)["blocks"] if b["block_type"] == "table"}
+    drafts = []
+    for draft in result.chunks:
+        # The builder projects the display title; still enforce SQL's bound defensively.
+        if draft.section_title is not None and len(draft.section_title) > 255:
+            raise ValueError("Section title exceeds persistence contract")
+        metadata = {**draft.source_metadata, **_structure(draft),
+            "table_fragmented": any(not (draft.source_start <= tables[key]["source_start"]
+                and draft.source_end >= tables[key]["source_end"])
+                for key in draft.source_metadata["block_ids"] if key in tables),
+            "segmentation_version": row["segmentation_version"], "segmentation_config_sha256": config.fingerprint,
+            "kg_refs": refs_for_interval(draft.source_start, draft.source_end, anchor_rows)}
+        drafts.append(replace(draft, source_metadata=metadata))
+    links = [[] for _ in drafts]
+    for link in result.links:
+        links[link.chunk_index].append(dict(block_id=link.block_id, block_key=link.block_key, block_order=link.block_order))
     entries = [dict(chunk_id=str(uuid5(row["id"], str(i))), chunk_index=i, source_start=d.source_start,
-        source_end=d.source_end, content_sha256=d.content_sha256, kg_refs=list(d.kg_refs), block_ids=list(d.block_ids),
-        page_start=d.page_start, page_end=d.page_end) for i, d in enumerate(drafts)]
-    manifest = dict(schema_version=2, chunk_set_id=str(row["id"]), source_version=str(row["source_version"]),
+        source_end=d.source_end, content_sha256=d.content_sha256, **_structure(d), source_metadata=d.source_metadata,
+        block_links=links[i]) for i, d in enumerate(drafts)]
+    manifest = dict(schema_version=3, document_id=str(row["document_id"]), parse_run_id=str(source["parse_run_id"]),
+        chunk_set_id=str(row["id"]), source_version=str(row["source_version"]),
         graph_build_id=str(row["graph_build_id"]), canonical_sha256=source["canonical_sha256"],
-        segmentation_config_sha256=row["segmentation_config_sha256"], chunks=entries)
+        source_map_sha256=source["block_map_sha256"], segmentation_version=row["segmentation_version"],
+        segmentation_config=config.model_dump(), segmentation_config_sha256=config.fingerprint,
+        chunk_count=len(entries), chunks=entries)
     return drafts, manifest
+
+
+def _structure(draft):
+    return dict(chunk_type=draft.chunk_type, section_title=draft.section_title, content_format=draft.content_format,
+        chunk_method=draft.chunk_method, page_start=draft.page_start, page_end=draft.page_end,
+        token_count=draft.estimated_token_count, parse_run_id=draft.parse_run_id)
 
 
 def _verify_chunks(rows, drafts, manifest):
@@ -218,10 +266,22 @@ def _verify_chunks(rows, drafts, manifest):
         if (str(row["id"]) != entry["chunk_id"] or row["chunk_index"] != entry["chunk_index"]
                 or row["content"] != draft.content or row["content_sha256"] != draft.content_sha256
                 or row["source_start"] != draft.source_start or row["source_end"] != draft.source_end
-                or row["source_metadata"] != {"kg_refs": list(draft.kg_refs)}
-                or row["page_start"] != draft.page_start or row["page_end"] != draft.page_end
+                or row["source_metadata"] != draft.source_metadata
+                or any((str(row[k]) if k == "parse_run_id" else row[k]) != v for k, v in _structure(draft).items())
+                or str(row["document_id"]) != manifest["document_id"]
                 or str(row["chunk_set_id"]) != manifest["chunk_set_id"] or str(row["source_version"]) != manifest["source_version"]):
             raise ValueError("Chunk differs from frozen source/anchors")
+
+
+def _verify_links(db, set_id, manifest):
+    actual = [(str(cid), str(bid), order) for cid, bid, order in db.execute(
+        select(DocumentChunkBlock.chunk_id, DocumentChunkBlock.block_id, DocumentChunkBlock.block_order)
+        .join(DocumentChunk, DocumentChunk.id == DocumentChunkBlock.chunk_id)
+        .where(DocumentChunk.chunk_set_id == set_id).order_by(DocumentChunk.chunk_index, DocumentChunkBlock.block_order))]
+    expected = [(entry["chunk_id"], link["block_id"], link["block_order"])
+                for entry in manifest["chunks"] for link in entry["block_links"]]
+    if actual != expected:
+        raise ValueError("Chunk block links differ from frozen source")
 
 
 def advance_chunk_set(db: Session, document_id: UUID, set_id: UUID, *, retry=False, settings=None, assets=None, provider=None, index=None, worker_id=None) -> dict:
@@ -260,9 +320,17 @@ def advance_chunk_set(db: Session, document_id: UUID, set_id: UUID, *, retry=Fal
     stage = "chunking" if row.sealed_at is None else ("indexing" if job.stage == "indexing" else "embedding")
     job.stage = row.status = stage
     document.process_status = stage
+    checkpoint, operation_kind, input_fingerprint = dict(job.checkpoint), job.operation, job.input_fingerprint
     db.commit()
     operation = "validate_source"
     try:
+        expected_input = dict(source=str(row_data["source_version"]), build=str(row_data["graph_build_id"]),
+            segmentation_version=row_data["segmentation_version"], config=row_data["segmentation_config"],
+            segmentation_config_sha256=row_data["segmentation_config_sha256"], embedding=row_data["embedding_fingerprint"])
+        if (checkpoint.get("chunk_input") != expected_input
+                or checkpoint.get("chunk_input_sha256") != sha256_bytes(json_bytes(expected_input))
+                or operation_kind == "rechunk" and input_fingerprint != sha256_bytes(json_bytes(expected_input))):
+            raise error("CHUNK_REQUEST_CONFLICT")
         anchors = load_anchor_index(db, document_id, row_data["source_version"], row_data["graph_build_id"])
         drafts, manifest = _drafts(source, row_data, anchors, assets, settings)
         if stage == "chunking":
@@ -274,7 +342,7 @@ def advance_chunk_set(db: Session, document_id: UUID, set_id: UUID, *, retry=Fal
             document, job, row = _fenced(db, document_id, set_id, lease)
             if _chunks(db, set_id):
                 raise ValueError("Unsealed set already has chunks")
-            required_blocks = {UUID(b) for d in drafts for b in d.block_ids}
+            required_blocks = {UUID(b) for d in drafts for b in d.source_metadata["block_ids"]}
             owned_blocks = set(db.scalars(select(DocumentBlock.id).where(DocumentBlock.id.in_(required_blocks),
                 DocumentBlock.document_id == document_id, DocumentBlock.parse_run_id == source["parse_run_id"])))
             if owned_blocks != required_blocks:
@@ -284,13 +352,14 @@ def advance_chunk_set(db: Session, document_id: UUID, set_id: UUID, *, retry=Fal
                 db.add(DocumentChunk(id=chunk_id, document_id=document_id, parse_run_id=source["parse_run_id"],
                     chunk_set_id=set_id, source_version=row.source_version, chunk_index=i,
                     source_start=draft.source_start, source_end=draft.source_end, content=draft.content,
-                    content_sha256=draft.content_sha256, source_metadata={"kg_refs": list(draft.kg_refs)},
-                    page_start=draft.page_start, page_end=draft.page_end, chunk_type="text", chunk_method="sequential",
-                    content_format="markdown", embedding_status="not_started"))
+                    content_sha256=draft.content_sha256, source_metadata=draft.source_metadata,
+                    **{k: v for k, v in _structure(draft).items() if k != "parse_run_id"}, embedding_status="not_started"))
                 db.flush()
-                for order, block_id in enumerate(draft.block_ids):
+                for order, block_id in enumerate(draft.source_metadata["block_ids"]):
                     db.add(DocumentChunkBlock(chunk_id=chunk_id, block_id=UUID(block_id), block_order=order))
             db.flush()  # All immutable content precedes sealing the parent.
+            _verify_chunks([_snapshot(c) for c in _chunks(db, set_id)], drafts, manifest)
+            _verify_links(db, set_id, manifest)
             row.chunk_count, row.manifest_object_key, row.manifest_sha256, row.sealed_at = len(drafts), key, digest, _now(db)
             row.status = job.stage = document.process_status = "chunks_ready"
             _release(job, "queued", _now(db))
@@ -303,6 +372,7 @@ def advance_chunk_set(db: Session, document_id: UUID, set_id: UUID, *, retry=Fal
             _fenced(db, document_id, set_id, lease)
             rows = [_snapshot(c) for c in _chunks(db, set_id)]
             _verify_chunks(rows, drafts, manifest)
+            _verify_links(db, set_id, manifest)
             db.commit()
             if stage == "embedding":
                 _embed(db, document_id, set_id, lease, rows, row_data, settings, provider)
@@ -343,7 +413,10 @@ def advance_chunk_set(db: Session, document_id: UUID, set_id: UUID, *, retry=Fal
                         (str(document.current_chunk_set_id) if document.current_chunk_set_id else None) != base["base_chunk_set"]):
                     raise error("CHUNK_PUBLICATION_CONFLICT")
                 # Recheck all vectors/content under the publication lock as well.
-                fresh = [_payload(_snapshot(c), row_data, filename, settings) for c in _chunks(db, set_id)]
+                fresh_rows = [_snapshot(c) for c in _chunks(db, set_id)]
+                _verify_chunks(fresh_rows, drafts, manifest)
+                _verify_links(db, set_id, manifest)
+                fresh = [_payload(c, row_data, filename, settings) for c in fresh_rows]
                 if payload_digest(fresh) != receipt["payload_sha256"]:
                     raise ValueError("Chunks changed during index publication")
                 operation = "sql_publish"
@@ -419,6 +492,8 @@ def _payload(c, row, filename, settings):
     return dict(schema_version=2, chunk_id=str(c["id"]), document_id=str(c["document_id"]), original_filename=filename,
         chunk_index=c["chunk_index"], content=c["content"], content_max=c["content"], content_smart=c["content"],
         chunk_type=c["chunk_type"], page_start=c["page_start"], page_end=c["page_end"], section_title=c["section_title"],
+        chunk_method=c["chunk_method"], content_format=c["content_format"], token_count=c["token_count"],
+        parse_run_id=str(c["parse_run_id"]),
         source_metadata=c["source_metadata"], exact_terms=extract_exact_terms(c["content"]),
         source_version=str(c["source_version"]), graph_build_id=str(row["graph_build_id"]), chunk_set_id=str(row["id"]),
         source_start=c["source_start"], source_end=c["source_end"], content_sha256=c["content_sha256"],

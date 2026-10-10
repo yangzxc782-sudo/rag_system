@@ -66,7 +66,7 @@ from app.services.document_processing import (
 )
 from app.schemas.document_graph_build import GraphBuildAdvance, GraphBuildCreate, GraphBuildStatus
 from app.services.document_graph_builds import advance_graph_build, graph_build_status, prepare_graph_build
-from app.schemas.document_chunk_set import ChunkSetCreate, ChunkSetAdvance, ChunkSetStatus
+from app.schemas.document_chunk_set import ChunkSetCreate, ChunkSetAdvance, ChunkSetStatus, ChunkSetList
 from app.services.document_chunk_sets import prepare_chunk_set, advance_chunk_set, chunk_set_status, list_chunk_sets
 from app.services.document_deletion import (
     get_document_deletion_status,
@@ -471,12 +471,12 @@ def create_chunk_set_endpoint(request: Request, db: DbSession, document_id: UUID
         return business_error_response(exc)
 
 
-@router.get("/{document_id}/chunk-sets", response_model=ApiResponse[dict])
+@router.get("/{document_id}/chunk-sets", response_model=ApiResponse[ChunkSetList])
 def read_chunk_sets_endpoint(db: DbSession, document_id: UUID,
                             limit: Annotated[int, Query(ge=1, le=100)] = 20,
-                            offset: Annotated[int, Query(ge=0)] = 0) -> ApiResponse[dict] | JSONResponse:
+                            offset: Annotated[int, Query(ge=0)] = 0) -> ApiResponse[ChunkSetList] | JSONResponse:
     try:
-        return ApiResponse[dict].ok(list_chunk_sets(db, document_id, limit=limit, offset=offset))
+        return ApiResponse[ChunkSetList].ok(ChunkSetList.model_validate(list_chunk_sets(db, document_id, limit=limit, offset=offset)))
     except BusinessError as exc:
         return business_error_response(exc)
 

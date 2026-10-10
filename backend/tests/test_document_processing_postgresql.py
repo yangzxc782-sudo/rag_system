@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.models import Document, DocumentProcessingJob
 from app.services.document_processing import request_processing
-from app.ingestion.sequential_chunker import SegmentationConfig
+from app.ingestion.block_chunker import BlockChunkerConfig
 from phase13_support import schema_engine, verified_engine
 from test_document_processing import settings, parsed, finish
 from test_document_version_deletion import test_version_manifest_revokes_publication_and_finalizes_dependencies as run_deletion_contract
@@ -47,7 +47,7 @@ def test_complete_pipeline_on_actual_m0_triggers(m5_engine, settings, monkeypatc
         saved = db.get(DocumentProcessingJob, job)
         request = saved.request_id
         db.commit()
-        again = request_processing(db, doc, request, SegmentationConfig(chunk_size=50, overlap=5), settings=settings)
+        again = request_processing(db, doc, request, BlockChunkerConfig(min_chunk_chars=0, max_chunk_chars=50, overlap_chars=5), settings=settings)
         assert again["job_id"] == job
 
 
@@ -81,7 +81,7 @@ def test_concurrent_duplicate_requests_and_claim_exclusion(m5_engine, settings):
     def submit():
         with Session(m5_engine, autoflush=False) as db:
             barrier.wait(timeout=10)
-            return request_processing(db, document_id, request_id, SegmentationConfig(), settings=settings)
+            return request_processing(db, document_id, request_id, BlockChunkerConfig(), settings=settings)
     with ThreadPoolExecutor(max_workers=2) as pool:
         one, two = pool.submit(submit), pool.submit(submit)
         first, second = one.result(timeout=15), two.result(timeout=15)

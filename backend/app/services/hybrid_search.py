@@ -26,7 +26,7 @@ from app.retrieval.embeddings import EmbeddingResult, EmbeddingProvider, get_emb
 from app.search_engine.client import SearchEngineClientProtocol, get_search_engine_client
 from app.search_engine.index_schema import get_index_alias
 from app.services.search_index import DEFAULT_EMBEDDING_DIM, DEFAULT_EMBEDDING_MODEL, EXACT_TERM_PATTERNS
-from app.services.retrieval_admission import VERSION_FIELDS, published_targets, filter_published_hits
+from app.services.retrieval_admission import VERSION_FIELDS, STRUCTURE_FIELDS, published_targets, filter_published_hits
 from app.services.embedding_contract import embedding_fingerprint
 
 
@@ -445,6 +445,7 @@ def _source_fields() -> list[str]:
         "chunk_index",
         "content",
         "source_metadata",
+        *STRUCTURE_FIELDS,
         "exact_terms",
         "embedding_model",
         "embedding_dim", "schema_version", *VERSION_FIELDS,

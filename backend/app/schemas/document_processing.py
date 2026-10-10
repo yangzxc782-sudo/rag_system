@@ -2,20 +2,27 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from app.ingestion.sequential_chunker import SegmentationConfig
+from app.ingestion.block_chunker import BlockChunkerConfig
 
 
 class ProcessDocumentRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     request_id: UUID
-    config: SegmentationConfig = Field(default_factory=SegmentationConfig)
+    config: BlockChunkerConfig = Field(default_factory=BlockChunkerConfig)
 
 
 class ResumeProcessingRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    config: SegmentationConfig = Field(default_factory=SegmentationConfig)
+    # Omission adopts the frozen request; an explicitly supplied config must match.
+    config: BlockChunkerConfig | None = None
+
+    @model_validator(mode="after")
+    def reject_explicit_null(self):
+        if "config" in self.model_fields_set and self.config is None:
+            raise ValueError("Omit config to reuse the frozen configuration; null is not supported")
+        return self
 
 
 class ProcessingJobRead(BaseModel):
@@ -38,7 +45,7 @@ class ProcessingJobRead(BaseModel):
     cancel_requested: bool
     requires_io_reconciliation: bool
     managed: bool
-    config: SegmentationConfig | None
+    config: BlockChunkerConfig | None
     created_at: datetime
     updated_at: datetime
     graph_status: str | None = None
@@ -55,3 +62,5 @@ class ProcessingJobList(BaseModel):
     executor_enabled: bool
     search_enabled: bool
     can_process: bool
+    segmentation_defaults: BlockChunkerConfig
+    segmentation_version: str

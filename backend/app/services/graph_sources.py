@@ -8,11 +8,11 @@ from app.extraction.kg_extract import TEMPLATE_SHA256, template
 from app.extraction.kg_protocol import ANCHOR_ADAPTER, validate_anchors
 from app.graph.models import GraphSource, GraphTriggerProvenance, VerifiedAnchor
 from app.ingestion.frozen_source import sha256_bytes
-from app.ingestion.sequential_chunker import overlaps
+from app.ingestion.source_intervals import overlaps
 from app.models import Document, DocumentChunk, GraphBuild, KGExtractionUnit, SourceDocumentVersion
 from app.models.document_chunk_set import ChunkSet
 from app.rag.context_builder import TRUNCATION_MARKER
-from app.services.retrieval_admission import _valid_receipt
+from app.services.retrieval_admission import _valid_receipt, valid_structure
 
 
 def valid_prefix(chunk, stored_content: str) -> bool:
@@ -77,7 +77,7 @@ class GraphSourceAuthority:
                     or chunk.parse_run_id != source.parse_run_id
                     or (current and doc.current_chunk_set_id != parent.id)
                     or parent.status != "indexed" or parent.sealed_at is None or parent.indexed_at is None
-                    or not _valid_receipt(parent) or chunk.embedding_status != "embedded"
+                    or not _valid_receipt(parent) or not valid_structure(chunk, parent) or chunk.embedding_status != "embedded"
                     or build.status not in ("ready", "ready_empty") or build.sealed_at is None
                     or build.graph_schema_version != 2 or build.template_sha256 != TEMPLATE_SHA256
                     or build.template_version != template()["version"]

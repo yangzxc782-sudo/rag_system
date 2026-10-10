@@ -1,40 +1,59 @@
+"""PDF structural grouping over a verified frozen source-map, with no IO.
+
+Only coordinates are split/merged. Content is always sliced from canonical text.
+The ChunkSet service persists and verifies these drafts before publication.
+"""
 from __future__ import annotations
 
+from bisect import bisect_right
+from dataclasses import dataclass, field
+import json
 import math
-from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass, field, replace
-from typing import Any
+import re
+from typing import Any, Sequence
+from uuid import UUID
 
-from app.ingestion.mineru.normalizer import NormalizedDocumentBlock
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-CHUNK_METHOD = "mineru_block_merge"
+from app.ingestion.frozen_source import FrozenSource, json_bytes, sha256_bytes, verify_frozen_source
+
+SEGMENTATION_VERSION = "pdf-block-aware-codepoints-v1"
+CHUNK_METHOD = SEGMENTATION_VERSION
 PARSER_PROVIDER = "mineru_api"
-BlockContentRenderer = Callable[[Any], tuple[str, str]]
+_OVERLAP_TYPES = frozenset({"text", "list", "footnote", "unknown"})
 
 
-@dataclass(frozen=True, slots=True)
-class BlockChunkerConfig:
-    max_chunk_chars: int = 1800
-    min_chunk_chars: int = 200
-    overlap_chars: int = 0
-    max_table_chars: int = 4000
+class BlockChunkerConfig(BaseModel):
+    """The single six-field definition; omitted fields use these defaults only."""
+
+    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
+    max_chunk_chars: int = Field(default=1800, gt=0, le=60000)
+    min_chunk_chars: int = Field(default=200, ge=0)
+    overlap_chars: int = Field(default=0, ge=0)
+    max_table_chars: int = Field(default=4000, gt=0)
     keep_table_intact: bool = True
     keep_formula_with_context: bool = True
-    include_headers_footers: bool = False
 
-    def __post_init__(self) -> None:
-        if self.max_chunk_chars <= 0:
-            raise ValueError("max_chunk_chars must be positive")
-        if self.min_chunk_chars < 0:
-            raise ValueError("min_chunk_chars cannot be negative")
+    @model_validator(mode="after")
+    def valid_lengths(self) -> BlockChunkerConfig:
         if self.min_chunk_chars > self.max_chunk_chars:
-            raise ValueError("min_chunk_chars cannot exceed max_chunk_chars")
-        if self.overlap_chars < 0:
-            raise ValueError("overlap_chars cannot be negative")
+            raise ValueError("min_chunk_chars cannot exceed max_chunk_chars; provide a valid min_chunk_chars")
         if self.overlap_chars >= self.max_chunk_chars:
             raise ValueError("overlap_chars must be smaller than max_chunk_chars")
-        if self.max_table_chars <= 0:
-            raise ValueError("max_table_chars must be positive")
+        return self
+
+    @property
+    def fingerprint(self) -> str:
+        return sha256_bytes(json_bytes(self.model_dump()))
+
+
+def frozen_config(value: dict, fingerprint: str, version: str) -> BlockChunkerConfig:
+    """Stored contracts must be complete; only requests may fill defaults."""
+    config = BlockChunkerConfig.model_validate(value)
+    if (version != SEGMENTATION_VERSION or set(value) != set(BlockChunkerConfig.model_fields)
+            or config.fingerprint != fingerprint):
+        raise ValueError("Unknown or corrupt segmentation contract")
+    return config
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,6 +69,10 @@ class BuiltDocumentChunk:
     parse_run_id: str
     chunk_method: str
     content_format: str
+    source_version: UUID
+    source_start: int
+    source_end: int
+    content_sha256: str
     embedding: None = field(default=None, repr=False)
 
     @property
@@ -61,7 +84,7 @@ class BuiltDocumentChunk:
 class BuiltChunkBlockLink:
     chunk_index: int
     chunk_temp_key: str
-    block_id: str | None
+    block_id: str
     block_key: str | None
     block_order: int
 
@@ -74,471 +97,249 @@ class ChunkBuildResult:
 
 @dataclass(frozen=True, slots=True)
 class _BlockView:
-    block_id: str | None
+    block_id: str
     block_key: str | None
-    block_index: int
     block_type: str
-    content: str = field(repr=False)
+    source_start: int
+    source_end: int
     content_format: str
     page_start: int | None
     page_end: int | None
-    section_path: list[str]
-    asset_keys: list[str]
+    section_path: tuple[str, ...]
+    asset_keys: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _Interval:
+    start: int
+    end: int
 
 
 @dataclass(frozen=True, slots=True)
 class _BlockFragment:
     block: _BlockView
-    content: str = field(repr=False)
+    span: _Interval
 
 
 def build_block_aware_chunks(
-    blocks: Iterable[NormalizedDocumentBlock | Any],
-    *,
-    parse_run_id: str,
+    source: FrozenSource, *, document_id: UUID, parse_run_id: UUID, output_prefix: str,
     config: BlockChunkerConfig | None = None,
-    renderer: BlockContentRenderer | None = None,
+    segmentation_version: str = SEGMENTATION_VERSION, max_chunks: int = 5000,
 ) -> ChunkBuildResult:
-    settings = config or BlockChunkerConfig()
-    parse_run_value = str(parse_run_id)
-    if not parse_run_value.strip():
-        raise ValueError("parse_run_id is required")
-
-    views = _prepare_block_views(blocks, settings, renderer)
-    groups = _build_chunk_groups(views, settings)
-    chunks: list[BuiltDocumentChunk] = []
-    links: list[BuiltChunkBlockLink] = []
-    for chunk_index, group in enumerate(groups):
-        chunk = _build_chunk(chunk_index, group, parse_run_value)
+    """Consume frozen bytes and identity, never mutable DocumentBlock or a renderer."""
+    if segmentation_version != SEGMENTATION_VERSION:
+        raise ValueError("Unsupported PDF segmentation version")
+    if type(max_chunks) is not int or max_chunks <= 0:
+        raise ValueError("max_chunks must be a positive integer")
+    settings = BlockChunkerConfig() if config is None else config
+    if not isinstance(settings, BlockChunkerConfig):
+        raise TypeError("config must be a validated BlockChunkerConfig")
+    text = verify_frozen_source(
+        source.canonical, source.block_map, document_id=document_id, parse_run_id=parse_run_id,
+        source_version=source.source_version, output_prefix=output_prefix,
+        canonical_sha256=source.canonical_sha256, block_map_sha256=source.block_map_sha256,
+        character_count=source.character_count,
+    )
+    blocks = [
+        _BlockView(**{key: entry[key] for key in (
+            "block_id", "block_key", "block_type", "source_start", "source_end",
+            "content_format", "page_start", "page_end")},
+            section_path=tuple(entry["section_path"]), asset_keys=tuple(entry["asset_keys"]))
+        for entry in json.loads(source.block_map)["blocks"]
+    ]
+    groups = _build_chunk_groups(text, blocks, settings, max_chunks)
+    chunks, links = [], []
+    for index, group in enumerate(groups):
+        start, end = group[0].span.start, group[-1].span.end
+        # Frozen inter-block separators belong to the previous chunk. They may
+        # exceed its target length; no whitespace is synthesized or discarded.
+        if index + 1 < len(groups) and end < groups[index + 1][0].span.start:
+            next_start = groups[index + 1][0].span.start
+            if not text[end:next_start].isspace():
+                raise ValueError("Non-contiguous structural grouping")
+            end = next_start
+        chunk = _build_chunk(index, group, text, start, end, source.source_version, str(parse_run_id))
         chunks.append(chunk)
-        links.extend(_build_links(chunk, group))
-    return ChunkBuildResult(chunks=chunks, links=links)
-
-
-def _prepare_block_views(
-    blocks: Iterable[NormalizedDocumentBlock | Any],
-    config: BlockChunkerConfig,
-    renderer: BlockContentRenderer | None = None,
-) -> list[_BlockView]:
-    views: list[_BlockView] = []
-    active_section_path: list[str] = []
-    for fallback_index, block in enumerate(blocks):
-        view = _to_block_view(block, fallback_index, renderer)
-        if (
-            view.block_type in {"header", "footer"}
-            and not config.include_headers_footers
-        ):
-            continue
-        if not view.content.strip():
-            continue
-
-        if view.section_path:
-            active_section_path = list(view.section_path)
-        elif view.block_type == "title":
-            active_section_path = [view.content.strip()]
-            view = replace(view, section_path=list(active_section_path))
-        elif active_section_path:
-            view = replace(view, section_path=list(active_section_path))
-        views.append(view)
-    return views
+        for order, block in enumerate(dict.fromkeys(fragment.block for fragment in group)):
+            links.append(BuiltChunkBlockLink(index, chunk.chunk_temp_key, block.block_id, block.block_key, order))
+    return ChunkBuildResult(chunks, links)
 
 
 def _build_chunk_groups(
-    blocks: Sequence[_BlockView],
-    config: BlockChunkerConfig,
+    text: str, blocks: Sequence[_BlockView], config: BlockChunkerConfig, max_chunks: int,
 ) -> list[list[_BlockFragment]]:
     groups: list[list[_BlockFragment]] = []
     current: list[_BlockFragment] = []
 
+    def emit(group: list[_BlockFragment]) -> None:
+        if len(groups) >= max_chunks:
+            raise ValueError("PDF structural chunk budget exceeded")
+        groups.append(group)
+
     def flush() -> None:
         nonlocal current
         if current:
-            groups.append(current)
+            emit(current)
             current = []
+
+    def fits(fragment: _BlockFragment) -> bool:
+        return fragment.span.end - current[0].span.start <= config.max_chunk_chars
 
     for block in blocks:
         if current and block.section_path != current[0].block.section_path:
             flush()
-
-        if (
-            block.block_type == "formula"
-            and (
-                not config.keep_formula_with_context
-                or len(block.content) > config.max_chunk_chars
-            )
+        span = _Interval(block.source_start, block.source_end)
+        fragment = _BlockFragment(block, span)
+        length = span.end - span.start
+        if block.block_type == "formula" and (
+            not config.keep_formula_with_context or length > config.max_chunk_chars
         ):
             flush()
-            groups.append(
-                [_BlockFragment(block=block, content=block.content)]
-            )
-            continue
-
-        if block.block_type == "table":
-            table_fragments = _table_fragments(block, config)
-            if len(table_fragments) > 1:
+            emit([fragment])
+        elif block.block_type == "table":
+            parts = _table_fragments(text, span, config, max_chunks)
+            if len(parts) > 1:
                 flush()
-                groups.extend([[fragment] for fragment in table_fragments])
+                for part in parts:
+                    emit([_BlockFragment(block, part)])
                 continue
-
-            fragment = table_fragments[0]
-            if current and not _only_title_fragments(current):
-                flush()
-            if current and not _fits(current, fragment.content, config):
+            if current and (any(f.block.block_type != "title" for f in current) or not fits(fragment)):
                 flush()
             current.append(fragment)
             flush()
-            continue
-
-        if len(block.content) > config.max_chunk_chars:
+        elif length > config.max_chunk_chars:
             flush()
-            groups.extend(
-                [
-                    [_BlockFragment(block=block, content=part)]
-                    for part in _split_text_safely(block.content, config)
-                ]
-            )
-            continue
-
-        fragment = _BlockFragment(block=block, content=block.content)
-        if current and not _fits(current, fragment.content, config):
-            flush()
-        current.append(fragment)
-
+            parts = _split_text_safely(text, span, config, max_chunks,
+                                       allow_overlap=block.block_type in _OVERLAP_TYPES)
+            for part in parts:
+                emit([_BlockFragment(block, part)])
+        else:
+            if current and not fits(fragment):
+                flush()
+            current.append(fragment)
     flush()
     return groups
 
 
 def _table_fragments(
-    block: _BlockView,
-    config: BlockChunkerConfig,
-) -> list[_BlockFragment]:
-    if config.keep_table_intact or len(block.content) <= config.max_table_chars:
-        return [_BlockFragment(block=block, content=block.content)]
-    parts = _split_lines(block.content, config.max_table_chars)
-    return [_BlockFragment(block=block, content=part) for part in parts]
-
-
-def _build_chunk(
-    chunk_index: int,
-    group: Sequence[_BlockFragment],
-    parse_run_id: str,
-) -> BuiltDocumentChunk:
-    content = "\n\n".join(fragment.content.strip() for fragment in group).strip()
-    content_format = _chunk_content_format(group)
-    section_path = list(group[0].block.section_path)
-    block_ids = _deduplicate(
-        fragment.block.block_id
-        for fragment in group
-        if fragment.block.block_id is not None
-    )
-    block_keys = _deduplicate(
-        fragment.block.block_key
-        for fragment in group
-        if fragment.block.block_key is not None
-    )
-    block_types = _deduplicate(fragment.block.block_type for fragment in group)
-    asset_keys = _deduplicate(
-        asset_key
-        for fragment in group
-        for asset_key in fragment.block.asset_keys
-    )
-    source_metadata = {
-        "parser_provider": PARSER_PROVIDER,
-        "parse_run_id": parse_run_id,
-        "block_ids": block_ids,
-        "block_keys": block_keys,
-        "block_types": block_types,
-        "asset_keys": asset_keys,
-        "section_path": section_path,
-        "chunk_method": CHUNK_METHOD,
-        "content_format": content_format,
-    }
-    pages = [
-        page
-        for fragment in group
-        for page in (fragment.block.page_start, fragment.block.page_end)
-        if page is not None
-    ]
-    return BuiltDocumentChunk(
-        chunk_index=chunk_index,
-        content=content,
-        estimated_token_count=max(1, math.ceil(len(content) / 4)),
-        page_start=min(pages) if pages else None,
-        page_end=max(pages) if pages else None,
-        section_title=section_path[-1] if section_path else None,
-        chunk_type=_chunk_type(group),
-        source_metadata=source_metadata,
-        parse_run_id=parse_run_id,
-        chunk_method=CHUNK_METHOD,
-        content_format=content_format,
-    )
-
-
-def _build_links(
-    chunk: BuiltDocumentChunk,
-    group: Sequence[_BlockFragment],
-) -> list[BuiltChunkBlockLink]:
-    links: list[BuiltChunkBlockLink] = []
-    seen: set[tuple[str | None, str | None, int]] = set()
-    for fragment in group:
-        identity = (
-            fragment.block.block_id,
-            fragment.block.block_key,
-            fragment.block.block_index,
-        )
-        if identity in seen:
-            continue
-        seen.add(identity)
-        links.append(
-            BuiltChunkBlockLink(
-                chunk_index=chunk.chunk_index,
-                chunk_temp_key=chunk.chunk_temp_key,
-                block_id=fragment.block.block_id,
-                block_key=fragment.block.block_key,
-                block_order=len(links),
-            )
-        )
-    return links
-
-
-def _to_block_view(
-    block: Any, fallback_index: int, renderer: BlockContentRenderer | None = None,
-) -> _BlockView:
-    block_type = str(_value(block, "block_type") or "unknown").strip().lower()
-    source_metadata = _mapping(_value(block, "source_metadata"))
-    text = _optional_text(_value(block, "text"))
-    markdown = _optional_text(_value(block, "markdown"))
-    html = _optional_text(_value(block, "html"))
-    latex = _optional_text(_value(block, "latex"))
-    caption = _optional_text(_value(block, "caption"))
-    content, content_format = _render_block_content(
-        block_type=block_type,
-        text=text,
-        markdown=markdown,
-        html=html,
-        latex=latex,
-        caption=caption,
-    )
-    if renderer is not None:
-        content, content_format = renderer(block)
-    block_id = _optional_text(_value(block, "id"))
-    if block_id is None:
-        block_id = _optional_text(source_metadata.get("document_block_id"))
-    block_key = _optional_text(_value(block, "block_key"))
-    section_path = _string_list(_value(block, "section_path"))
-    if not section_path:
-        section_path = _string_list(source_metadata.get("section_path"))
-    asset_keys = _string_list(_value(block, "asset_keys"))
-    if not asset_keys:
-        asset_keys = _string_list(source_metadata.get("asset_keys"))
-    return _BlockView(
-        block_id=block_id,
-        block_key=block_key,
-        block_index=_optional_int(_value(block, "block_index")) or fallback_index,
-        block_type=block_type,
-        content=content,
-        content_format=content_format,
-        page_start=_optional_int(_value(block, "page_start")),
-        page_end=_optional_int(_value(block, "page_end")),
-        section_path=section_path,
-        asset_keys=_deduplicate(asset_keys),
-    )
-
-
-def _render_block_content(
-    *,
-    block_type: str,
-    text: str | None,
-    markdown: str | None,
-    html: str | None,
-    latex: str | None,
-    caption: str | None,
-) -> tuple[str, str]:
-    if block_type == "table":
-        if markdown:
-            return markdown, "markdown"
-        if html:
-            return html, "mixed"
-        return text or "", "plain_text"
-
-    if block_type == "formula":
-        rendered_formula = f"$$\n{latex}\n$$" if latex else ""
-        parts = _deduplicate(part for part in (text, rendered_formula) if part)
-        if rendered_formula and text:
-            return "\n\n".join(parts), "mixed"
-        if rendered_formula:
-            return rendered_formula, "markdown"
-        return text or "", "plain_text"
-
-    if block_type in {"image", "caption"}:
-        parts = _deduplicate(part for part in (caption, text) if part)
-        return "\n\n".join(parts), "plain_text"
-
-    if markdown and text and markdown != text:
-        return f"{text}\n\n{markdown}", "mixed"
-    if markdown:
-        return markdown, "markdown"
-    return text or caption or "", "plain_text"
-
-
-def _split_text_safely(
-    content: str,
-    config: BlockChunkerConfig,
-) -> list[str]:
-    paragraphs = [part.strip() for part in content.split("\n\n") if part.strip()]
-    units = [
-        piece
-        for paragraph in paragraphs
-        for piece in _split_oversized_text(paragraph, config.max_chunk_chars)
-    ]
-    chunks: list[str] = []
-    current = ""
-    for unit in units:
-        candidate = f"{current}\n\n{unit}".strip() if current else unit
-        if current and len(candidate) > config.max_chunk_chars:
-            chunks.append(current)
-            current = unit
-        else:
-            current = candidate
-    if current:
-        chunks.append(current)
-    chunks = _merge_small_tail(chunks, config)
-    return _add_safe_overlap(chunks, config)
-
-
-def _split_oversized_text(content: str, max_chars: int) -> list[str]:
-    remaining = content.strip()
-    parts: list[str] = []
-    while len(remaining) > max_chars:
-        cut = remaining.rfind(" ", 0, max_chars + 1)
-        if cut <= 0:
-            cut = max_chars
-        parts.append(remaining[:cut].strip())
-        remaining = remaining[cut:].strip()
-    if remaining:
-        parts.append(remaining)
+    text: str, span: _Interval, config: BlockChunkerConfig, max_chunks: int,
+) -> list[_Interval]:
+    if config.keep_table_intact or span.end - span.start <= config.max_table_chars:
+        return [span]
+    # False means physical LF-delimited rows, not HTML parsing or logical-table repair.
+    rows = [_Interval(span.start + match.start(), span.start + match.end())
+            for match in re.finditer(r"[^\n]*\n|[^\n]+$", text[span.start:span.end])]
+    parts: list[_Interval] = []
+    start = span.start
+    for row in rows:
+        if (row.end - start > config.max_table_chars and row.start > start
+                and text[start:row.start].strip() and text[row.start:row.end].strip()):
+            parts.append(_Interval(start, row.start))
+            if len(parts) >= max_chunks:
+                raise ValueError("PDF structural chunk budget exceeded")
+            start = row.start
+    # Blank lines stay attached. An oversized physical row remains indivisible.
+    parts.append(_Interval(start, span.end))
     return parts
 
 
-def _split_lines(content: str, max_chars: int) -> list[str]:
-    lines = [line for line in content.splitlines() if line.strip()]
-    parts: list[str] = []
-    current = ""
-    for line in lines:
-        candidate = f"{current}\n{line}".strip() if current else line
-        if current and len(candidate) > max_chars:
-            parts.append(current)
-            current = line
+def _split_text_safely(
+    text: str, span: _Interval, config: BlockChunkerConfig, max_chunks: int,
+    *, allow_overlap: bool,
+) -> list[_Interval]:
+    value = text[span.start:span.end]
+    paragraph_ends = [span.start + m.end() for m in re.finditer(r"\n(?:[ \t]*\n)+", value)]
+    whitespace_ends = [span.start + m.end() for m in re.finditer(r"\s+", value)]
+    parts: list[_Interval] = []
+    start = span.start
+    while start < span.end:
+        nonblank = start
+        while nonblank < span.end and text[nonblank].isspace():
+            nonblank += 1
+        if nonblank == span.end:
+            parts[-1] = _Interval(parts[-1].start, span.end)
+            break
+        # Exceptional leading whitespace cannot be emitted as a meaningless chunk.
+        end = min(max(start + config.max_chunk_chars, nonblank + 1), span.end)
+        if end < span.end:
+            for boundaries in (paragraph_ends, whitespace_ends):
+                position = bisect_right(boundaries, end) - 1
+                if position >= 0 and boundaries[position] > nonblank:
+                    end = boundaries[position]
+                    break
+            # Keep separator whitespace on the left, even when it crosses the target.
+            while end < span.end and text[end].isspace():
+                end += 1
+        parts.append(_Interval(start, end))
+        if len(parts) > max_chunks:
+            raise ValueError("PDF structural chunk budget exceeded")
+        start = end
+    parts = _merge_small_tail(parts, config)
+    return _add_safe_overlap(text, parts, config) if allow_overlap else parts
+
+
+def _merge_small_tail(parts: list[_Interval], config: BlockChunkerConfig) -> list[_Interval]:
+    """Only the last two base pieces of one ordinary block are eligible."""
+    if len(parts) < 2 or parts[-1].end - parts[-1].start >= config.min_chunk_chars:
+        return parts
+    previous, tail = parts[-2:]
+    if previous.end == tail.start and tail.end - previous.start <= config.max_chunk_chars:
+        return [*parts[:-2], _Interval(previous.start, tail.end)]
+    return parts
+
+
+def _add_safe_overlap(text: str, parts: list[_Interval], config: BlockChunkerConfig) -> list[_Interval]:
+    """Best effort within one ordinary block; base ends never move or repeat."""
+    if not config.overlap_chars or len(parts) < 2:
+        return parts
+    result = [parts[0]]
+    for previous, current in zip(parts, parts[1:]):
+        room = max(0, config.max_chunk_chars - (current.end - current.start))
+        start = max(current.start - min(room, config.overlap_chars), previous.start + 1)
+        # Prefer a word boundary when one exists in the permitted suffix.
+        for match in re.finditer(r"\s+", text[start:current.start]):
+            start += match.end()
+            break
+        if start < current.start and text[start:current.start].strip():
+            result.append(_Interval(start, current.end))
         else:
-            current = candidate
-    if current:
-        parts.append(current)
-    return parts or [content]
-
-
-def _merge_small_tail(
-    chunks: list[str],
-    config: BlockChunkerConfig,
-) -> list[str]:
-    if len(chunks) < 2 or len(chunks[-1]) >= config.min_chunk_chars:
-        return chunks
-    merged = f"{chunks[-2]}\n\n{chunks[-1]}"
-    if len(merged) <= config.max_chunk_chars:
-        return [*chunks[:-2], merged]
-    return chunks
-
-
-def _add_safe_overlap(
-    chunks: list[str],
-    config: BlockChunkerConfig,
-) -> list[str]:
-    if config.overlap_chars == 0 or len(chunks) < 2:
-        return chunks
-    overlapped = [chunks[0]]
-    for previous, current in zip(chunks, chunks[1:]):
-        suffix = previous[-config.overlap_chars :].lstrip()
-        first_space = suffix.find(" ")
-        if first_space >= 0:
-            suffix = suffix[first_space + 1 :].strip()
-        candidate = f"{suffix}\n\n{current}".strip() if suffix else current
-        overlapped.append(
-            candidate if len(candidate) <= config.max_chunk_chars else current
-        )
-    return overlapped
-
-
-def _fits(
-    current: Sequence[_BlockFragment],
-    next_content: str,
-    config: BlockChunkerConfig,
-) -> bool:
-    current_length = sum(len(fragment.content.strip()) for fragment in current)
-    separators = 2 * len(current)
-    return current_length + separators + len(next_content.strip()) <= (
-        config.max_chunk_chars
-    )
-
-
-def _only_title_fragments(group: Sequence[_BlockFragment]) -> bool:
-    return all(fragment.block.block_type == "title" for fragment in group)
-
-
-def _chunk_content_format(group: Sequence[_BlockFragment]) -> str:
-    formats = {fragment.block.content_format for fragment in group}
-    return next(iter(formats)) if len(formats) == 1 else "mixed"
-
-
-def _chunk_type(group: Sequence[_BlockFragment]) -> str:
-    types = {fragment.block.block_type for fragment in group}
-    if types <= {"title", "text", "list", "footnote", "unknown"}:
-        return "text"
-    if types <= {"title", "table"}:
-        return "table"
-    if types <= {"title", "formula"}:
-        return "formula"
-    if types <= {"title", "image", "caption"}:
-        return "image_caption"
-    return "mixed"
-
-
-def _value(obj: Any, name: str) -> Any:
-    if isinstance(obj, Mapping):
-        return obj.get(name)
-    return getattr(obj, name, None)
-
-
-def _mapping(value: Any) -> Mapping[str, Any]:
-    return value if isinstance(value, Mapping) else {}
-
-
-def _string_list(value: Any) -> list[str]:
-    if not isinstance(value, (list, tuple)):
-        return []
-    return [text for item in value if (text := _optional_text(item))]
-
-
-def _deduplicate(values: Iterable[Any]) -> list[Any]:
-    result: list[Any] = []
-    seen: set[Any] = set()
-    for value in values:
-        if value in seen:
-            continue
-        seen.add(value)
-        result.append(value)
+            result.append(current)
     return result
 
 
-def _optional_text(value: Any) -> str | None:
-    if value is None or isinstance(value, (dict, list, tuple, bytes, bytearray)):
-        return None
-    text = str(value).strip()
-    return text or None
-
-
-def _optional_int(value: Any) -> int | None:
-    if value is None or isinstance(value, bool):
-        return None
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return None
+def _build_chunk(
+    index: int, group: Sequence[_BlockFragment], text: str, start: int, end: int,
+    source_version: UUID, parse_run_id: str,
+) -> BuiltDocumentChunk:
+    blocks = list(dict.fromkeys(fragment.block for fragment in group))
+    formats = {b.content_format for b in blocks}
+    content_format = next(iter(formats)) if len(formats) == 1 else "mixed"
+    kinds = {b.block_type for b in blocks}
+    if kinds <= {"title", "text", "list", "footnote", "unknown"}:
+        kind = "text"
+    elif kinds <= {"title", "table"}:
+        kind = "table"
+    elif kinds <= {"title", "formula"}:
+        kind = "formula"
+    elif kinds <= {"title", "image", "caption"}:
+        kind = "image_caption"
+    else:
+        kind = "mixed"
+    pages = [p for b in blocks for p in (b.page_start, b.page_end) if p is not None]
+    section_path = list(blocks[0].section_path)
+    content = text[start:end]
+    metadata = dict(
+        parser_provider=PARSER_PROVIDER, parse_run_id=parse_run_id,
+        block_ids=[b.block_id for b in blocks],
+        block_keys=list(dict.fromkeys(b.block_key for b in blocks if b.block_key is not None)),
+        block_types=list(dict.fromkeys(b.block_type for b in blocks)),
+        asset_keys=list(dict.fromkeys(key for b in blocks for key in b.asset_keys)),
+        section_path=section_path, chunk_method=CHUNK_METHOD, content_format=content_format,
+    )
+    return BuiltDocumentChunk(
+        index, content, max(1, math.ceil(len(content) / 4)),
+        min(pages) if pages else None, max(pages) if pages else None,
+        # Display-only projection in Unicode code points; metadata retains the full path.
+        section_path[-1][:255] if section_path else None, kind, metadata, parse_run_id, CHUNK_METHOD,
+        content_format, source_version, start, end, sha256_bytes(content.encode("utf-8")),
+    )

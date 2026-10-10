@@ -976,7 +976,9 @@ def test_m2_budget_reaches_sdk_and_diagnostics_without_changing_generic_default(
     from app.core.config import Settings
     from app.extraction.kg_extract import extract_piece
     from test_kg_v2_protocol_units import anchor
+    from app.llm.openai_chat_transport import _generation_diagnostics
 
+    caplog.set_level(logging.INFO)
     captured = []
     def handler(request):
         captured.append(json.loads(request.content))
@@ -996,18 +998,29 @@ def test_m2_budget_reaches_sdk_and_diagnostics_without_changing_generic_default(
     client = OpenAI(api_key="test-wire-key-not-real", base_url=settings.llm_remote_base_url, max_retries=0,
         http_client=httpx.Client(transport=httpx.MockTransport(handler)))
     provider = APILLMProvider(settings, client=client)
+    diagnostics = {"unit_id": "00000000-0000-0000-0000-000000000007"}
     arguments = dict(text="synthetic clause", filename="synthetic.pdf", anchor_metadata=anchor("clause"),
         piece_index=0, timeout_seconds=settings.kg_model_timeout_seconds, max_tokens=settings.kg_llm_max_tokens)
     try:
-        result = extract_piece(provider, **arguments)
+        result = extract_piece(provider, **arguments, diagnostics=diagnostics)
         assert result["entities"] == result["relationships"] == []
+        success, = [r for r in caplog.records if getattr(r, "event", None) == "kg_llm_response_received"]
+        assert success.unit_id == diagnostics["unit_id"] and success.piece_index == 0
+        assert success.finish_reason == "stop" and success.effective_max_tokens == budget
+        assert success.prompt_tokens == 4000 and success.completion_tokens == 8 and success.total_tokens == 4008
+        assert _generation_diagnostics.get() is None
+        snapshot = dict(diagnostics)
         provider.generate(LLMGenerateRequest.from_prompt("ordinary workflow"))
+        assert diagnostics == snapshot  # No metadata leaking from a later non-KG request.
         assert not any(getattr(r, "event", None) == "llm_generation_failed" for r in caplog.records)
         with pytest.raises(BusinessError) as caught:
-            extract_piece(provider, **arguments)
+            extract_piece(provider, **arguments, diagnostics=diagnostics)
     finally:
         provider.close()
     assert caught.value.code == LLM_JSON_INVALID
+    assert _generation_diagnostics.get() is None
+    assert diagnostics["phase"] == "llm_generate"
+    assert diagnostics["finish_reason"] == "length" and diagnostics["completion_tokens"] == budget
     assert [body["max_tokens"] for body in captured] == [budget, 1024, budget]
     assert "response_format" not in captured[1]
     for body in (captured[0], captured[2]):
@@ -1018,6 +1031,66 @@ def test_m2_budget_reaches_sdk_and_diagnostics_without_changing_generic_default(
     assert record.prompt_tokens == 4000 and record.total_tokens == 4000 + budget
     assert record.finish_reason == "length" and record.json_failure_kind == "decode_error"
     assert record.starts_with_object and not record.ends_with_object and not record.contains_fence
+
+
+@pytest.mark.parametrize("metadata_case", ["none", "missing", "raising", "unsafe"])
+def test_kg_metadata_capture_tolerates_missing_or_unsafe_fields(metadata_case):
+    from app.llm.openai_chat_transport import capture_generation_diagnostics, _capture_response_metadata
+    completion = FakeCompletion(content='{"entities":[],"relationships":[]}')
+    if metadata_case == "none":
+        completion.usage = None
+    elif metadata_case == "missing":
+        del completion.usage
+    elif metadata_case == "raising":
+        class Unreadable:
+            def __getattr__(self, name):
+                raise RuntimeError("SECRET_METADATA")
+        completion = Unreadable()
+    else:
+        completion.usage = SimpleNamespace(prompt_tokens="SECRET_USAGE", completion_tokens=True, total_tokens=-1)
+        completion.choices[0].finish_reason = "SECRET_FINISH_REASON"
+    fields = {}
+    with capture_generation_diagnostics(fields):
+        _capture_response_metadata(completion, 8192)
+    assert fields == dict(finish_reason=None, prompt_tokens=None, completion_tokens=None,
+                          total_tokens=None, effective_max_tokens=8192)
+
+
+def test_kg_metadata_capture_failure_and_nested_scope_do_not_change_generation(monkeypatch):
+    from app.llm import openai_chat_transport as transport
+    outer, inner = {}, {}
+    completion = FakeCompletion(content='{"entities":[],"relationships":[]}')
+    with transport.capture_generation_diagnostics(outer):
+        with transport.capture_generation_diagnostics(inner):
+            transport._capture_response_metadata(completion, 8192)
+        transport._capture_response_metadata(completion, 4096)
+    assert outer["effective_max_tokens"] == 4096 and inner["effective_max_tokens"] == 8192
+    assert transport._generation_diagnostics.get() is None
+    def broken(*args):
+        raise RuntimeError("SECRET_METADATA")
+    monkeypatch.setattr(transport, "_response_metadata", broken)
+    provider = APILLMProvider(api_settings(llm_remote_supports_json_mode=True),
+        client=FakeOpenAIClient(FakeCompletions(response=completion)))
+    with transport.capture_generation_diagnostics({}):
+        result = provider.generate(LLMGenerateRequest.from_prompt("synthetic", json_mode=True))
+    assert result.text == '{"entities":[],"relationships":[]}' and not hasattr(result, "finish_reason")
+
+
+def test_kg_valid_json_length_response_keeps_existing_success_semantics(caplog):
+    from app.extraction.kg_extract import extract_piece
+    from test_kg_v2_protocol_units import anchor
+    completion = FakeCompletion(content='{"entities":[],"relationships":[]}')
+    completion.choices[0].finish_reason = "length"
+    completion.usage.completion_tokens = 8192
+    provider = APILLMProvider(api_settings(llm_remote_supports_json_mode=True),
+        client=FakeOpenAIClient(FakeCompletions(response=completion)))
+    with caplog.at_level(logging.INFO):
+        result = extract_piece(provider, text="SECRET_SOURCE", filename="synthetic.pdf", anchor_metadata=anchor(),
+            piece_index=0, timeout_seconds=120, max_tokens=8192)
+    assert result["entities"] == result["relationships"] == []
+    record, = [r for r in caplog.records if getattr(r, "event", None) == "kg_llm_response_received"]
+    assert record.finish_reason == "length" and record.completion_tokens == record.effective_max_tokens == 8192
+    assert "SECRET_SOURCE" not in caplog.text
 
 
 @pytest.mark.parametrize("metadata_case", ["none", "missing", "raising_usage", "raising_fields", "unsafe_values"])

@@ -203,6 +203,7 @@ def _parse_document_with_mineru(
         frozen = render_frozen_source(
             block_objects, document_id=document_id, parse_run_id=parse_run_id,
             source_version=source_version, output_prefix=output_prefix,
+            registered_asset_keys=[asset.asset_key for asset in normalized.assets],
         )
         canonical_key, map_key = f"{output_prefix}/cleaned.md", f"{output_prefix}/source-map.json"
         assets = list(normalized.assets)
@@ -233,6 +234,7 @@ def _parse_document_with_mineru(
             source_version=source_version, document_id=document_id, parse_run_id=parse_run_id,
             canonical_sha256=frozen.canonical_sha256, block_map_sha256=frozen.block_map_sha256,
             character_count=frozen.character_count,
+            output_prefix=output_prefix,
         )
         # All SQL writes finish in one short guarded transaction. No chunks are
         # created here; graph completion is a prerequisite of a later stage.

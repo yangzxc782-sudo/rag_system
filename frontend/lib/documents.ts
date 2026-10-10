@@ -101,6 +101,8 @@ export type DocumentChunkRead = {
   page_end: number | null;
   section_title: string | null;
   chunk_type: string | null;
+  chunk_method: string | null;
+  content_format: string | null;
   source_metadata: Record<string, unknown> | null;
   chunk_set_id?: string | null;
   source_version?: string | null;

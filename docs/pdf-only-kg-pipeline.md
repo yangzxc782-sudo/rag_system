@@ -1,5 +1,206 @@
 # PDF/KG 分阶段实施：M0 / M1 / M2 / M3 / M4 / M5
 
+## 结构感知切分恢复 S4：API、前端与旧入口退役（2026-10-08）
+
+当前 PDF 唯一算法是 `pdf-block-aware-codepoints-v1`，仍按冻结来源 → 图谱 → 结构感知切分
+→ 向量 → 索引验证/封存 → CAS 发布执行。本节替代下方历史阶段中的旧切分入口说明。
+本轮仅完成 S4 及直接依赖；S5 综合验收及真实服务验收尚未执行。
+
+- 默认值只在后端 `BlockChunkerConfig` 定义：
+  `{"max_chunk_chars":1800,"min_chunk_chars":200,"overlap_chars":0,"max_table_chars":4000,"keep_table_intact":true,"keep_formula_with_context":true}`。
+  两个现有列表 API（processing-jobs、chunk-sets）下发 segmentation_defaults/segmentation_version。
+  前端验证后才启用提交，不硬编码备用默认值，不在获取失败时 fallback。
+- process/rechunk 创建允许省略 config 或合法部分六字段，由同一模型补齐、严格验证。
+  null、旧 chunk_size/overlap/boundary、未知字段及非法类型拒绝；持久化仍要求全部六字段。
+  resume 省略 config 复用冻结配置（未冻结才取默认）；null 拒绝，显式不同配置仍冲突。
+  retry/单步 advance 不接受新配置，完整配置与指纹沿用 S3。
+- 共用六字段表单明确说明：正文目标不是表格上限；整表保护开启可超过两个阈值，关闭时
+  按表格阈值分物理行，正常片段也可超过正文目标。关闭公式合并也不拆断独立公式。
+  小尾块阈值不是每片最低长度；overlap 按剩余容量与安全边界尽量添加，可以为 0。
+- 待确认请求缓存 UUID、完整配置和切分版本。旧格式/损坏/未知版本须用户显式丢弃，
+  没有自动转换或轮询自动重发。合法缓存刷新后保持原 UUID/配置，显式提交前先查任务。
+- PDF 未冻结时不展示旧独立 embedding/索引操作。切片列表显示真实类型、显示标题、完整
+  章节路径、格式、方法、页码、区间、块和资产。直接依赖增加 source_metadata.table_fragmented：
+  依据已验证冻结目录判断 chunk 是否仅包含表格的一部分，随 metadata 进入 manifest/SQL/index
+  严格校验；不改正文、区间、kg_refs 或图谱身份。无此字段时显示状态未记录，不猜测完整性。
+- 退役 sequential_chunker.py、chunk_adapters.py 及旧 sequential 测试。共享 overlaps 位于
+  source_intervals.py，锚点映射位于 chunk_anchors.py；中性 chunk_drafts.py 保留，writer 测试直接
+  使用中性 Draft。结构/来源/映射由 block/ChunkSet 测试覆盖。不保留第二种 PDF 算法。
+  无消费者的旧 Settings/示例 CHUNK_SIZE_CHARS、CHUNK_OVERLAP_CHARS 已移除，不改真实 .env。
+
+### S4 定向前端验证（不等同 S5）
+
+复用 Playwright；SSR 和浏览器只访问 loopback fake API，未知路由 404 且不转发。
+独立构建目录 .next-pdf-structure 不覆盖开发构建；两端口占用时拒绝复用服务器。
+在 frontend 目录执行（仅命令环境变量，不写 .env.local）：
+
+```powershell
+$env:PDF_STRUCTURE_E2E_MOCK="1"
+$env:NEXT_PUBLIC_API_BASE_URL="http://127.0.0.1:19081"
+$env:PDF_MOCK_BROWSER_CHANNEL="chrome"
+$env:NEXT_TELEMETRY_DISABLED="1"
+npm run build
+node node_modules/@playwright/test/cli.js test --project=pdf-structure-mock
+```
+
+使用本机已安装 Chrome；也可省略 channel 使用预先安装的 Playwright Chromium，测试不自动
+下载浏览器。fake 无真实模型或存储客户端；SQLite/Fake/浏览器通过不代表真实服务验收。
+
+### S4 实际验证记录
+
+在 backend 目录执行以下两组互不重叠的定向测试（不执行 S5 全量回归）：
+
+```powershell
+.\.venv\Scripts\python.exe -B -m pytest -q -p no:cacheprovider `
+  tests/test_document_processing_api.py tests/test_chunk_set_api_context.py `
+  tests/test_document_processing.py tests/test_chunk_set_builds.py `
+  tests/test_document_chunk_writer.py tests/test_document_parsing.py `
+  tests/test_document_parsing_mineru.py tests/test_pdf_cleaning_pipeline.py
+# 152 passed, 0 failed, 0 skipped
+
+.\.venv\Scripts\python.exe -B -m pytest -q -p no:cacheprovider `
+  tests/test_block_chunker.py tests/test_frozen_source.py `
+  tests/test_graph_sources_v2.py tests/test_graph_snapshot_history_v2.py
+# 194 passed, 0 failed, 0 skipped
+```
+
+前述 Playwright 最终 22 passed、0 failed、0 skipped；初次因未安装配套 Chromium 无法启动，
+随后使用已有 Chrome 验证通过。覆盖后端默认值/无备用常量、配置失败阻断与恢复、旧缓存拒绝、
+合法缓存 reload、完整/重切分请求、retry/resume/单步使用冻结配置和表格片段展示。
+typecheck、lint、独立构建、mock JS 语法和本轮修改 Python 文件 py_compile 均通过。
+构建在受限沙箱内遇到 Windows 路径访问错误，使用相同 fake 环境在授权执行环境中完成。
+
+标准 git diff --check 仍报告不是 work tree；未修 Git 配置。分别完成 diff-files --check
+（已跟踪未暂存）、diff-index --cached --check HEAD（暂存）及五个未跟踪源码的独立空白检查。
+本轮没有真实模型/资产写入、migration、真实 .env 修改或 commit；真实与隔离 PostgreSQL
+验收均未执行。停止在 S4，后续 S5 需另行批准。
+
+## 结构感知切分恢复 S3：ChunkSet 契约集成（2026-10-08）
+
+PDF ChunkSet 主路径已改为调用 S2 `build_block_aware_chunks`，只消费 S1 冻结 source-map v2。
+S3 当时未退役 sequential 模块、未改前端表单或旧缓存；这些工作现已在上节 S4 完成。
+没有新增 migration、真实数据操作、解析/模型服务调用或真实发布验收。
+
+- `BlockChunkerConfig` 是唯一六字段定义，默认 1800/200/0/4000/true/true；
+  S3 补齐 `0 < max_chunk_chars <= 60000`。请求省略字段按此模型补齐，禁止旧字段。
+  **持久化**配置必须包含全部六字段，读取时不允许补缺省值；同时核验版本和配置 SHA-256。
+- `segmentation_version=pdf-block-aware-codepoints-v1`。配置 JSON 使用既有
+  `ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False` 后 UTF-8/SHA-256。
+  process pipeline 输入和 rechunk 输入含完整配置、版本与配置指纹；独立 M2 job 交接到 M3 时，
+  保留原 KG 输入身份，在 checkpoint 中另行冻结 `chunk_input` 及其指纹。
+- resume 不传配置时使用已冻结配置（没有冻结配置才用默认）；显式传不同配置拒绝，
+  包括显式空配置对象所表达的默认配置。retry 不接收新配置，不回到旧 Settings 的 1000/100。
+- **manifest v3**：绑定 document/parse/source/build/set 身份、canonical_sha256、
+  source_map_sha256（对应 SourceDocumentVersion.block_map_sha256）、切分版本、完整配置和指纹、
+  chunk_count；每项含确定性 UUID/序号、区间/content_sha256、完整结构 metadata 和有序 block links。
+- draft、manifest、SQL 和索引保留 chunk_type、section_title、content_format、chunk_method、
+  token_count、parse_run_id、页码、section_path/block_ids/block_keys/block_types/asset_keys。
+  `source_metadata` 同时保留结构字段和 kg_refs，进入检索及 citation/snapshot，不以 kg_refs 替代完整校验。
+  index 协议仍为 v2，manifest v3 通过原 manifest_sha256 和精确 payload readback 绑定，不改 mapping。
+- chunk 写入后、embedding/indexing 前、CAS 发布前重新核对完整内容和有序 block links。
+  检索请求显式读取结构字段，并与权威 SQL 比较；图谱来源校验同时检查结构字段与 metadata 一致。
+- kg_refs 由同一 document/source/build 的严格半开区间相交生成；去重、冲突拒绝及排序保持。
+  KG units、GraphBuild/provider 指纹、graph_id/anchor_id 均不变，完整覆盖仍由 M4 判断。
+- 保留 PDF_KG_MAX_CHUNKS、租约/fencing、IO reconciliation、create-only 索引写入、封存和 CAS。
+  表格/公式遵循 S2 各自长度规则，没有全局正文上限断言。现有 section_title 列限长 255：
+  Draft 统一使用最后一级章节标题的前 255 个 Python Unicode code points 作为显示投影，
+  不按 UTF-8 字节截取、不添加省略号；完整 section_path 保存在 metadata，正文和区间不变。
+  manifest/SQL/index 共享该投影，仍执行字段长度和完整内容一致性校验，不扩展 schema。
+
+离线验收覆盖 A/B/C 完整六字段配置（1800/200/0、1200/200/120、3000/200/100，
+其余 4000/true/true）、同 set 重算、JSON 对象键重排、真实结构 metadata 全链路、历史引用、
+配置冲突、manifest/SQL/index 损坏、重试和 CAS。使用 SQLite/FakeAssets/FakeProvider/FakeIndex，
+不等同真实 PostgreSQL JSONB/触发器、OpenSearch 或 embedding 服务验收。
+
+## 结构感知切分恢复 S2：六字段配置与连续区间算法
+
+S2 在 ingestion/block_chunker.py 内替换旧的正文重拼实现，不新增第二个结构切分器。
+算法只接收 S1 FrozenSource、document/parse 身份及来源目录，先验证 v2 字节、哈希和
+目录，再输出连续区间和纯内存 chunk/block 引用。不再接收可变 DocumentBlock 或 renderer。
+版本为 pdf-block-aware-codepoints-v1，未知/旧版本直接拒绝，没有版本分派或 fallback。
+
+**S2 当时的阶段边界（S3 进展见上节）：** 未修改 ChunkSet/manifest/任务/API/前端，主流程仍使用原入口，
+切换留待 S3/S4；暂不部署或运行真实 PDF。旧 sequential_chunker.py 尚未退役，仅迁出其
+共享 overlaps 到 source_intervals.py，图谱来源和证据校验改用相同的严格相交纯函数。
+
+### 配置
+
+BlockChunkerConfig 是严格、不可变、禁止未知字段的 Pydantic 六字段模型：
+
+| 字段 | 类型 | 默认值 | 校验与用途 |
+|---|---|---|---|
+| max_chunk_chars | int | 1800 | >0，S3 补齐 <=60000；普通内容合并和拆分目标 |
+| min_chunk_chars | int | 200 | 0..max_chunk_chars；同一长正文最后两个基础片段的合并阈值 |
+| overlap_chars | int | 0 | 0<=值<max_chunk_chars；长正文的尽力重叠 |
+| max_table_chars | int | 4000 | >0；关闭整表保护时的物理行分组目标 |
+| keep_table_intact | bool | true | 整表保护；false 支持完整物理行分组 |
+| keep_formula_with_context | bool | true | 短公式与相邻上下文合并；false 保持独立 |
+
+不强制类型转换、不 clamp、不读取旧 Settings，也不增加环境变量；只指定小于 200 的
+max_chunk_chars 时必须同时提供合法 min_chunk_chars。旧 chunk_size/overlap/boundary 和
+include_headers_footers 被该模型拒绝。默认补齐后的全部六字段以现有确定性 JSON/UTF-8/
+SHA-256 计算配置 fingerprint，未在 S2 接入任务或持久化指纹。
+
+### 区间规则与长度
+
+- section_path 变化必断；相邻标题、正文、列表等在同章节且实际区间容量允许时合并。
+  无重新继承章节、远处标题复制或正文反向匹配。
+- 表前普通正文先结束；小表只可与紧邻、同章节且容量允许的纯标题组合并。表后必结束。
+  keep_table_intact=true 时 6000 字符表格仍完整；false 且表格不超过 4000 时也完整，
+  因此 2500 字符表格可以超过正文的 1800。超过表格阈值时按完整 LF 物理行贪心分组，
+  正常 3500 字符片段合法；单行超过 4000 也不截断。不复制表头或声称关闭保护后仍整表完整。
+- 独立公式从不内部拆分；短公式按开关、章节和容量合并，超长公式独立输出。
+  false 的含义是独立保留，不是允许拆公式。
+- 长普通块优先选择段落、空白边界，再退至 code-point 边界。小尾块仅在同一正文最后
+  两个基础片段连续且合并后不超过正文目标时合并，不跨章节、表格、公式或其他 block。
+  0 禁用此尾块合并；短结构块无需凑足 200。
+- overlap 只向前扩展同一长 text/list/footnote/unknown block 内后片段的 start，end 不变。
+  同时受请求值、剩余容量、前一基础片段和空白边界限制，可缩小或为 0。1800/100 下两个
+  满 1800 的片段不强行重叠；不插分隔符，不重叠表格或独立公式，不跨 block/章节。
+- block 间已有分隔符归前块；拆分边界后的连续空白也归前片段。长起始空白跟随第一个
+  非空白字符；不生成纯空白 chunk。所有字符由 canonical 切片得到，长度按实际区间计算。
+  普通正文、表格各用各的目标；受保护整表、超长物理行、独立公式及所述空白有对应例外，
+  不存在适用于全部 chunk 的 len(content)<=max_chunk_chars 断言。
+
+每个结果带 source_version、source_start/end、content_sha256、结构类型、章节/页码、
+格式、资产和有序 block 引用，满足 content == canonical_text[start:end]，Python
+Unicode code-point 左闭右开；不引入多区间、strip 后重拼或查找重复文本来反推坐标。
+基础片段无遗漏，重叠后仍严格前进；公式及开启保护的表格，任何相交 chunk 均完整包含它。
+KG units/anchors/提取/writer 均不改变，kg_refs 与持久化集成留在 S3。
+
+仅保护已识别的 table/formula block。不新增行内公式保护、跨页逻辑表合并或 HTML 行语义
+修复；超大结构的 embedding/RAG 下游输入上限仍需后续独立验收。
+
+## 结构感知切分恢复 S1：冻结 source-map v2（2026-10-08）
+
+S1 只补齐不可变来源目录；本节保留 S1 当时的实施边界，S2 进展见上节。
+不应在中间阶段部署或开始真实 PDF 处理。下方 M0–M5 记录保留当时的验收事实。
+
+`source-map.json` 的唯一受支持格式为 `schema_version=2`。保留 document/parse_run/
+source_version 身份、canonical SHA-256、字符数、坐标与规范化约定；每个 block 保留
+ID/index/key/type、页码和 `[source_start, source_end)`，新增三个必需字段：
+
+- `section_path: list[str]`：冻结时优先取 block 的显式章节路径，再取 metadata 中的
+  路径；无路径的标题以当前渲染标题建立路径，其他块继承最近有效路径。
+  这是原结构块准备规则，已有 cleaner 提取的多层章节不再解析；空块、页眉页脚不更新路径。
+- `content_format: str`：直接保存既有 `render_cleaned_block()` 返回的格式，不根据
+  block 类型或扩展名猜测。验证允许 `plain_text`、`markdown`、`mixed`。
+- `asset_keys: list[str]`：保存当前块引用，稳定去重、保持列表顺序；无引用时为 `[]`。
+  冻结时必须属于本次 normalized parse asset 清单和同一 output prefix，拒绝越界路径。
+  清单表示已登记引用，不能单凭该字段宣称外部对象已经存在。
+
+章节和资产列表复制到目录中，不原位修改结构块。正文 renderer、cleaner、LF/NFC、
+UTF-8、固定 `\n\n` 分隔和 code-point 区间规则保持不变；新增目录字段只改变目录哈希。
+目录仍使用确定性 JSON 编码，不依赖对象键插入顺序，也不重排 block 或有序列表。
+
+解析上传后的回读和 M2/M3 共用的 `_source_text()` 都验证 v2：两份资产哈希、来源身份、
+字段及类型、block 唯一性/次序、页码、连续区间和资产前缀。canonical 与目录必须位于
+同一来源目录。旧/未知版本、缺失结构字段或不合法引用明确拒绝；没有从可变 DocumentBlock
+补取字段、兼容旧目录或退回字符切分的分支。
+
+M2 继续使用原有 KG 单元、锚点和 extraction piece 规则；不以 `section_path` 替代 KG
+标题识别。S1 不修改数据库 schema、Neo4j schema、抽取模板或任何预算。
+
 ## M5 实施契约与验收（2026-10-07）
 
 本轮仅实施持久处理任务、完整处理 API、页面及新版资产删除生命周期。基线仍为

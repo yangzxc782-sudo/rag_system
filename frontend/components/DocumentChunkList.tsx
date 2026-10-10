@@ -118,27 +118,22 @@ export default function DocumentChunkList({ data, errorMessage }: DocumentChunkL
                 </button>
               </div>
 
-              <dl className="mt-4 grid gap-2 text-xs text-slate-600 sm:grid-cols-5">
-                <div>
-                  <dt className="font-medium text-slate-500">parser</dt>
-                  <dd className="mt-1 break-words text-slate-900">{metadataValue(chunk, "parser_name")}</dd>
-                </div>
-                <div>
-                  <dt className="font-medium text-slate-500">version</dt>
-                  <dd className="mt-1 break-words text-slate-900">{metadataValue(chunk, "parser_version")}</dd>
-                </div>
-                <div>
-                  <dt className="font-medium text-slate-500">source</dt>
-                  <dd className="mt-1 break-words text-slate-900">{metadataValue(chunk, "source_type")}</dd>
-                </div>
-                <div>
-                  <dt className="font-medium text-slate-500">placeholder</dt>
-                  <dd className="mt-1 break-words text-slate-900">{metadataValue(chunk, "placeholder")}</dd>
-                </div>
-                <div>
-                  <dt className="font-medium text-slate-500">extension</dt>
-                  <dd className="mt-1 break-words text-slate-900">{metadataValue(chunk, "original_extension")}</dd>
-                </div>
+              <dl className="mt-4 grid gap-2 text-xs text-slate-600 sm:grid-cols-3">
+                {[
+                  ["章节显示标题", chunk.section_title ?? "无"],
+                  ["完整章节路径", metadataValue(chunk, "section_path")],
+                  ["内容格式", chunk.content_format ?? "未知"],
+                  ["切分方法", chunk.chunk_method ?? "未知"],
+                  ["页码范围", `${chunk.page_start ?? "未知"}–${chunk.page_end ?? "未知"}`],
+                  ["来源区间（左闭右开）", `[${chunk.source_start ?? "未知"}, ${chunk.source_end ?? "未知"})`],
+                  ["结构块", metadataValue(chunk, "block_types")],
+                  ["Block IDs", metadataValue(chunk, "block_ids")],
+                  ["关联资产", metadataValue(chunk, "asset_keys")],
+                ].map(([label, value]) => <div key={label}><dt className="font-medium">{label}</dt>
+                  <dd className="mt-1 break-words text-slate-900">{value}</dd></div>)}
+                {Array.isArray(chunk.source_metadata?.block_types) && chunk.source_metadata.block_types.includes("table") ?
+                  <div><dt>表格结构</dt><dd>{chunk.source_metadata.table_fragmented === true ? "表格分片（未保持整表）"
+                    : chunk.source_metadata.table_fragmented === false ? "完整表格块" : "分片状态未记录"}</dd></div> : null}
               </dl>
             </article>
           );

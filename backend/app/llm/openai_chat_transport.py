@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
+from contextvars import ContextVar
 from importlib import import_module
 import json
 import logging
@@ -36,6 +38,33 @@ from app.llm.provider import (
 
 
 logger = logging.getLogger(__name__)
+# Opt-in, call-local metadata only. No request/result or persistence contract change.
+_generation_diagnostics: ContextVar[dict | None] = ContextVar("generation_diagnostics", default=None)
+
+
+@contextmanager
+def capture_generation_diagnostics(target: dict):
+    token = _generation_diagnostics.set(target)
+    try:
+        yield
+    finally:
+        _generation_diagnostics.reset(token)
+
+
+def _capture_response_metadata(completion: Any, max_tokens: int) -> None:
+    target = _generation_diagnostics.get()
+    if target is None:
+        return
+    try:
+        choices = _diagnostic_attr(completion, "choices")
+        choice = choices[0] if isinstance(choices, (list, tuple)) and choices else None
+        target.update(_response_metadata(completion, choice),
+                      effective_max_tokens=_diagnostic_integer(max_tokens))
+    except Exception:
+        # Optional diagnostics must never change response validation or its exception.
+        pass
+
+
 _SAFE_REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 _JSON_ERROR_MESSAGES = frozenset({
     "Expecting value", "Extra data", "Expecting property name enclosed in double quotes",
@@ -128,6 +157,7 @@ class OpenAIChatTransport:
             )
             raise mapped_error
 
+        _capture_response_metadata(completion, payload["max_tokens"])
         json_diagnostics: dict[str, Any] = {}
         try:
             result = self._parse_result(
@@ -409,28 +439,34 @@ def _diagnostic_integer(value: Any) -> int | None:
     return value if type(value) is int and 0 <= value <= 2**63 - 1 else None
 
 
-def _build_json_failure_diagnostics(
-    content: str, completion: Any, choice: Any, *, failure_kind: str,
-    parsed_content: Any = None, decode_error_fields: tuple | None = None,
-) -> dict[str, Any]:
-    """Allowlisted, content-free metadata for logging only, never public errors."""
-    stripped = content.strip()  # Shape observation only; json.loads receives original content.
+def _response_metadata(completion: Any, choice: Any) -> dict[str, Any]:
     finish_reason = _diagnostic_attr(choice, "finish_reason")
     if type(finish_reason) is not str or finish_reason not in {
         "stop", "length", "tool_calls", "content_filter", "function_call",
     }:
         finish_reason = None
     usage = _diagnostic_attr(completion, "usage")
+    return {
+        "finish_reason": finish_reason,
+        **{name: _diagnostic_integer(_diagnostic_attr(usage, name))
+           for name in ("prompt_tokens", "completion_tokens", "total_tokens")},
+    }
+
+
+def _build_json_failure_diagnostics(
+    content: str, completion: Any, choice: Any, *, failure_kind: str,
+    parsed_content: Any = None, decode_error_fields: tuple | None = None,
+) -> dict[str, Any]:
+    """Allowlisted, content-free metadata for logging only, never public errors."""
+    stripped = content.strip()  # Shape observation only; json.loads receives original content.
     diagnostics = {
         "json_failure_kind": failure_kind,
-        "finish_reason": finish_reason,
+        **_response_metadata(completion, choice),
         "content_type": "str",  # Already validated by the response parser.
         "content_length": len(content),
         "starts_with_object": stripped.startswith("{"),
         "ends_with_object": stripped.endswith("}"),
         "contains_fence": "```" in content,
-        **{name: _diagnostic_integer(_diagnostic_attr(usage, name))
-           for name in ("prompt_tokens", "completion_tokens", "total_tokens")},
     }
     if failure_kind == "top_level_not_object":
         diagnostics["top_level_type"] = {

@@ -99,8 +99,6 @@ def fake_settings(
 ) -> SimpleNamespace:
     return SimpleNamespace(
         document_parser_provider=document_parser_provider,
-        chunk_size_chars=1000,
-        chunk_overlap_chars=100,
         mineru_api_base_url=None,
         mineru_api_key=None,
         mineru_api_timeout_seconds=300,

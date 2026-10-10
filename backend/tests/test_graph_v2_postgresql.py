@@ -23,7 +23,7 @@ from test_kg_v2_builds import settings
 from test_chunk_set_builds import prepare, finish
 from test_graph_sources_v2 import setup
 from test_rag_graph_fusion import graph_service
-from app.ingestion.sequential_chunker import SegmentationConfig
+from app.ingestion.block_chunker import BlockChunkerConfig
 
 pytestmark=pytest.mark.phase13_integration
 
@@ -41,7 +41,7 @@ def m4_engine():
 
 def test_persistent_v2_table_clause_replay_rechunk_and_source_redaction(m4_engine,settings,monkeypatch):
     with Session(m4_engine,autoflush=False) as db:
-        values,built,context,_,encoder,index=setup(db,settings,SegmentationConfig(chunk_size=32,overlap=4))
+        values,built,context,_,encoder,index=setup(db,settings,BlockChunkerConfig(min_chunk_chars=0, max_chunk_chars=32,overlap_chars=4))
         # Stub external retrieval at its established seam; SQL admission and snapshot
         # ownership/fingerprints/recovery use the actual migrated PostgreSQL records.
         keys={f.name for f in fields(HybridSearchItem)}
@@ -67,7 +67,7 @@ def test_persistent_v2_table_clause_replay_rechunk_and_source_redaction(m4_engin
             staged=result(graph,current)
             assert {e.ref.anchor_type for e in staged.graph_context.evidence}=={"table","clause"}
             calls=repo.fetch_anchor_context.call_count
-            finish(db,settings,values,prepare(db,settings,values,SegmentationConfig(chunk_size=19,overlap=2),True),encoder,index)
+            finish(db,settings,values,prepare(db,settings,values,BlockChunkerConfig(min_chunk_chars=0, max_chunk_chars=19,overlap_chars=2),True),encoder,index)
             assert result(graph,current).graph_context==staged.graph_context
             assert invoke(graph,current)==state and repo.fetch_anchor_context.call_count==calls
             assert retrieval.call_count==len(provider.answer_calls)==1

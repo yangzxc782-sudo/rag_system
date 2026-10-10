@@ -30,6 +30,7 @@ export default async function DocumentDetailPage({ params }: DocumentDetailPageP
   const documentResult = await getDocument(id);
   const document = documentResult.success ? documentResult.data : null;
   const canLoadDerivedData = document?.deletion_status === "normal";
+  const isPdf = document?.original_filename.toLowerCase().endsWith(".pdf") ?? false;
   const versioned = FROZEN_STATUSES.includes(document?.process_status ?? "");
   let chunkSets: ChunkSets | null = null;
   let chunkSetError: string | null = null;
@@ -43,7 +44,7 @@ export default async function DocumentDetailPage({ params }: DocumentDetailPageP
   const chunksErrorMessage =
     chunksResult && !chunksResult.success ? (chunksResult.error?.message ?? "文档切片暂时不可用。") : null;
 
-  const embeddingStatusResult = canLoadDerivedData && !versioned ? await getDocumentEmbeddingStatus(id) : null;
+  const embeddingStatusResult = canLoadDerivedData && !isPdf && !versioned ? await getDocumentEmbeddingStatus(id) : null;
   const embeddingStatus = embeddingStatusResult?.success ? embeddingStatusResult.data : null;
   const embeddingStatusErrorMessage =
     embeddingStatusResult && !embeddingStatusResult.success
@@ -112,7 +113,7 @@ export default async function DocumentDetailPage({ params }: DocumentDetailPageP
 
         {document?.deletion_status === "normal" ? (
           <section className="grid gap-5">
-            {document.original_filename.toLowerCase().endsWith(".pdf") ? <DocumentProcessingPanel documentId={document.id} /> :
+            {isPdf ? <DocumentProcessingPanel key={`processing-${document.id}`} documentId={document.id} /> :
               <p className="text-sm text-slate-600">历史非 PDF 文档保留供查看，不支持新版处理。</p>}
             <DocumentParseResults
               documentId={document.id}
@@ -122,7 +123,8 @@ export default async function DocumentDetailPage({ params }: DocumentDetailPageP
               assets={assets}
               errorMessage={parseResultsErrorMessage}
             />
-            {versioned ? <DocumentChunkSetPanel documentId={document.id} initial={chunkSets} errorMessage={chunkSetError} /> : <DocumentEmbeddingPanel
+            {versioned ? <DocumentChunkSetPanel key={`chunksets-${document.id}`} documentId={document.id} initial={chunkSets} errorMessage={chunkSetError} /> : isPdf ?
+              <p className="text-sm text-slate-600">PDF 的切片、向量与索引由版本化处理链路生成，完成来源冻结后可查看切片版本。</p> : <DocumentEmbeddingPanel
               documentId={document.id}
               status={embeddingStatus}
               errorMessage={embeddingStatusErrorMessage}
